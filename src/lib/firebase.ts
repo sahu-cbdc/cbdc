@@ -84,21 +84,9 @@ export function getDb(): Firestore | null {
   return db;
 }
 
-/** Firebase Auth instance (lazily initialised). */
-export function getAuthInstance(): Auth | null {
-  if (!auth) initFirebase();
-  return auth;
-}
-
 /** Whether Firebase initialised successfully. */
 export function isFirebaseReady(): boolean {
   if (!db) initFirebase();
   return !!db && !initError;
 }
 
-/** A short, stable display name for the connected project (for diagnostics). */
-export function projectLabel(): string {
-  return firebaseConfig.projectId;
-}
-
-export { app, db, auth };

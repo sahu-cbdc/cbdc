@@ -20,7 +20,7 @@ const UPLOAD_URL = "https://api.imgbb.com/1/upload";
 const KEY_CACHE = "cbdc.imgbb.key";
 
 /** Build-time ImgBB API key (VITE_IMGBB_API_KEY). */
-export function getEnvImgbbKey(): string {
+function getEnvImgbbKey(): string {
   try {
     const env = (import.meta as any).env;
     return String(env?.VITE_IMGBB_API_KEY || "").trim();
