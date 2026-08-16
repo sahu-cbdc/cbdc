@@ -19,3 +19,6 @@ yarn-error.log*
 
 # TypeScript build info
 *.tsbuildinfo
+
+# Cloudflare wrangler
+.wrangler/
