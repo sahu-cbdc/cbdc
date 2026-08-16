@@ -10,7 +10,6 @@ declare global {
   var CBDCShared: any;
   interface Window {
     CBDCShared: any;
-    __applySystemTheme?: () => void;
     [key: string]: any;
   }
 }
