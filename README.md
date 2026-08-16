@@ -13,7 +13,6 @@
 | `admin.html` | `src/pages/Admin.tsx` | `admin.html` |
 | `moderator.html` | `src/pages/Moderator.tsx` | `moderator.html` |
 
-মূল HTML ফাইলগুলো `legacy/` ফোল্ডারে রেফারেন্স হিসেবে রাখা হয়েছে (হুবহু, অপরিবর্তিত)।
 
 ## যেকোনো হোস্টিং সাইটে চালানো
 
