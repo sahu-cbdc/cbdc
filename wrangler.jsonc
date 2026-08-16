@@ -1,0 +1,13 @@
+{
+  // Cloudflare (Pages / Workers) deploy configuration.
+  // `npx wrangler versions upload` এই ফাইল থেকে assets directory পড়ে —
+  // এখানে বলে দেওয়া হয়েছে যে build output হলো ./dist (Vite build output).
+  //
+  // নোট: এটা একটি multi-page static site (index/doner/admin/moderator.html),
+  // তাই কোনো Worker script (main) বা SPA fallback লাগে না — শুধু static assets।
+  "name": "cbdc",
+  "compatibility_date": "2026-08-16",
+  "assets": {
+    "directory": "./dist"
+  }
+}
