@@ -9,9 +9,9 @@
  *     (donors / requests / queue / gallery / notices / accounts).
  *   - All dummy / static seed data has been removed — a fresh browser shows an
  *     empty list until real data exists in Firestore.
- *   - localStorage is no longer used for the shared data (it previously held
- *     the demo dataset). The store keeps an in-memory cache that is fed by
- *     Firestore `onSnapshot` listeners and pushed back to Firestore on change.
+ *   - localStorage is no longer used for the shared data. The store keeps an
+ *     in-memory cache that is fed by Firestore `onSnapshot` listeners and
+ *     pushed back to Firestore on change.
  *
  * The public API (`load`, `save`, `update`, `subscribe`, `clone`, and the
  * donor converters) is kept byte-for-byte compatible with the original so the
@@ -31,7 +31,7 @@ import {
 } from "firebase/firestore";
 
 const KEY = "cbdc.shared.v1"; // kept for API compatibility only
-const CHANNEL = "cbdc-demo-sync";
+const CHANNEL = "cbdc-sync";
 
 /** The six collections that make up the shared aggregate state. */
 const COLLECTION_NAMES = ["donors", "requests", "queue", "gallery", "notices", "accounts"] as const;
@@ -198,7 +198,7 @@ function save(state: any, source = "unknown"): any {
     void writeDiff(name, prev[name], s[name]);
   }
 
-  // cross-tab notification (same mechanism as the original demo)
+  // cross-tab notification (BroadcastChannel)
   try {
     bc && bc.postMessage({ revision: s.revision, source });
   } catch (e) {

@@ -1,5 +1,5 @@
 /**
- * Global type declarations for the ported demo application.
+ * Global type declarations for the ported application.
  *
  * The original HTML files shared their state through a `window.CBDCShared`
  * global and also exposed a few page-level helpers on `window` (used by

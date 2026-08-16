@@ -7,9 +7,9 @@
  *   - Cloud Firestore as the primary data source for all app data,
  *   - (Storage reserved for future media uploads).
  *
- * The original demo used dynamic `import("firebase/...")` inside the page
- * script. This module centralises that into one typed singleton so every page
- * shares the same app instance and the same configuration.
+ * The page logic uses dynamic `import("firebase/...")`; this module
+ * centralises that into one typed singleton so every page shares the same app
+ * instance and the same configuration.
  */
 
 import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
@@ -18,7 +18,7 @@ import { getAuth, type Auth } from "firebase/auth";
 import { getStorage, type FirebaseStorage } from "firebase/storage";
 
 /**
- * Firebase project configuration (unchanged from the original HTML demo).
+ * Firebase project configuration (unchanged from the original HTML).
  * These values are public client-side identifiers — access control is enforced
  * by Firestore Security Rules (see firestore.rules), not by hiding this config.
  */

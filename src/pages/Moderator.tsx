@@ -723,7 +723,7 @@ function StaticShell() {
       <div className="toasts" id="toasts">
       </div>
       {" "}
-      {/* Shared demo state: same donors, requests and moderation queue in every HTML page */}
+      {/* Shared live state: same donors, requests and moderation queue across all pages (Firestore) */}
       {" "}
     </>
   );
@@ -968,7 +968,6 @@ function initPage() {
   "প্রোফাইল গোপন করা হয়েছে":"Profile hidden",
   "হুবহু \"মুছে ফেলুন\" লিখুন":"Type \"মুছে ফেলুন\" exactly",
   "যেমন: চমেক ব্লাড ব্যাংক":"e.g. CMCH Blood Bank",
-  "ডেমোতে লগআউট নিষ্ক্রিয়":"Log out is disabled in the demo",
   "আপনার জন্য গুরুত্বপূর্ণ":"Important for you",
   "অতিরিক্ত নিরাপত্তা স্তর":"An extra layer of security",
   "ছাপানোর কার্ড — দুই পাশ":"Printable card — both sides",
@@ -1320,7 +1319,6 @@ function initPage() {
   "সরে গেছেন":"You have left",
   "ছবি আপলোড":"Upload a photo",
   "শক্তিশালী":"Strong",
-  "ডেমো ডেটা":"Demo data",
   "আমার জন্য":"For me",
   "সাড়া দিন":"Respond",
   "ছবি বদলান":"Change photo",
@@ -1451,7 +1449,6 @@ function initPage() {
   "এখনই":"Just now",
   "সবুজ":"Green",
   "গাঢ়":"Dark",
-  "ডেমো":"Demo",
   "তথ্য":"Details",
   "লগইন":"Login",
   "চালু":"on",
@@ -1764,10 +1761,7 @@ function initPage() {
   "নতুন ডোনার অনুমোদন লাগবে":"New donors need approval",
   "জরুরি আবেদন অনুমোদন লাগবে":"Emergency requests need approval",
   "কী পেস্ট করুন":"Paste the key",
-  "এখনো যুক্ত হয়নি — ডেমো ডেটা চলছে":"Not connected — running on demo data",
-  "ডেমো ডেটা রিসেট":"Reset demo data",
   "অডিট রেকর্ড":"Audit records",
-  "এই ব্রাউজারে":"In this browser",
   "আমার অ্যাকাউন্ট":"My account",
   "আমার অনুমতি":"My permissions",
   "অ্যাকাউন্ট ব্যবস্থাপনা":"Account management",
@@ -1859,7 +1853,6 @@ function initPage() {
   "এই ডিভাইস থেকে বের হন":"Sign out on this device",
   "আমার সেটিংস রিসেট":"Reset my settings",
   "প্রোফাইল ডিফল্ট অবস্থায় ফিরবে":"Your profile returns to its defaults",
-  "ডেমো — ভূমিকা বদলে দেখুন":"Demo — try a different role",
   "সুপার অ্যাডমিন":"Super Admin",
   "অ্যাডমিন":"Admin",
   "মডারেটর":"Moderator",
@@ -1877,7 +1870,6 @@ function initPage() {
   "প্রয়োজন হলে সুপার অ্যাডমিনকে বলুন":"Ask a super admin if you need it",
   "শুধু দেখার অনুমতি":"View-only access",
   "আপনার শুধু দেখার অনুমতি আছে।":"You have view-only access.",
-  "ডেমো ডেটা নতুন করে সাজান":"Regenerate demo data",
   "রিসেট হয়েছে":"Reset complete",
   "জরুরিতা":"Urgency",
   "আবেদনকারী":"Requested by",
@@ -2023,7 +2015,6 @@ function initPage() {
   ["শীঘ্রই","Soon"],
   ["অপেক্ষমাণ","Pending"],
   ["সংস্করণ","Version"],
-  ["ডেমো","demo"],
   ["স্থান","Place"],
   ["তারিখ","Date"],
   ["ব্যাগ","bags"],
@@ -2158,7 +2149,7 @@ function initPage() {
   "সুপার অ্যাডমিনের ভূমিকা এখান থেকে বদলানো যায় না।":"A super admin's role cannot be changed from here.",
   "ইনিই একমাত্র সুপার অ্যাডমিন — নামালে সিস্টেম নিয়ন্ত্রণহীন হয়ে যাবে।":
     "This is the only super admin — demoting them would leave the system without an owner.",
-  "ডেমো ডেটা":"Demo data","নতুন করে সাজান":"Regenerate","ডোনার আইডি":"Donor ID"
+  "ডোনার আইডি":"Donor ID"
   });
   DICT_KEYS.length=0;
   Object.keys(DICT_EN).sort((a,b)=>b.length-a.length).forEach(k=>DICT_KEYS.push(k));
@@ -2256,7 +2247,7 @@ function initPage() {
      fixed top bar → 4 nav items → screens → sub-pages with a back
      button → sheets for detail work. Nothing here re-invents the
      shell; only the screens are new.
-     Demo data: localStorage["cbdc.admin"]. Swapping to Firestore
+     Data source: Firestore (live sync)
      later touches seed()/persist()/restore()/logAudit() only.
      ══════════════════════════════════════════════════════════════ */
   const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -2307,7 +2298,7 @@ function initPage() {
     "AB-":["AB-","AB+"],"AB+":["AB+"]};
   const donorsFor=g=>Object.keys(CAN_GIVE).filter(d=>CAN_GIVE[d].includes(g));
   
-  /* ══════════ DEMO DATA ══════════ */
+  /* ══════════ DATA ══════════ */
   const LS="cbdc.admin";   /* shared work data — both panels see the same queue */
   const GROUPS=["A+","A-","B+","B-","AB+","AB-","O+","O-"];
   const AREAS=["চকবাজার","বাকলিয়া","কোতোয়ালী","চাঁদগাঁও","পাঁচলাইশ","হালিশহর","পাহাড়তলী"];
@@ -3499,10 +3490,6 @@ function initPage() {
     toast("লগআউট হয়েছে — মূল ওয়েবসাইটে ফিরে যাচ্ছেন","ok");
     setTimeout(()=>{location.href="index.html"},700);
   }
-  async function reseedAsk(){
-    if(!await confirmS({title:"ডেমো ডেটা রিসেট?",desc:"সব পরিবর্তন মুছে নতুন ডেমো ডেটা আসবে।",danger:true}))return;
-    localStorage.removeItem(LS);DB=seed();persist();go("home");toast("রিসেট হয়েছে","ok");
-  }
   function exportSheet(){
     if(!can("data.export"))return toast("রপ্তানির অনুমতি নেই","er");
     let pick="donors";
@@ -3918,7 +3905,7 @@ function initPage() {
     ? `<div class="row"><span class="tx"><b>${esc(t)}</b><small>${esc(v)}</small></span></div>`
     : `<button class="row" data-de="${key}"><span class="tx"><b>${esc(t)}</b><small>${esc(v)}</small></span>
        <span class="rt">${SI.right(17)}</span></button>`;
-  /* donations & requests linked to a donor (demo model) */
+  /* donations & requests linked to a donor */
   function donorDonations(d){
     d.log=d.log||[];
     if(!d.log.length&&d.last)d.log.push({date:d.last,place:"চমেক ব্লাড ব্যাংক",bags:1,ok:true});
@@ -4355,7 +4342,7 @@ function initPage() {
         <input id="up_t" placeholder="যেমন: রক্তদান ক্যাম্প ২০২৬"></div>
       <div class="pgb hide" id="pg"><i></i></div>
       <p class="hint2" style="margin-top:9px">${DB.integr.imgbbKey
-        ?"ImgBB কী পাওয়া গেছে — আপলোড হবে।":"ImgBB কী নেই, তাই এখন ডেমো আপলোড দেখানো হবে।"}</p>`,
+        ?"ImgBB কী পাওয়া গেছে — আপলোড হবে।":"ImgBB কী নেই — ছবিটি সাময়িকভাবে এই ডিভাইস থেকে দেখা যাবে।"}</p>`,
       `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="up_ok">${SI.up(15)} আপলোড</button>`);
     const dz=s.q("#dz"),fi=s.q("#fi");let file=null,url="";
     dz.onclick=()=>fi.click();
@@ -4521,18 +4508,16 @@ function initPage() {
         <label>ImgBB API কী</label><input id="i_key" value="${esc(DB.integr.imgbbKey)}" placeholder="কী পেস্ট করুন"></div>
         <div class="row" style="padding-left:0;padding-right:0;border:0;margin-top:6px">
           <span class="tx"><b>Firebase / Firestore</b>
-            <small>${DB.integr.firebase?"যুক্ত":"এখনো যুক্ত হয়নি — ডেমো ডেটা চলছে"}</small></span>
+            <small>"যুক্ত"</small></span>
           <span class="pill ${DB.integr.firebase?"g":"a"}">${DB.integr.firebase?"সক্রিয়":"অপেক্ষায়"}</span></div></div>
       <div class="sec-t">ডেটা</div>
       <div class="card"><div class="kv">
           <div><span>রক্তদাতা</span><b>${bn(DB.donors.length)}</b></div>
           <div><span>অপেক্ষমাণ</span><b>${bn(DB.queue.length)}</b></div>
           <div><span>অডিট রেকর্ড</span><b>${bn(DB.audit.length)}</b></div>
-          <div><span>সংরক্ষণ</span><b>এই ব্রাউজারে</b></div></div>
-        <button class="btn gh sm w" style="margin-top:12px" id="rRe">${SI.refresh(15)} ডেমো ডেটা রিসেট</button></div>
+          <div><span>সংরক্ষণ</span><b>Firebase Cloud</b></div></div></div>
       <button class="btn w" style="margin-top:12px" id="rSave">${SI.check(16)} সংরক্ষণ করুন</button>`;
     el.querySelectorAll("[data-rl]").forEach(c=>c.onchange=()=>{r[c.dataset.rl]=c.checked;persist();renderSub("rules")});
-    $("#rRe").onclick=reseedAsk;
     $("#rSave").onclick=()=>{
       r.minAge=+$("#r_min").value||18;r.maxAge=+$("#r_max").value||60;r.interval=+$("#r_int").value||90;
       DB.integr.imgbbKey=$("#i_key").value.trim();

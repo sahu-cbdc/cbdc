@@ -629,7 +629,7 @@ function StaticShell() {
       <div className="toasts" id="toasts">
       </div>
       {" "}
-      {/* Shared demo state: same donors, requests and moderation queue in every HTML page */}
+      {/* Shared live state: same donors, requests and moderation queue across all pages (Firestore) */}
       {" "}
     </>
   );
@@ -853,7 +853,6 @@ function initPage() {
   "প্রোফাইল গোপন করা হয়েছে":"Profile hidden",
   "হুবহু \"মুছে ফেলুন\" লিখুন":"Type \"মুছে ফেলুন\" exactly",
   "যেমন: চমেক ব্লাড ব্যাংক":"e.g. CMCH Blood Bank",
-  "ডেমোতে লগআউট নিষ্ক্রিয়":"Log out is disabled in the demo",
   "আপনার জন্য গুরুত্বপূর্ণ":"Important for you",
   "অতিরিক্ত নিরাপত্তা স্তর":"An extra layer of security",
   "ছাপানোর কার্ড — দুই পাশ":"Printable card — both sides",
@@ -1205,7 +1204,6 @@ function initPage() {
   "সরে গেছেন":"You have left",
   "ছবি আপলোড":"Upload a photo",
   "শক্তিশালী":"Strong",
-  "ডেমো ডেটা":"Demo data",
   "আমার জন্য":"For me",
   "সাড়া দিন":"Respond",
   "ছবি বদলান":"Change photo",
@@ -1336,7 +1334,6 @@ function initPage() {
   "এখনই":"Just now",
   "সবুজ":"Green",
   "গাঢ়":"Dark",
-  "ডেমো":"Demo",
   "তথ্য":"Details",
   "লগইন":"Login",
   "চালু":"on",
@@ -3892,7 +3889,7 @@ function initPage() {
     saved:[]
   };
   
-  /* the whole account is persisted — nothing in the app is throw-away demo state */
+  /* the whole account is persisted */
   let SHARED_PULLING=false;
   function save(){try{localStorage.setItem(LS,JSON.stringify({
     account:STORE.account, donor:STORE.donor,
@@ -3909,12 +3906,12 @@ function initPage() {
     if(d.notif)Object.assign(STORE.notif,d.notif);
     if(d.security)Object.assign(STORE.security,d.security);
     if(d.saved)STORE.saved=d.saved;
-    /* legacy key from the demo build */
+    /* legacy key from an earlier build */
     if(!d.account&&d.ov)Object.assign(STORE.donor.ov,d.ov);
   }catch(e){}}
   load();
   
-  /* ══════════ DEMO DATA ══════════ */
+  /* ══════════ DATA ══════════ */
   /* ══════════ DATA (real, persisted in this browser) ══════════
      Nothing here is fake: every list starts empty and only grows from what the
      user actually does. Saved under localStorage["cbdc.data"] alongside the
@@ -4384,7 +4381,7 @@ function initPage() {
   /* ══════════ PUBLIC PROFILE MODE ══════════
      app.html doubles as the public profile page: app.html?uid=<donor id>.
      The public site hands its donor list over through localStorage (same
-     origin), so any donor listed there — demo or Firebase — resolves here
+     origin), so any donor listed there resolves here
      without duplicating a second profile page. */
   /* Public directory: Firebase is the single source of truth. The shared
      store (src/lib/store.ts) carries the live `donors` collection from
@@ -5968,7 +5965,7 @@ function initPage() {
   }
   
   /* ══════════ FIRST RUN ══════════
-     No demo identity ships with the app, so on the very first open we ask for
+     No default identity ships with the app, so on the very first open we ask for
      the minimum an account needs. Everything else is filled in later, from the
      screen that owns it. */
   /* club ID for a brand-new donor: CBDC-<year>-<4 digits derived from the uid> */
