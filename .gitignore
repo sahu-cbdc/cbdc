@@ -22,3 +22,9 @@ yarn-error.log*
 
 # Cloudflare wrangler
 .wrangler/
+
+# Environment variables (never commit these!)
+.env
+.env.local
+.env.production
+*.env

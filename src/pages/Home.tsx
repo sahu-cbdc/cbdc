@@ -4271,6 +4271,7 @@ function initPage() {
           hideAppModal();
           console.warn("Google login:", err);
           if(err && err.code === "auth/popup-closed-by-user") toast("Google লগইন বাতিল করা হয়েছে", true);
+          else if(err && err.code === "auth/configuration-not-found") uiAlert("Firebase Authentication সঠিকভাবে কনফিগার করা হয়নি। Firebase Console-এ Authentication enable করুন।", {type:"error", title:"Firebase Error"});
           else uiAlert("Google দিয়ে লগইন করা যায়নি: " + (err && err.message ? err.message : "অজানা ত্রুটি"), {type:"error", title:"লগইন ব্যর্থ"});
         }finally{ btn.disabled = false; }
       });
@@ -4296,6 +4297,7 @@ function initPage() {
         }catch(err){
           console.warn("Google signup:", err);
           if(err && err.code === "auth/popup-closed-by-user") toast("Google সাইন-আপ বাতিল করা হয়েছে", true);
+          else if(err && err.code === "auth/configuration-not-found") uiAlert("Firebase Authentication সঠিকভাবে কনফিগার করা হয়নি। Firebase Console-এ Authentication enable করুন।", {type:"error", title:"Firebase Error"});
           else uiAlert("Google দিয়ে অ্যাকাউন্ট তৈরি করা যায়নি: " + (err && err.message ? err.message : "অজানা ত্রুটি"), {type:"error", title:"ব্যর্থ হয়েছে"});
         }finally{ btn.disabled = false; }
       });
@@ -4357,7 +4359,7 @@ function initPage() {
             }
             await sendPasswordResetEmail(auth, recipient);
             success(recipient);
-          }catch(e){btn.disabled=false;btn.textContent="রিসেট লিংক পাঠান";err(e.message||"রিসেট লিংক পাঠানো যায়নি। আবার চেষ্টা করুন।")}
+          }catch(e){const code=e&&e.code||"";btn.disabled=false;btn.textContent="রিসেট লিংক পাঠান";err(code==="auth/configuration-not-found"?"Firebase Authentication সঠিকভাবে কনফিগার করা হয়নি।":(e.message||"রিসেট লিংক পাঠানো যায়নি। আবার চেষ্টা করুন।"))}
         };
         const success=(recipient)=>{
           body.innerHTML=`<div class="otp-success"><span>✓</span><h3>রিসেট লিংক পাঠানো হয়েছে</h3><p>${esc(maskRecovery(recipient))} ঠিকানায় একটি পাসওয়ার্ড রিসেট লিংক পাঠানো হয়েছে। ইমেইল খুলে লিংকে ক্লিক করে নতুন পাসওয়ার্ড সেট করুন।</p></div><div class="otp-actions"><button class="btn btn-green" type="button" id="otpDone">লগইনে ফিরুন</button></div>`;
@@ -4481,6 +4483,7 @@ function initPage() {
           const msg = code === "auth/email-already-in-use" ? "এই ইমেইলে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।"
                     : code === "auth/invalid-email" ? "ইমেইল ঠিকানাটি সঠিক নয়।"
                     : code === "auth/weak-password" ? "পাসওয়ার্ড খুব দুর্বল, কমপক্ষে ৬ অক্ষর দিন।"
+                    : code === "auth/configuration-not-found" ? "Firebase Authentication সঠিকভাবে কনফিগার করা হয়নি। Firebase Console-এ Authentication enable করুন।"
                     : "অ্যাকাউন্ট তৈরি করা যায়নি: " + (err && err.message ? err.message : "অজানা ত্রুটি");
           showMessage(message, msg, "error");
           uiAlert(msg, {type:"error", title:"অ্যাকাউন্ট তৈরি ব্যর্থ"});
@@ -4518,6 +4521,7 @@ function initPage() {
             :code==="auth/too-many-requests"?"অনেকবার ভুল চেষ্টা হয়েছে। কিছুক্ষণ পর আবার চেষ্টা করুন অথবা পাসওয়ার্ড রিসেট করুন।"
             :code==="auth/user-disabled"?"এই অ্যাকাউন্টটি নিষ্ক্রিয় করা হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।"
             :code==="auth/network-request-failed"?"নেটওয়ার্ক সংযোগ নেই। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।"
+            :code==="auth/configuration-not-found"?"Firebase Authentication সঠিকভাবে কনফিগার করা হয়নি। Firebase Console-এ Authentication enable করুন।"
             :"লগইন করা যায়নি: "+(err&&err.message?err.message:"অজানা ত্রুটি");
           showMessage($("#loginMessage"),msg,"error");uiAlert(msg,{type:"error",title:"লগইন ব্যর্থ"});
         }

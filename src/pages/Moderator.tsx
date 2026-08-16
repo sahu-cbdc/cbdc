@@ -2971,7 +2971,7 @@ function initPage() {
           s.close();renderSub("security");toast("পাসওয়ার্ড বদলানো হয়েছে","ok");
         }catch(e){
           const code=e&&e.code||"";
-          toast(code==="auth/wrong-password"||code==="auth/invalid-credential"?"বর্তমান পাসওয়ার্ড সঠিক নয়":(e&&e.message?e.message:"পাসওয়ার্ড পরিবর্তন করা যায়নি"),"er");
+          toast(code==="auth/wrong-password"||code==="auth/invalid-credential"?"বর্তমান পাসওয়ার্ড সঠিক নয়":code==="auth/configuration-not-found"?"Firebase Authentication সঠিকভাবে কনফিগার করা হয়নি।":(e&&e.message?e.message:"পাসওয়ার্ড পরিবর্তন করা যায়নি"),"er");
         }};
     }
     if(a==="photo"){
