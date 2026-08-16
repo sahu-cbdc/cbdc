@@ -9,7 +9,7 @@
 import { useEffect } from "react";
 import "../lib/store";
 import { initFirebase as initSharedFirebase } from "../lib/firebase";
-import { navigateToPage } from "../lib/router";
+import { navigateToPage, screenPath, panelSubPath } from "../lib/router";
 import { authErrorMessage } from "../lib/authx";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage, getImgbbKey, saveImgbbKey } from "../lib/imgbb";
@@ -2428,7 +2428,11 @@ function initPage() {
     if(sub){$("#s-sub").classList.add("on");renderSub(sub)}
     else{$("#s-"+id).classList.add("on");RENDER[id]()}
     paintTop();paintNav();
-    if(push){const h=sub?`#${id}/${sub}`:`#${id}`;if(location.hash!==h)location.hash=h}
+    if(push){
+      /* URL-এ clean path বসে: /admin/<screen>/<sub> — কোনো "#" নয় */
+      const p=screenPath("admin",id,sub||null)+location.search;
+      try{ if(location.pathname+location.search!==p)history.pushState(null,"",p); }catch(e){}
+    }
     window.scrollTo({top:0,behavior:"instant"});
   }
   function paintNav(){
@@ -2447,7 +2451,7 @@ function initPage() {
         <button class="bell" id="tbell" aria-label="বিজ্ঞপ্তি">${SI.bell(21)}${badge()}</button>`;
     }else{
       t.className="top";
-      t.innerHTML=`<a class="brand" href="#home" data-nav="home">
+      t.innerHTML=`<a class="brand" href="${screenPath("admin","home")}" data-nav="home">
           <span class="lg"><img src="${LOGO}" alt="CBDC লোগো"></span>
           <span class="btx"><b>চকবাজার ব্লাড ডোনার'স ক্লাব</b><small>${esc(PANEL.label)}</small></span></a>
         <nav class="dnav">${NAV().map(n=>{const c=(!ME.prefs||ME.prefs.badge!==false)&&n.count?n.count():0;
@@ -2468,11 +2472,14 @@ function initPage() {
     const s=e.target.closest("[data-sub]");
     if(s){go(CUR,s.dataset.sub);return}
   });
-  window.addEventListener("hashchange",()=>{
-    const [a,b]=location.hash.replace("#","").split("/");
+  const reRoute=()=>{
+    const seg=panelSubPath("admin");
+    const [a,b]=(seg||location.hash.replace("#","")).split("/");
     if(!a)return go("home",null,false);
     if(RENDER[a]&&(a!==CUR||(b||null)!==SUB))go(a,b||null,false);
-  });
+  };
+  window.addEventListener("popstate",reRoute);
+  window.addEventListener("hashchange",reRoute); /* পুরোনো #hash লিংক compat */
   
   /* ══════════ notification panel (same shape as the app's) ══════════ */
   function openNotifs(){
@@ -4580,7 +4587,7 @@ function initPage() {
     watchI18n();
     if(isEN())document.documentElement.lang="en";
     const proceed=()=>{
-      const [a,b]=location.hash.replace("#","").split("/");
+      const [a,b]=(panelSubPath("admin")||location.hash.replace("#","")).split("/");
       go(RENDER[a]?a:"home",b||null,false);
       if(isEN())translateNode(document.body);
     };

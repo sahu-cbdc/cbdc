@@ -9,7 +9,7 @@
 import { useEffect } from "react";
 import "../lib/store";
 import { initFirebase as initSharedFirebase, isFirebaseReady } from "../lib/firebase";
-import { navigateToPage } from "../lib/router";
+import { navigateToPage, pagePath, appBase } from "../lib/router";
 import {
   authErrorMessage,
   googleSignInWithFallback,
@@ -1330,7 +1330,7 @@ function StaticShell() {
         {" "}
         <div className="container nav-shell">
           {" "}
-          <a className="brand" href="#home" data-route="home" aria-label="চকবাজার ব্লাড ডোনার'স ক্লাব হোম">
+          <a className="brand" href={appBase()} data-route="home" aria-label="চকবাজার ব্লাড ডোনার'স ক্লাব হোম">
             <img className="logo" data-logo={true} alt="CBDC লোগো" />
             <span className="brand-text">
               <strong>
@@ -1351,35 +1351,35 @@ function StaticShell() {
           {" "}
           <nav className="nav" id="mainNav" aria-label="প্রধান নেভিগেশন">
             {" "}
-            <a href="#home" data-route="home" className="active">
+            <a href={appBase()} data-route="home" className="active">
               {"হোম"}
             </a>
             {" "}
-            <a href="#dashboard" data-route="dashboard">
+            <a href={appBase()+"login"} data-route="dashboard">
               {"লগইন"}
             </a>
             {" "}
-            <a href="#signup" data-route="signup">
+            <a href={appBase()+"signup"} data-route="signup">
               {"অ্যাকাউন্ট তৈরি"}
             </a>
             {" "}
-            <a href="#donor-search" data-route="homeSearch">
+            <a href={appBase()+"donor-search"} data-route="homeSearch">
               {"ডোনার খুঁজুন"}
             </a>
             {" "}
-            <a href="#register" data-route="register">
+            <a href={appBase()+"register"} data-route="register">
               {"ডোনার নিবন্ধন"}
             </a>
             {" "}
-            <a href="#emergency" data-route="emergency">
+            <a href={appBase()+"emergency"} data-route="emergency">
               {"ইমারজেন্সি আবেদন"}
             </a>
             {" "}
-            <a href="#eligibility" data-route="eligibility">
+            <a href={appBase()+"eligibility"} data-route="eligibility">
               {"ডোনার যোগ্যতা"}
             </a>
             {" "}
-            <a href="#about" data-route="homeAbout">
+            <a href={appBase()+"about"} data-route="homeAbout">
               {"আমাদের সম্পর্কে"}
             </a>
             {" "}
@@ -1426,13 +1426,13 @@ function StaticShell() {
                   {"চকবাজার, বাকলিয়া, কোতোয়ালি ও চাঁদগাঁওসহ সমগ্র চট্টগ্রামে জরুরি রক্তের প্রয়োজনে ভেরিফাইড রক্তদাতাদের সাথে এখনই যোগাযোগ করুন।"}
                 </p>
                 <div className="hero-actions">
-                  <a className="btn btn-red" href="#donor-search" data-route="homeSearch">
+                  <a className="btn btn-red" href={appBase()+"donor-search"} data-route="homeSearch">
                     {"রক্তদাতা খুঁজুন "}
                     <span>
                       {"→"}
                     </span>
                   </a>
-                  <a className="btn btn-outline" href="#register" data-route="register">
+                  <a className="btn btn-outline" href={appBase()+"register"} data-route="register">
                     {"রক্তদাতা হিসেবে যোগ দিন"}
                   </a>
                 </div>
@@ -2004,7 +2004,7 @@ function StaticShell() {
           <section className="form-section">
             <div className="narrow">
               {" "}
-              <a className="prof-back" href="#donor-search">
+              <a className="prof-back" href={appBase()+"donor-search"} data-route="homeSearch">
                 {"← রক্তদাতা তালিকায় ফিরুন"}
               </a>
               {" "}
@@ -2432,7 +2432,7 @@ function StaticShell() {
                   <p>
                     {"চকবাজার ব্লাড ডোনার'স ক্লাবে যুক্ত হতে নতুন একটি অ্যাকাউন্ট তৈরি করুন।"}
                   </p>
-                  <a className="btn btn-outline" href="#signup" data-route="signup" style={{ width: "100%" }}>
+                  <a className="btn btn-outline" href={appBase()+"signup"} data-route="signup" style={{ width: "100%" }}>
                     {"অ্যাকাউন্ট তৈরি করুন"}
                   </a>
                 </div>
@@ -2456,7 +2456,7 @@ function StaticShell() {
                 <p id="alreadyTitle">
                   {"—"}
                 </p>
-                <a id="alreadyLink" className="btn btn-green" href="#/admin" style={{ width: "100%", marginTop: "6px" }}>
+                <a id="alreadyLink" className="btn btn-green" href="/" style={{ width: "100%", marginTop: "6px" }}>
                   {"ড্যাশবোর্ডে যান "}
                   <span>
                     {"→"}
@@ -2823,7 +2823,7 @@ function StaticShell() {
                   </button>
                   <div className="auth-foot">
                     {"ইতিমধ্যে অ্যাকাউন্ট আছে? "}
-                    <a href="#login" data-route="login">
+                    <a href={appBase()+"login"} data-route="login">
                       {"লগইন করুন"}
                     </a>
                   </div>
@@ -2856,17 +2856,17 @@ function StaticShell() {
               </h3>
               <ul className="footer-links">
                 <li>
-                  <a href="#donor-search" data-route="homeSearch">
+                  <a href={appBase()+"donor-search"} data-route="homeSearch">
                     {"রক্তদাতা খুঁজুন"}
                   </a>
                 </li>
                 <li>
-                  <a href="#register" data-route="register">
+                  <a href={appBase()+"register"} data-route="register">
                     {"রক্তদাতা নিবন্ধন"}
                   </a>
                 </li>
                 <li>
-                  <a href="#emergency" data-route="emergency">
+                  <a href={appBase()+"emergency"} data-route="emergency">
                     {"জরুরি রক্তের আবেদন"}
                   </a>
                 </li>
@@ -3162,8 +3162,8 @@ function initPage() {
         sessionStorage.setItem("cbdcUserPermissions",JSON.stringify(perms||{}));
         sessionStorage.setItem("cbdcAuthMode",mode);
       }
-      /* প্যানেল লিংক — "#/admin" আকারের পেজ-হ্যাশ (src/lib/router.ts এটি ধরে পেজ বদলায়) */
-      function dashPage(role){ return role==="admin" ? "#/admin" : role==="moderator" ? "#/moderator" : "#/home"; }
+      /* প্যানেল লিংক — clean path URL ("/admin" ইত্যাদি; src/lib/router.ts) */
+      function dashPage(role){ return role==="admin" ? pagePath("admin") : role==="moderator" ? pagePath("moderator") : appBase(); }
       // Firestore `admins` ডকুমেন্টের role ফিল্ড বদলালেই ব্যবহারকারীর প্যানেল বদলে যায় (real-time)
       // ইতিমধ্যে লগইন করা থাকলে লগইন ভিউতে "ড্যাশবোর্ডে যান" কার্ড দেখায়
       function renderLoginGate(){
@@ -3313,7 +3313,7 @@ function initPage() {
         ☎ কল করুন: ${esc(d.phone)}
       </a>
       <!-- ডানে Profile -->
-      <a class="download-btn" href="#profile/${encodeURIComponent(d.id || donorIdVal)}"
+      <a class="download-btn" href="${appBase()}profile/${encodeURIComponent(d.id || donorIdVal)}"
          data-prof="1" data-id="${esc(d.id || donorIdVal)}">
         প্রোফাইল
       </a>
@@ -3727,7 +3727,7 @@ function initPage() {
           body.innerHTML = `<div class="pmiss"><div class="pmiss-ic">🔍</div>
             <b>প্রোফাইল পাওয়া যায়নি</b>
             <p>রক্তদাতাটি আর তালিকায় নেই অথবা লিংকটি সঠিক নয়।</p>
-            <a class="btn btn-green" href="#donor-search">রক্তদাতা তালিকায় ফিরুন</a></div>`;
+            <a class="btn btn-green" href="${appBase()}donor-search">রক্তদাতা তালিকায় ফিরুন</a></div>`;
           return;
         }
         body.innerHTML = profileHTML(profileViewOf(d, i));
@@ -3742,12 +3742,13 @@ function initPage() {
         body.querySelector('[data-pa="nophone"]')?.addEventListener("click",
           ()=>toast("এই রক্তদাতা নম্বর প্রকাশ করেননি", true));
       }
-      /* তালিকা থেকে প্রোফাইল খোলা — নিবন্ধন পেজের মতোই নতুন পেজ, একই ট্যাবে।
-         হ্যাশ আগে থেকেই একই হলে hashchange ঘটে না, তাই নিজে রেন্ডার করি। */
+      /* তালিকা থেকে প্রোফাইল খোলা — URL-এ পরিষ্কার "/profile/<id>" পাথ বসে
+         (কোনো "#" নয়); Back চাপলে আগের ভিউতে ফেরত। */
       window.openDonorProfile = function(idv){
-        const target = "#profile/" + encodeURIComponent(idv);
-        if(location.hash === target){ showView("profile"); renderProfile(idv); }
-        else location.hash = target;
+        const target = appBase() + "profile/" + encodeURIComponent(idv);
+        try{ if(location.pathname !== target) history.pushState(null, "", target + location.search); }catch(e){}
+        showView("profile");
+        renderProfile(idv);
       };
       document.addEventListener("click", e=>{
         const a = e.target.closest('a[data-prof="1"]'); if(!a) return;
@@ -4636,28 +4637,54 @@ function initPage() {
       initFirebase().then(()=>{ renderPublic(); renderGallery(); renderLoginGate(); renderAuthState(); resumeGoogleRedirect(); watchAuthMirror(); });
       renderAuthState();
   
-      // Hash deep-link (index.html#dashboard ইত্যাদি — ড্যাশবোর্ড পেজ থেকে ফেরার লিংক)
-      function applyHash(){
-        const raw = location.hash || "";
-        const h = raw.toLowerCase();
-        if(h.startsWith("#profile/")){
-          const id = decodeURIComponent(raw.slice("#profile/".length));
+      /* Clean URL deep-link — "/dashboard", "/signup", "/profile/<id>" … (কোনো "#" নয়)
+         পুরোনো hash লিংক (#dashboard)ও কাজ করে এবং স্বয়ংক্রিয়ভাবে অ্যাড্রেস বারে
+         clean path বসে যায়। */
+      function applyRoute(){
+        let rel = "";
+        try{
+          const p = location.pathname || "/";
+          const b = appBase();
+          rel = p.toLowerCase().startsWith(b.toLowerCase()) ? p.slice(b.length) : p.replace(/^\/+/, "");
+        }catch(e){}
+        rel = rel.replace(/\/+$/, "");
+        if(!rel && location.hash && location.hash.length>1){
+          /* পুরোনো hash লিংক compat — clean পাথে স্থানান্তর */
+          const raw = location.hash;
+          const h = raw.toLowerCase();
+          if(h.startsWith("#profile/")){ rel = "profile/" + raw.slice("#profile/".length); }
+          else if(h==="#dashboard"||h==="#login") rel = "login";
+          else if(h==="#signup"||h==="#create-account") rel = "signup";
+          else if(h==="#register") rel = "register";
+          else if(h==="#emergency") rel = "emergency";
+          else if(h==="#eligibility") rel = "eligibility";
+          else if(h==="#donor-search") rel = "donor-search";
+          else if(h==="#gallery") rel = "gallery";
+          else if(h==="#about") rel = "about";
+          else if(h==="#home"||h==="#home-footer"||h==="#/home") rel = "";
+          else return; /* অচেনা hash — পুরোনো behavior-এর মতোই উপেক্ষা */
+          try{ history.replaceState(null,"",appBase()+rel+location.search); }catch(e){}
+        }
+        const seg = rel.split("/").filter(Boolean);
+        const v = (seg[0]||"").toLowerCase();
+        if(v==="profile" && seg.length>1){
           showView("profile");
-          renderProfile(id);
+          try{ renderProfile(decodeURIComponent(seg.slice(1).join("/"))); }catch(e){ renderProfile(seg.slice(1).join("/")); }
           return;
         }
-        if(h==="#dashboard"||h==="#login") showView("login");
-        else if(h==="#signup"||h==="#create-account") showView("signup");
-        else if(h==="#register") showView("register");
-        else if(h==="#emergency") showView("emergency");
-        else if(h==="#eligibility") showView("eligibility");
-        else if(h==="#donor-search") showView("home","#donor-search");
-        else if(h==="#gallery") showView("home","#gallery");
-        else if(h==="#about") showView("home","#about");
-        else if(h==="#home"||h==="#home-footer"||h==="") showView("home");
+        if(v==="dashboard"||v==="login") showView("login");
+        else if(v==="signup"||v==="create-account") showView("signup");
+        else if(v==="register") showView("register");
+        else if(v==="emergency") showView("emergency");
+        else if(v==="eligibility") showView("eligibility");
+        else if(v==="donor-search") showView("home","#donor-search");
+        else if(v==="gallery") showView("home","#gallery");
+        else if(v==="about") showView("home","#about");
+        else showView("home");
       }
-      window.addEventListener("hashchange", applyHash);
-      applyHash();
+      window.addEventListener("popstate", applyRoute);
+      window.addEventListener("hashchange", applyRoute); /* পুরোনো hash লিংক compat */
+      applyRoute();
   
   
 }

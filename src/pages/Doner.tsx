@@ -9,7 +9,7 @@
 import { useEffect } from "react";
 import "../lib/store";
 import { initFirebase as initSharedFirebase } from "../lib/firebase";
-import { navigateToPage } from "../lib/router";
+import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
 import { authErrorMessage } from "../lib/authx";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage } from "../lib/imgbb";
@@ -4094,7 +4094,11 @@ function initPage() {
     if(sub){ $("#s-sub").classList.add("on"); renderSub(sub); }
     else{ $("#s-"+id).classList.add("on"); RENDER[id](); }
     paintTop();paintNav();
-    if(push){const h=sub?`#${id}/${sub}`:`#${id}`; if(location.hash!==h)location.hash=h;}
+    if(push){
+      /* URL-এ clean path বসে: /doner/<screen>/<sub> — কোনো "#" নয় */
+      const p=screenPath("doner",id,sub||null)+location.search;
+      try{ if(location.pathname+location.search!==p)history.pushState(null,"",p); }catch(e){}
+    }
     window.scrollTo({top:0,behavior:"instant"});
   }
   function paintNav(){
@@ -4105,7 +4109,7 @@ function initPage() {
     const t=$("#top");
     if(PUBLIC_MODE){
       t.className="top";
-      t.innerHTML=`<a class="brand" href="#/home">
+      t.innerHTML=`<a class="brand" href="${appBase()}">
           <span class="lg"><img src="${LOGO}" alt="CBDC লোগো"></span>
           <b>চকবাজার ব্লাড ডোনার'স ক্লাব</b></a><div class="sp"></div>`;
       return;
@@ -4118,7 +4122,7 @@ function initPage() {
         <button class="bell" id="tbell" aria-label="বিজ্ঞপ্তি">${ICON.bell(21)}${badge()}</button>`;
     }else{
       t.className="top";
-      t.innerHTML=`<a class="brand" href="#home" data-nav="home">
+      t.innerHTML=`<a class="brand" href="${screenPath("doner","home")}" data-nav="home">
           <span class="lg"><img src="${LOGO}" alt="CBDC লোগো"></span><b>চকবাজার ব্লাড ডোনার'স ক্লাব</b></a>
         <nav class="dnav">${NAV.map(n=>`<button data-nav="${n.id}" class="${CUR===n.id?"on":""}"
           title="${n.label}">${n.icon(22)}<span>${n.label}</span></button>`).join("")}</nav>
@@ -4134,11 +4138,14 @@ function initPage() {
     if(e.target.closest("#tback")){go(CUR);return}
     if(e.target.closest("#tbell")){openNotifs();return}
   });
-  window.addEventListener("hashchange",()=>{
-    const [a,b]=location.hash.replace("#","").split("/");
+  const reRoute=()=>{
+    const seg=panelSubPath("doner");
+    const [a,b]=(seg||location.hash.replace("#","")).split("/");
     if(!a)return go("home",null,false);
     if(RENDER[a])go(a,b||null,false);
-  });
+  };
+  window.addEventListener("popstate",reRoute);
+  window.addEventListener("hashchange",reRoute); /* পুরোনো #hash লিংক compat */
   
   /* ══════════ SCREEN: HOME ══════════ */
   function rHome(){
@@ -4468,7 +4475,7 @@ function initPage() {
       <div class="ic">${ICON.search(26)}</div>
       <b>প্রোফাইল পাওয়া যায়নি</b>
       <p>রক্তদাতাটি আর তালিকায় নেই অথবা লিংকটি সঠিক নয়</p>
-      ${PUBLIC_MODE?`<a class="btn gh" href="#/home">${ICON.home?ICON.home(15):""} রক্তদাতা তালিকায় ফিরুন</a>`:""}
+      ${PUBLIC_MODE?`<a class="btn gh" href="${appBase()}">${ICON.home?ICON.home(15):""} রক্তদাতা তালিকায় ফিরুন</a>`:""}
       </div></div>`;return}
     const saved=STORE.saved.includes(v.name);
     el.innerHTML=`
@@ -6051,7 +6058,7 @@ function initPage() {
   document.body.dataset.lang=STORE.prefs.lang;
   paintNav();
   if(!bootPublicProfile()){
-    const [h0,h1]=location.hash.replace("#","").split("/");
+    const [h0,h1]=(panelSubPath("doner")||location.hash.replace("#","")).split("/");
     go(RENDER[h0]?h0:"home",h1||null,false);
   }
   

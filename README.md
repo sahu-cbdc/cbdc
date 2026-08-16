@@ -4,17 +4,24 @@
 **১০০% হুবহু** রাখা হয়েছে। Backend/Data layer **Firebase**-এর সাথে যুক্ত এবং প্রজেক্টটি
 **যেকোনো স্ট্যাটিক হোস্টিং সাইটে** run করা যায়।
 
-## ফাইল ম্যাপিং
+## ফাইল ম্যাপিং ও URL
 
 এখন **একটিই HTML entry** (`index.html`) — সব পেজ `.tsx` কম্পোনেন্ট হিসেবে
-এই entry থেকেই বুট হয় (src/main.tsx + src/lib/router.ts)।
+এই entry থেকেই বুট হয় (src/main.tsx + src/lib/router.ts)। সব URL
+**hash-বিহীন clean path** (কোনো `#` নেই):
 
-| পেজ | React কম্পোনেন্ট |
+| URL | পেজ / ভিউ |
 | --- | --- |
-| পাবলিক সাইট + লগইন | `src/pages/Home.tsx` |
-| ডোনার প্যানেল | `src/pages/Doner.tsx` |
-| অ্যাডমিন প্যানেল | `src/pages/Admin.tsx` |
-| মডারেটর প্যানেল | `src/pages/Moderator.tsx` |
+| `/` | পাবলিক সাইট (`src/pages/Home.tsx`) |
+| `/signup`, `/login`, `/register`, `/emergency`, `/eligibility`, `/about` | হোমপেজের ভেতরের ভিউ |
+| `/profile/<id>` | পাবলিক ডোনার প্রোফাইল ভিউ |
+| `/doner`, `/doner/<screen>` | ডোনার প্যানেল (`src/pages/Doner.tsx`) |
+| `/admin`, `/admin/<screen>` | অ্যাডমিন প্যানেল (`src/pages/Admin.tsx`) |
+| `/moderator`, `/moderator/<screen>` | মডারেটর প্যানেল (`src/pages/Moderator.tsx`) |
+| `/?uid=<donor id>` | ডোনার কার্ড মোড (শেয়ারযোগ্য পাবলিক কার্ড) |
+
+পুরোনো লিংক (`/doner.html?uid=…`, `#/admin`, `#dashboard` ইত্যাদি) স্বয়ংক্রিয়ভাবে
+সঠিক পেজে খুলে এবং clean URL-এ রূপান্তরিত হয় — শেয়ার করা পুরোনো লিংক ভাঙে না।
 
 
 ## যেকোনো হোস্টিং সাইটে চালানো
@@ -30,7 +37,9 @@ Build করলে **একটি `index.html` + assets** তৈরি হয়
 Cloudflare Workers-এ deploy-এর জন্য `wrangler.jsonc`-এ SPA fallback
 (`not_found_handling: single-page-application`) সেট করা আছে, আর Firebase
 Hosting-এর জন্য `firebase.json`-এ rewrite (`** → /index.html`) আছে — তাই
-পুরোনো ভাগ করা লিংক (যেমন `/doner.html?uid=…`) ভাঙে না।
+`/doner`, `/admin`, `/profile/...` যেকোনো clean path সরাসরি খুললেও `index.html`-ই
+পরিবেশিত হয় (পুরোনো ভাগ করা লিংকও ভাঙে না)। Nginx/Apache-এ হোস্ট করলে একই ধরনের
+fallback (যেকোনো path → index.html) কনফিগার করতে হবে।
 
 ```bash
 npm run build      # dist/ ফোল্ডার তৈরি
