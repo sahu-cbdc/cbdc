@@ -1914,7 +1914,7 @@ function StaticShell() {
                       </label>
                       <input id="donorPhone" name="phone" required={true} inputMode="numeric" maxLength="11" placeholder="01XXXXXXXXX" />
                       <span className="note">
-                        {"উদাহরণ: 01617725464"}
+                        {`উদাহরণ: ${SITE.phone}`}
                       </span>
                     </div>
                     <div className="field">
@@ -2716,7 +2716,7 @@ function StaticShell() {
                       </label>
                       <input id="suPhone" name="phone" required={true} inputMode="numeric" maxLength="11" placeholder="01XXXXXXXXX" />
                       <span className="note">
-                        {"উদাহরণ: 01617725464"}
+                        {`উদাহরণ: ${SITE.phone}`}
                       </span>
                     </div>
                     {" "}

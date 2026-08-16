@@ -3031,7 +3031,7 @@ function initPage() {
         [tp("ভুল বা অপব্যবহার","Misuse"),tp("মিথ্যা জরুরি আবেদন, ভুয়া রক্তদানের রেকর্ড বা অন্যের ছবি-তথ্য ব্যবহার করা যাবে না। ক্লাব যেকোনো সময় যাচাই চাইতে পারে এবং প্রয়োজনে অ্যাকাউন্ট স্থগিত বা বাতিল করতে পারে।","False emergency requests, fake donation records and using another person's photo or information are not allowed. The club may ask for verification at any time and may suspend or cancel an account when needed.")],
         [tp("দায়সীমা","Limits of liability"),tp("ক্লাব রক্তদাতা ও গ্রহীতার মধ্যে শুধু যোগাযোগের সুযোগ করে দেয়। রক্তদানের সিদ্ধান্ত, শারীরিক পরীক্ষা, ক্রসম্যাচিং ও চিকিৎসা সংক্রান্ত সব দায়িত্ব সংশ্লিষ্ট হাসপাতাল ও ব্যক্তির। এ থেকে উদ্ভূত কোনো ক্ষতির জন্য ক্লাব দায়ী থাকবে না।","The club only creates the opportunity for donor and recipient to contact each other. The decision to donate, physical screening, cross-matching and all medical matters are the responsibility of the hospital and the individuals involved. The club is not liable for any resulting harm.")],
         [tp("শর্ত পরিবর্তন","Changes to these terms"),tp("প্রয়োজনে এই শর্তাবলী হালনাগাদ করা হতে পারে। বড় পরিবর্তন হলে অ্যাপে বিজ্ঞপ্তির মাধ্যমে জানানো হবে।","These terms may be updated when necessary. Significant changes will be announced through an in-app notification.")],
-        [tp("যোগাযোগ","Contact"),tp("শর্তাবলী নিয়ে কোনো প্রশ্ন থাকলে হেল্পলাইন ০১৬১৭৭২৫৪৬৪ নম্বরে যোগাযোগ করুন।","If you have questions about these terms, call the helpline on 01617725464.")]]},
+        [tp("যোগাযোগ","Contact"),tp(`শর্তাবলী নিয়ে কোনো প্রশ্ন থাকলে হেল্পলাইন ${bn(SITE.phone)} নম্বরে যোগাযোগ করুন।`,`If you have questions about these terms, call the helpline on ${SITE.phone}.`)]]},
   
     pol_privacy:{title:"গোপনীয়তা নীতি",updated:tp("১ আগস্ট ২০২৬","1 August 2026"),
       intro:tp("আপনার তথ্য আমাদের কাছে গুরুত্বপূর্ণ। কী তথ্য নেওয়া হয়, কেন নেওয়া হয় এবং কে দেখতে পায় — এই নীতিতে তা পরিষ্কারভাবে বলা আছে।","Your information matters to us. This policy explains clearly what is collected, why it is collected and who can see it."),
@@ -3044,7 +3044,7 @@ function initPage() {
         [tp("তথ্য সংরক্ষণ","How long we keep it"),tp("অ্যাকাউন্ট সক্রিয় থাকা পর্যন্ত তথ্য সংরক্ষিত থাকে। অ্যাকাউন্ট মুছে ফেলার অনুরোধ করলে ২৪ ঘণ্টার মধ্যে সব ব্যক্তিগত তথ্য মুছে যায়। শুধু নামবিহীন রক্তদানের পরিসংখ্যান থেকে যায়, কারণ তা অন্য রোগীর চিকিৎসার রেকর্ডের সাথে যুক্ত।","Information is kept while the account is active. If you request deletion, all personal information is removed within 24 hours. Only anonymous donation statistics remain, because they are tied to other patients' treatment records.")],
         [tp("নিরাপত্তা","Security"),tp("পাসওয়ার্ড এনক্রিপ্ট করে রাখা হয়। অচেনা ডিভাইসে লগইন হলে আপনাকে জানানো হয় এবং যেকোনো ডিভাইস থেকে দূর থেকে লগআউট করতে পারবেন।","Passwords are stored encrypted. You are alerted when a login happens on an unknown device, and you can sign out of any device remotely.")],
         [tp("শিশুদের তথ্য","Children"),tp("১৮ বছরের কম বয়সীদের জন্য এই সেবা নয় এবং আমরা জেনেশুনে তাদের তথ্য সংগ্রহ করি না।","This service is not for anyone under 18, and we do not knowingly collect their information.")],
-        [tp("যোগাযোগ","Contact"),tp("গোপনীয়তা নিয়ে কোনো প্রশ্ন বা অনুরোধ থাকলে হেল্পলাইন ০১৬১৭৭২৫৪৬৪ নম্বরে জানান।","For any privacy question or request, call the helpline on 01617725464.")]]},
+        [tp("যোগাযোগ","Contact"),tp(`গোপনীয়তা নিয়ে কোনো প্রশ্ন বা অনুরোধ থাকলে হেল্পলাইন ${bn(SITE.phone)} নম্বরে জানান।`,`For any privacy question or request, call the helpline on ${SITE.phone}.`)]]},
   
     pol_donate:{title:"রক্তদান নির্দেশিকা",updated:tp("১ আগস্ট ২০২৬","1 August 2026"),
       intro:tp("নিরাপদ রক্তদানের জন্য নিচের নির্দেশনাগুলো মেনে চলুন। এগুলো সাধারণ পরামর্শ — চূড়ান্ত সিদ্ধান্ত সবসময় হাসপাতালের চিকিৎসকের।","Follow the guidance below for safe donation. These are general suggestions — the final decision always rests with the doctor at the hospital."),
@@ -3069,7 +3069,7 @@ function initPage() {
         <p class="mut" style="font-size:.82rem;line-height:1.8;margin:0">${esc(x[1])}</p></div>`).join("")}
       </div>
       <p class="mut" style="font-size:.74rem;margin-top:18px;padding-top:12px;border-top:1px solid var(--line)">
-        চকবাজার ব্লাড ডোনার\u0027স ক্লাব · হেল্পলাইন ০১৬১৭৭২৫৪৬৪</p>`,
+        ${SITE.name} · হেল্পলাইন ${bn(SITE.phone)}</p>`,
       `<button class="btn" data-close style="flex:1">বুঝেছি</button>`);
     return s;
   }
