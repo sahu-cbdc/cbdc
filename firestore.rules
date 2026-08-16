@@ -84,9 +84,17 @@ service cloud.firestore {
       allow write: if isStaff();
     }
 
-    // ── gallery — published images are public ─────────────────────────────
+    // ── gallery — published images are public (ImgBB URL + metadata) ──────
     match /gallery/{id} {
       allow read: if isPublished() || isStaff();
+      allow write: if isStaff();
+    }
+
+    // ── settings — app settings (e.g. settings/imgbb = ImgBB API key) ─────
+    // ImgBB key is a public client-side key, so anyone can read it; only
+    // staff may change it from the Admin Settings screen.
+    match /settings/{id} {
+      allow read: if true;
       allow write: if isStaff();
     }
   }

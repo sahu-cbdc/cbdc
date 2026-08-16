@@ -4,8 +4,10 @@
  * Single, shared Firebase instance for the whole app:
  *   - Firebase Authentication (email/password + Google) for login / register /
  *     logout / session,
- *   - Cloud Firestore as the primary data source for all app data,
- *   - (Storage reserved for future media uploads).
+ *   - Cloud Firestore as the primary data source for all app data.
+ *
+ * ছবি Firebase Storage-এ সংরক্ষণ করা হয় না — image hosting-এর জন্য ImgBB API
+ * ব্যবহার করা হয় (দেখুন src/lib/imgbb.ts)। তাই Storage এখানে initialized হয় না।
  *
  * The page logic uses dynamic `import("firebase/...")`; this module
  * centralises that into one typed singleton so every page shares the same app
@@ -15,7 +17,6 @@
 import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
 import { getFirestore, type Firestore } from "firebase/firestore";
 import { getAuth, type Auth } from "firebase/auth";
-import { getStorage, type FirebaseStorage } from "firebase/storage";
 
 /**
  * Firebase project configuration (unchanged from the original HTML).
@@ -44,31 +45,26 @@ export const COLLECTIONS = {
   users: "users", // website user accounts
   admins: "admins", // admin / moderator role documents (email -> role)
   queue: "queue", // moderation queue (approvals, proofs, reports)
-  gallery: "gallery", // gallery images
+  gallery: "gallery", // gallery images (ImgBB URL + metadata)
   notices: "notices", // published notices
   accounts: "accounts", // panel / team account records
+  settings: "settings", // app settings (e.g. settings/imgbb — ImgBB API key)
 } as const;
 
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
 let auth: Auth | null = null;
-let storage: FirebaseStorage | null = null;
 let initError: Error | null = null;
 
 /** Initialise Firebase exactly once and return the shared services. */
-export function initFirebase(): { app: FirebaseApp; db: Firestore; auth: Auth; storage: FirebaseStorage } {
+export function initFirebase(): { app: FirebaseApp; db: Firestore; auth: Auth } {
   if (app && db && auth) {
-    return { app, db, auth, storage: storage as FirebaseStorage };
+    return { app, db, auth };
   }
   try {
     app = getApps().length ? getApp() : initializeApp(firebaseConfig);
     db = getFirestore(app);
     auth = getAuth(app);
-    try {
-      storage = getStorage(app);
-    } catch (e) {
-      storage = null;
-    }
     initError = null;
   } catch (e) {
     initError = e as Error;
@@ -80,7 +76,6 @@ export function initFirebase(): { app: FirebaseApp; db: Firestore; auth: Auth; s
     app: app as FirebaseApp,
     db: db as Firestore,
     auth: auth as Auth,
-    storage: storage as FirebaseStorage,
   };
 }
 
@@ -107,4 +102,4 @@ export function projectLabel(): string {
   return firebaseConfig.projectId;
 }
 
-export { app, db, auth, storage };
+export { app, db, auth };

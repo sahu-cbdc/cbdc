@@ -9,6 +9,7 @@
 import { useEffect } from "react";
 import "../lib/store";
 import { initFirebase as initSharedFirebase } from "../lib/firebase";
+import { uploadImage as imgbbUploadImage, getImgbbKey, saveImgbbKey } from "../lib/imgbb";
 
 /* ═══════════════════════════════════════════════════════════════════
    CSS — মূল admin.html-এর <style> ব্লক হুবহু কপি
@@ -2975,12 +2976,15 @@ function initPage() {
     }
     if(a==="photo"){
       const inp=document.createElement("input");inp.type="file";inp.accept="image/*";
-      inp.onchange=()=>{const f=inp.files[0];if(!f)return;
+      inp.onchange=async()=>{const f=inp.files[0];if(!f)return;
         if(f.size>5*1024*1024)return toast("ছবি ৫ MB-র কম হতে হবে","er");
-        const r=new FileReader();
-        r.onload=()=>{ME.photo=r.result;ME.photoSource="upload";
-          logMe("প্রোফাইল ছবি বদলানো হয়েছে","");back();toast("ছবি হালনাগাদ হয়েছে","ok")};
-        r.readAsDataURL(f)};
+        try{
+          /* ছবি ImgBB-তে upload → পাওয়া linkটাই প্রোফাইলে সেভ */
+          const res=await imgbbUploadImage(f);
+          ME.photo=res.url;ME.photoSource="upload";
+          logMe("প্রোফাইল ছবি বদলানো হয়েছে","");back();toast("ছবি হালনাগাদ হয়েছে","ok");
+        }catch(e){toast(e&&e.message?e.message:"ছবি আপলোড করা যায়নি","er")}
+      };
       inp.click();
     }
     if(a==="photoRm"){ME.photo="";ME.photoSource="";logMe("প্রোফাইল ছবি সরানো হয়েছে","");
@@ -4341,8 +4345,7 @@ function initPage() {
       <div class="f" style="margin-top:12px"><label>শিরোনাম</label>
         <input id="up_t" placeholder="যেমন: রক্তদান ক্যাম্প ২০২৬"></div>
       <div class="pgb hide" id="pg"><i></i></div>
-      <p class="hint2" style="margin-top:9px">${DB.integr.imgbbKey
-        ?"ImgBB কী পাওয়া গেছে — আপলোড হবে।":"ImgBB কী নেই — ছবিটি সাময়িকভাবে এই ডিভাইস থেকে দেখা যাবে।"}</p>`,
+      <p class="hint2" style="margin-top:9px">ছবি ImgBB-তে আপলোড হয়ে লিংক হিসেবে সংরক্ষণ হবে।</p>`,
       `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="up_ok">${SI.up(15)} আপলোড</button>`);
     const dz=s.q("#dz"),fi=s.q("#fi");let file=null,url="";
     dz.onclick=()=>fi.click();
@@ -4358,15 +4361,23 @@ function initPage() {
         <small>${bn((f.size/1024).toFixed(0))} KB</small>`;
       if(!s.q("#up_t").value)s.q("#up_t").value=f.name.replace(/\.[^.]+$/,"");
     }
-    s.q("#up_ok").onclick=()=>{
+    s.q("#up_ok").onclick=async()=>{
       if(!file)return toast("আগে একটি ছবি বাছুন","er");
       const t=s.q("#up_t").value.trim()||"শিরোনামহীন";
       const pg=s.q("#pg");pg.classList.remove("hide");
-      let p=0;const iv=setInterval(()=>{p+=ri(9,24);pg.firstElementChild.style.width=Math.min(100,p)+"%";
-        if(p>=100){clearInterval(iv);
-          DB.gallery.push({id:"IMG-"+(20+DB.gallery.length),title:t,url,status:"draft"});
-          logAudit("গ্যালারিতে ছবি যোগ",t,"gallery");persist();s.close();renderSub("gallery");
-          toast("ছবি যোগ হয়েছে — খসড়া অবস্থায়","ok")}},210);
+      const okBtn=s.q("#up_ok");okBtn.disabled=true;
+      pg.firstElementChild.style.width="12%";
+      try{
+        /* ছবি ImgBB-তে upload → link + metadata ডাটাবেসে (Firestore) সেভ */
+        const res=await imgbbUploadImage(file);
+        pg.firstElementChild.style.width="100%";
+        DB.gallery.push({id:"IMG-"+(20+DB.gallery.length),title:t,url:res.url,imageUrl:res.url,thumbUrl:res.thumbUrl,status:"draft"});
+        logAudit("গ্যালারিতে ছবি যোগ",t,"gallery");persist();s.close();renderSub("gallery");
+        toast("ছবি আপলোড হয়েছে — খসড়া অবস্থায়","ok");
+      }catch(e){
+        pg.classList.add("hide");okBtn.disabled=false;
+        toast(e&&e.message?e.message:"ছবি আপলোড করা যায়নি","er");
+      }
     };
   }
   
@@ -4518,9 +4529,11 @@ function initPage() {
           <div><span>সংরক্ষণ</span><b>Firebase Cloud</b></div></div></div>
       <button class="btn w" style="margin-top:12px" id="rSave">${SI.check(16)} সংরক্ষণ করুন</button>`;
     el.querySelectorAll("[data-rl]").forEach(c=>c.onchange=()=>{r[c.dataset.rl]=c.checked;persist();renderSub("rules")});
+    getImgbbKey().then(k=>{if(k){DB.integr.imgbbKey=k;const inp=$("#i_key");if(inp)inp.value=k;}});
     $("#rSave").onclick=()=>{
       r.minAge=+$("#r_min").value||18;r.maxAge=+$("#r_max").value||60;r.interval=+$("#r_int").value||90;
       DB.integr.imgbbKey=$("#i_key").value.trim();
+      saveImgbbKey(DB.integr.imgbbKey);  /* Firestore settings/imgbb — সব পেজে শেয়ার */
       logAudit("সেটিংস হালনাগাদ","নিয়ম ও সংযোগ","settings");persist();
       toast("সেটিংস সংরক্ষিত","ok")};
   };

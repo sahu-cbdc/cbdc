@@ -62,7 +62,8 @@ src/
 ├── main-moderator.tsx    # Moderator এন্ট্রি
 ├── global.d.ts           # global type declarations
 ├── lib/
-│   ├── firebase.ts       # একক Firebase instance (App / Auth / Firestore / Storage)
+│   ├── firebase.ts       # একক Firebase instance (App / Auth / Firestore)
+│   ├── imgbb.ts          # ImgBB image hosting helper (upload → link → DB)
 │   └── store.ts          # Firestore-backed shared store — মূল data source
 └── pages/
     ├── Home.tsx          # পাবলিক ওয়েবসাইট + লগইন/নিবন্ধন/লগআউট (Firebase Auth)
@@ -75,7 +76,6 @@ scripts/
 └── smoke.mjs             # jsdom-ভিত্তিক smoke test (npm run smoke)
 
 firestore.rules          # Firestore Security Rules
-storage.rules            # Storage Security Rules
 firestore.indexes.json   # Firestore indexes
 firebase.json            # Firebase CLI config
 docs/FIREBASE.md         # Firebase ডেটাবেস স্ট্রাকচার, Auth, Role ও deploy গাইড
@@ -95,11 +95,13 @@ Logic** থাকে:
 ## Firebase Integration (সারাংশ)
 
 - **Data source:** Firestore (`donors`, `requests`, `members`, `users`, `admins`, `queue`,
-  `gallery`, `notices`, `accounts`). সব dummy/static seed data রিমুভ করা হয়েছে।
+  `gallery`, `notices`, `accounts`, `settings`). সব dummy/static seed data রিমুভ করা হয়েছে।
 - **Auth:** Login / Register / Logout / Session — Firebase Authentication (email+password ও
   Google)। Password reset — `sendPasswordResetEmail`, change password — re-auth +
   `updatePassword`।
 - **Role & Permission:** `admins/{uid}` থেকে role ও `permissions[]`; panel gate Firebase-নিয়ন্ত্রিত।
+- **Image hosting:** ImgBB API — ছবি upload → link + metadata Firestore-এ সেভ → UI-তে সরাসরি
+  ছবি (Firebase Storage ব্যবহৃত হয় না)।
 - **Sync:** Admin ↔ Moderator ↔ Donor ↔ Home — একই Firestore collection-এ live sync।
 
 বিস্তারিত: **[docs/FIREBASE.md](docs/FIREBASE.md)**।

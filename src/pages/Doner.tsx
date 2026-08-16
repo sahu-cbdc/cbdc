@@ -9,6 +9,7 @@
 import { useEffect } from "react";
 import "../lib/store";
 import { initFirebase as initSharedFirebase } from "../lib/firebase";
+import { uploadImage as imgbbUploadImage } from "../lib/imgbb";
 
 /* ═══════════════════════════════════════════════════════════════════
    CSS — মূল doner.html-এর <style> ব্লক হুবহু কপি
@@ -5625,18 +5626,21 @@ function initPage() {
   /* ---------- photo ---------- */
   function pickPhoto(){
     const i=document.createElement("input");i.type="file";i.accept="image/*";
-    i.onchange=()=>{
+    i.onchange=async()=>{
       const f=i.files[0];if(!f)return;
       if(f.size>4*1024*1024){toast("ছবি ৪ MB এর কম হতে হবে","er");return}
-      const s=sheet("ছবি আপলোড","<div style='text-align:center;padding:14px 0'><div class='sk' style='width:96px;height:96px;border-radius:50%;margin:0 auto 14px'></div><p class='mut'>আপলোড হচ্ছে…</p><div style='height:7px;border-radius:9px;background:var(--card2);margin-top:12px;overflow:hidden'><div id='pb' style='height:100%;width:8%;background:var(--grn);transition:width .3s'></div></div></div>","");
-      let p=8;const t=setInterval(()=>{p=Math.min(96,p+18);s.q("#pb").style.width=p+"%"},160);
-      const r=new FileReader();
-      r.onload=()=>{setTimeout(()=>{clearInterval(t);s.q("#pb").style.width="100%";
-        STORE.account.photo=r.result;STORE.account.photoSource="upload";save();
+      const s=sheet("ছবি আপলোড","<div style='text-align:center;padding:14px 0'><div class='sk' style='width:96px;height:96px;border-radius:50%;margin:0 auto 14px'></div><p class='mut'>ImgBB-তে আপলোড হচ্ছে…</p><div style='height:7px;border-radius:9px;background:var(--card2);margin-top:12px;overflow:hidden'><div id='pb' style='height:100%;width:8%;background:var(--grn);transition:width .3s'></div></div></div>","");
+      try{
+        /* ছবি ImgBB-তে upload → পাওয়া linkটাই প্রোফাইলে সেভ */
+        const res=await imgbbUploadImage(f);
+        s.q("#pb").style.width="100%";
+        STORE.account.photo=res.url;STORE.account.photoSource="upload";save();
         logAct("প্রোফাইল ছবি পরিবর্তন","");
-        setTimeout(()=>{s.close();renderSub("account");toast("ছবি আপডেট হয়েছে","ok")},280)},700)};
-      r.onerror=()=>{clearInterval(t);s.close();toast("ছবি পড়া যায়নি","er")};
-      r.readAsDataURL(f);
+        setTimeout(()=>{s.close();renderSub("account");toast("ছবি আপডেট হয়েছে","ok")},280);
+      }catch(e){
+        s.close();
+        toast(e&&e.message?e.message:"ছবি আপলোড করা যায়নি","er");
+      }
     };
     i.click();
   }
