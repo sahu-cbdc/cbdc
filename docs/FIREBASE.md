@@ -14,8 +14,11 @@ structure, Authentication flow, Role & Permission model, **Image system (ImgBB)*
 | Structured data + complex query + realtime | Cloud Firestore (primary source of truth) |
 | Image hosting | **ImgBB API** (Firebase Storage ব্যবহার হয় **না**) |
 
-> Realtime Database (RTDB) প্রয়োজন অনুযায়ী পরে যোগ করা যেতে পারে (presence,
-> live counters ইত্যাদি) — এখনকার অ্যাপে Firestore `onSnapshot`-ই realtime দেয়।
+> **RTDB নাকি Firestore? → Firestore-only।** Realtime Database (RTDB) ব্যবহার করা হয় না।
+> কারণ: এখানকার data structured ও query-heavy (`where status=="approved"`, `where email`,
+> `orderBy`) — এগুলো Firestore-ই ভালো সামলায়, এবং Firestore-এর `onSnapshot` দিয়েই
+> real-time update পাওয়া যায়। RTDB শুধু presence/typing/counter-এর মতো high-frequency
+> লেখার জন্য ভালো — এই অ্যাপে দরকার নেই; যোগ করলে আলাদা sync + cost + জটিলতা বাড়ে।
 
 ## ২. কনফিগারেশন
 

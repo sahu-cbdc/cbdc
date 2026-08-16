@@ -52,6 +52,17 @@ firebase deploy --only hosting
 - **ভবিষ্যতে logo বদলাতে হলে শুধু `public/img/logo.png` ফাইলটি replace করুন** — নতুন logo
   স্বয়ংক্রিয়ভাবে সর্বত্র দেখাবে (কোডে কোনো পরিবর্তন লাগবে না)।
 
+## ⭐ সহজে Text / কনটেন্ট বদলানো
+
+সাইট-ব্যাপী সব Text (নাম, ট্যাগলাইন, ফোন, WhatsApp, ইমেইল, Facebook, এলাকা, রক্তের
+গ্রুপ, নিয়ম) এক জায়গায় — **`src/config/site.ts`**-এ। এখানে একবার বদলালে সব পেজে
+(Home + Doner + Admin + Moderator) বদলে যাবে।
+
+- **Logo:** `public/img/logo.png` replace করলেই নতুন logo সর্বত্র।
+- **UI ডিজাইন:** অপরিবর্তিত — শুধু Text/কনফিগ বদলায়।
+
+বিস্তারিত: **[docs/EDITING.md](docs/EDITING.md)**।
+
 ## প্রজেক্ট স্ট্রাকচার
 
 ```
@@ -61,6 +72,8 @@ src/
 ├── main-admin.tsx        # Admin এন্ট্রি
 ├── main-moderator.tsx    # Moderator এন্ট্রি
 ├── global.d.ts           # global type declarations
+├── config/
+│   └── site.ts           ★ সাইটের কেন্দ্রীয় Text (নাম, ফোন, ইমেইল, লিংক, নিয়ম…)
 ├── lib/
 │   ├── firebase.ts       # একক Firebase instance (App / Auth / Firestore)
 │   ├── imgbb.ts          # ImgBB image hosting helper (upload → link → DB)
@@ -71,14 +84,15 @@ src/
     ├── Admin.tsx         # অ্যাডমিন প্যানেল
     └── Moderator.tsx     # মডারেটর প্যানেল
 public/
-└── img/logo.png          # Logo (বদলালেই সর্বত্র নতুন logo)
+└── img/logo.png          ★ Logo (এই ফাইল replace করলেই সর্বত্র নতুন logo)
 scripts/
 └── smoke.mjs             # jsdom-ভিত্তিক smoke test (npm run smoke)
 
 firestore.rules          # Firestore Security Rules
 firestore.indexes.json   # Firestore indexes
 firebase.json            # Firebase CLI config
-docs/FIREBASE.md         # Firebase ডেটাবেস স্ট্রাকচার, Auth, Role ও deploy গাইড
+docs/FIREBASE.md         # Firebase ডেটাবেস স্ট্রাকচার, Auth, Role, deploy গাইড
+docs/EDITING.md          # ★ Text/Logo/Config বদলানোর সহজ গাইড
 ```
 
 প্রতিটি `.tsx` ফাইলের ভিতরেই সেই পেজের নিজস্ব **UI (JSX), CSS, TypeScript, Functions ও
@@ -94,8 +108,9 @@ Logic** থাকে:
 
 ## Firebase Integration (সারাংশ)
 
-- **Data source:** Firestore (`donors`, `requests`, `members`, `users`, `admins`, `queue`,
-  `gallery`, `notices`, `accounts`, `settings`). সব dummy/static seed data রিমুভ করা হয়েছে।
+- **Data source:** Cloud Firestore (`donors`, `requests`, `members`, `users`, `admins`,
+  `queue`, `gallery`, `notices`, `accounts`, `settings`)। Realtime Database (RTDB) ব্যবহৃত
+  হয় না — Firestore `onSnapshot` দিয়েই realtime মেলে; সব dummy/static seed data রিমুভ।
 - **Auth:** Login / Register / Logout / Session — Firebase Authentication (email+password ও
   Google)। Password reset — `sendPasswordResetEmail`, change password — re-auth +
   `updatePassword`।

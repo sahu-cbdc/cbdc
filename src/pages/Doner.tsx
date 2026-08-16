@@ -9,6 +9,7 @@
 import { useEffect } from "react";
 import "../lib/store";
 import { initFirebase as initSharedFirebase } from "../lib/firebase";
+import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage } from "../lib/imgbb";
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -3949,8 +3950,8 @@ function initPage() {
   const donorReady=d=>!d.lastDonation||dayDiff(d.lastDonation)>=90;
   const donorRest=d=>d.lastDonation?Math.max(0,90-dayDiff(d.lastDonation)):0;
   
-  const GROUPS=["A+","A-","B+","B-","AB+","AB-","O+","O-"];
-  const AREAS=["চকবাজার","বাকলিয়া","কোতোয়ালী","চাঁদগাঁও","পাঁচলাইশ","হালিশহর","পাহাড়তলী"];
+  const GROUPS=SITE.bloodGroups.slice();
+  const AREAS=SITE.areas.slice();
   const HOSPITALS=["চট্টগ্রাম মেডিকেল কলেজ হাসপাতাল","চমেক ব্লাড ব্যাংক","ম্যাক্স হাসপাতাল, মেহেদীবাগ",
     "সিএসসিআর হাসপাতাল","পার্কভিউ হাসপাতাল","ইম্পেরিয়াল হাসপাতাল","মেট্রোপলিটন হাসপাতাল",
     "রেড ক্রিসেন্ট ব্লাড ব্যাংক","সন্ধানী, চমেক","ক্লাবের রক্তদান ক্যাম্প"];
@@ -4962,9 +4963,9 @@ function initPage() {
         ["রক্তের গ্রুপ ভুল দিয়েছি, বদলাব কীভাবে?","সেটিংস → ডোনার → রক্তের গ্রুপ → পরিবর্তনের অনুরোধ।"],
         ["আমার নম্বর কে দেখতে পায়?","সেটিংস → গোপনীয়তা থেকে আপনি নিজে ঠিক করতে পারেন।"]];
       return `<div class="card pad0">
-        <a class="row" href="tel:01617725464"><span class="ic" style="background:var(--grn-s);color:var(--grn)">${ICON.phone(19)}</span>
-          <span class="tx"><b>হেল্পলাইন</b><small>01617725464 · ২৪/৭</small></span><span class="rt">${ICON.right(17)}</span></a>
-        <a class="row" href="https://wa.me/8801617725464" target="_blank" rel="noopener">
+        <a class="row" href="tel:${SITE.phone}"><span class="ic" style="background:var(--grn-s);color:var(--grn)">${ICON.phone(19)}</span>
+          <span class="tx"><b>হেল্পলাইন</b><small>${SITE.phone} · ২৪/৭</small></span><span class="rt">${ICON.right(17)}</span></a>
+        <a class="row" href="https://wa.me/${SITE.whatsapp}" target="_blank" rel="noopener">
           <span class="ic" style="background:var(--grn-s);color:var(--grn)">${ICON.chat(19)}</span>
           <span class="tx"><b>WhatsApp</b><small>দ্রুত উত্তর</small></span><span class="rt">${ICON.right(17)}</span></a>
         <button class="row" data-act="report"><span class="ic">${ICON.warn(19)}</span>
@@ -5041,8 +5042,8 @@ function initPage() {
       logAct("ডিভাইস সরানো হয়েছে","নিরাপত্তা","security");renderSub("devices");toast("ডিভাইস বের করা হয়েছে","ok");
     });
   }
-  const CLUB={name:"চকবাজার ব্লাড ডোনার'স ক্লাব",en:"CHAKBAZAR BLOOD DONOR'S CLUB",
-    phone:"01617725464",site:"cbdc-a9418.web.app",addr:"চকবাজার, চট্টগ্রাম"};
+  const CLUB={name:SITE.name,en:SITE.nameEn,
+    phone:SITE.phone,site:SITE.website,addr:SITE.address};
   function cardStat(){
     const S=cardSubject(),d=S.d;
     const rest=d.lastDonation?Math.max(0,90-dayDiff(d.lastDonation)):0;

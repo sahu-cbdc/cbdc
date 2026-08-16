@@ -9,6 +9,7 @@
 import { useEffect } from "react";
 import "../lib/store";
 import { initFirebase as initSharedFirebase, isFirebaseReady } from "../lib/firebase";
+import SITE from "../config/site";
 
 /* ═══════════════════════════════════════════════════════════════════
    CSS — মূল index.html-এর <style> ব্লক হুবহু কপি
@@ -1324,10 +1325,10 @@ function StaticShell() {
             <img className="logo" data-logo={true} alt="CBDC লোগো" />
             <span className="brand-text">
               <strong>
-                {"চকবাজার ব্লাড ডোনার'স ক্লাব"}
+                {SITE.name}
               </strong>
               <small>
-                {"মানবতার সেবায় আমরা রক্তদাতা"}
+                {SITE.tagline}
               </small>
             </span>
           </a>
@@ -1580,7 +1581,7 @@ function StaticShell() {
                 </span>
                 {" "}
                 <h2>
-                  {"চকবাজার ব্লাড ডোনার'স ক্লাব (CBDC)"}
+                  {`${SITE.name} (${SITE.short})`}
                 </h2>
                 {" "}
               </div>
@@ -1659,7 +1660,7 @@ function StaticShell() {
                   {" "}
                   <div className="contact-items">
                     {" "}
-                    <a href="tel:+8801617725464" className="c-item">
+                    <a href={"tel:" + SITE.phoneIntl} className="c-item">
                       {" "}
                       <div className="c-icon">
                         {"📞"}
@@ -1672,14 +1673,14 @@ function StaticShell() {
                         </span>
                         {" "}
                         <strong className="c-val">
-                          {"+8801617725464"}
+                          {SITE.phoneIntl}
                         </strong>
                         {" "}
                       </div>
                       {" "}
                     </a>
                     {" "}
-                    <a href="https://wa.me/8801617725464" target="_blank" rel="noopener" className="c-item">
+                    <a href={"https://wa.me/" + SITE.whatsapp} target="_blank" rel="noopener" className="c-item">
                       {" "}
                       <div className="c-icon">
                         {"💬"}
@@ -1699,7 +1700,7 @@ function StaticShell() {
                       {" "}
                     </a>
                     {" "}
-                    <a href="mailto:cbdc@example.com" className="c-item">
+                    <a href={"mailto:" + SITE.email} className="c-item">
                       {" "}
                       <div className="c-icon">
                         {"✉"}
@@ -1712,7 +1713,7 @@ function StaticShell() {
                         </span>
                         {" "}
                         <strong className="c-val">
-                          {"cbdc@example.com"}
+                          {SITE.email}
                         </strong>
                         {" "}
                       </div>
@@ -1723,14 +1724,14 @@ function StaticShell() {
                   {" "}
                   <div className="social-btns">
                     {" "}
-                    <a href="https://www.facebook.com/share/g/19DVQsRCKt/" target="_blank" rel="noopener" className="s-btn s-group">
+                    <a href={SITE.facebookGroup} target="_blank" rel="noopener" className="s-btn s-group">
                       {" "}
                       <i className="fa-brands fa-facebook-f" aria-hidden="true">
                       </i>
                       {" গ্রুপে যুক্ত হোন "}
                     </a>
                     {" "}
-                    <a href="https://www.facebook.com/share/1CjTRnu2ua/" target="_blank" rel="noopener" className="s-btn s-page">
+                    <a href={SITE.facebookPage} target="_blank" rel="noopener" className="s-btn s-page">
                       {" "}
                       <i className="fa-brands fa-facebook-f" aria-hidden="true">
                       </i>
@@ -2134,9 +2135,9 @@ function StaticShell() {
                       {"জরুরি বিজ্ঞপ্তি:"}
                     </strong>
                     {" আবেদন পাঠানোর পর CBDC কেন্দ্রীয় অ্যাডমিন তথ্য যাচাই করবেন। অনুমোদনের পর আবেদনটি পাবলিক লাইভ বোর্ডে প্রকাশিত হবে। অতিজরুরি ক্ষেত্রে সরাসরি হেল্পলাইনেও কল করুন: "}
-                    <a href="tel:01617725464">
+                    <a href={"tel:" + SITE.phone}>
                       <strong>
-                        {"01617725464"}
+                        {SITE.phone}
                       </strong>
                     </a>
                   </span>
@@ -2344,10 +2345,10 @@ function StaticShell() {
                   <img data-logo={true} alt="CBDC লোগো" />
                   <div>
                     <strong>
-                      {"চকবাজার ব্লাড ডোনার'স ক্লাব"}
+                      {SITE.name}
                     </strong>
                     <small>
-                      {"মানবতার সেবায় আমরা রক্তদাতা"}
+                      {SITE.tagline}
                     </small>
                   </div>
                 </div>
@@ -2433,7 +2434,7 @@ function StaticShell() {
                   <img data-logo={true} alt="CBDC লোগো" />
                   <div>
                     <strong>
-                      {"চকবাজার ব্লাড ডোনার'স ক্লাব"}
+                      {SITE.name}
                     </strong>
                     <small>
                       {"কেন্দ্রীয় প্রশাসনিক প্যানেল"}
@@ -2833,7 +2834,7 @@ function StaticShell() {
               <div className="footer-brand">
                 <img data-logo={true} alt="CBDC লোগো" />
                 <strong>
-                  {"চকবাজার ব্লাড ডোনার'স ক্লাব"}
+                  {SITE.name}
                 </strong>
               </div>
               <p>
@@ -2886,21 +2887,21 @@ function StaticShell() {
                 {"জরুরি যোগাযোগ"}
               </h3>
               <div className="footer-contact">
-                <a href="tel:01617725464">
-                  {"হেল্পলাইন: 01617725464"}
+                <a href={"tel:" + SITE.phone}>
+                  {`হেল্পলাইন: ${SITE.phone}`}
                 </a>
-                <a href="https://wa.me/8801617725464" target="_blank" rel="noopener">
-                  {"WhatsApp: 01617725464"}
+                <a href={"https://wa.me/" + SITE.whatsapp} target="_blank" rel="noopener">
+                  {`WhatsApp: ${SITE.phone}`}
                 </a>
-                <a href="mailto:cbdc@example.com">
-                  {"ইমেইল: cbdc@example.com"}
+                <a href={"mailto:" + SITE.email}>
+                  {`ইমেইল: ${SITE.email}`}
                 </a>
               </div>
             </div>
           </div>
           <div className="copyright">
             <span>
-              {"© ২০২৬ চকবাজার ব্লাড ডোনার'স ক্লাব (CBDC)। সর্বস্বত্ব সংরক্ষিত।"}
+              {`© ২০২৬ ${SITE.name} (${SITE.short})। সর্বস্বত্ব সংরক্ষিত।`}
             </span>
             <span>
               {"রক্ত দিন • জীবন বাঁচান 🩸"}
@@ -3021,7 +3022,7 @@ function StaticShell() {
         {" "}
       </div>
       {" "}
-      <a className="support-btn" href="tel:01617725464" aria-label="সাপোর্টে কল করুন">
+      <a className="support-btn" href={"tel:" + SITE.phone} aria-label="সাপোর্টে কল করুন">
         <i className="fa-solid fa-headset" aria-hidden="true">
         </i>
       </a>
@@ -3045,8 +3046,8 @@ function initPage() {
       const LOGO_SRC = "./img/logo.png";  /* img/logo.png ফাইল থেকে লোগো — ফাইল বদলালেই সর্বত্র নতুন লোগো */
   
       const BANGLA = "০১২৩৪৫৬৭৮৯";
-      const GROUPS = ["A+","A-","B+","B-","AB+","AB-","O+","O-"];
-      const AREAS = ["চকবাজার","বাকলিয়া","কোতোয়ালী","চাঁদগাঁও","পাঁচলাইশ"];
+      const GROUPS = SITE.bloodGroups.slice();
+      const AREAS = SITE.homeAreas.slice();
       const $ = (selector, root=document) => root.querySelector(selector);
       const $$ = (selector, root=document) => [...root.querySelectorAll(selector)];
       const esc = value => String(value ?? "").replace(/[&<>'"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;","\"":"&quot;"}[ch]));
@@ -3568,7 +3569,7 @@ function initPage() {
       let currentDcardId=null;
       function dcardHTML(d){
         const last= d.lastDonationDate?dateText(d.lastDonationDate):"নতুন দাতা";
-        return `<div class="dcard"><div class="dcard-topbar"><img class="dcard-logo" src="${LOGO_SRC}" alt=""><span>চকবাজার ব্লাড ডোনার'স ক্লাব</span></div><div class="dcard-photo"><img src="${avatarData(d.gender)}" alt=""></div><h3 class="dcard-name">${esc(d.name)}</h3><div class="dcard-group">${esc(d.bloodGroup)}</div><div class="dcard-rows"><div>📍 এলাকা <strong>${esc(d.area)}</strong></div><div>🗓 শেষ রক্তদান <strong>${esc(last)}</strong></div><div>☎ মোবাইল <strong>${esc(d.phone)}</strong></div><div>🪪 কার্ড নং <strong>${esc(d.id)}</strong></div></div><div class="dcard-footer">✓ অনুমোদিত রক্তদাতা • রক্ত দিন, জীবন বাঁচান 🩸</div></div>`;
+        return `<div class="dcard"><div class="dcard-topbar"><img class="dcard-logo" src="${LOGO_SRC}" alt=""><span>${SITE.name}</span></div><div class="dcard-photo"><img src="${avatarData(d.gender)}" alt=""></div><h3 class="dcard-name">${esc(d.name)}</h3><div class="dcard-group">${esc(d.bloodGroup)}</div><div class="dcard-rows"><div>📍 এলাকা <strong>${esc(d.area)}</strong></div><div>🗓 শেষ রক্তদান <strong>${esc(last)}</strong></div><div>☎ মোবাইল <strong>${esc(d.phone)}</strong></div><div>🪪 কার্ড নং <strong>${esc(d.id)}</strong></div></div><div class="dcard-footer">✓ অনুমোদিত রক্তদাতা • রক্ত দিন, জীবন বাঁচান 🩸</div></div>`;
       }
       function openDonorCard(idv){ const d=publicDonors().find(x=>x.id===idv); if(!d)return; currentDcardId=idv; $("#dcardPreview").innerHTML=dcardHTML(d); $("#donorCardModalBg").classList.remove("hidden"); document.body.classList.add("lock"); }
       function closeDonorCard(){ $("#donorCardModalBg").classList.add("hidden"); document.body.classList.remove("lock"); currentDcardId=null; }
@@ -3598,7 +3599,7 @@ function initPage() {
         const g=x.createLinearGradient(0,0,W,H); g.addColorStop(0,"#0c6d4a"); g.addColorStop(1,"#053d2e"); x.fillStyle=g; x.fillRect(0,0,W,H);
         const font='"SolaimanLipi","Noto Sans Bengali","Hind Siliguri","Nirmala UI",sans-serif';
         x.textAlign="center";
-        x.fillStyle="#ffffff"; x.font='900 22px '+font; x.fillText("চকবাজার ব্লাড ডোনার'স ক্লাব", W/2, 62);
+        x.fillStyle="#ffffff"; x.font='900 22px '+font; x.fillText(SITE.name, W/2, 62);
         x.fillStyle="#bdebd6"; x.font='700 14px '+font; x.fillText("CBDC • রক্ত দান কেন্দ্র", W/2, 88);
         const logo=await loadImg(LOGO_SRC);
         x.save(); rr(W/2-32,110,64,64,32); x.clip(); x.drawImage(logo,W/2-32,110,64,64); x.restore();
@@ -3746,7 +3747,7 @@ function initPage() {
   
       function shareDonorCard(idv){
         const d=publicDonors().find(x=>x.id===idv); if(!d)return;
-        const text=`🩸 ${d.name} (${d.bloodGroup}) — ${d.area}\nচকবাজার ব্লাড ডোনার'স ক্লাবের অনুমোদিত রক্তদাতা।\nযোগাযোগ: ${d.phone}`;
+        const text=`🩸 ${d.name} (${d.bloodGroup}) — ${d.area}\n${SITE.name}ের অনুমোদিত রক্তদাতা।\nযোগাযোগ: ${d.phone}`;
         if(navigator.share){ navigator.share({title:"ডিজিটাল ডোনার কার্ড",text,url:location.href}).catch(()=>{}); }
         else if(navigator.clipboard){ navigator.clipboard.writeText(text).then(()=>toast("তথ্য কপি হয়েছে")); }
         else toast("শেয়ার করা যাচ্ছে না",true);

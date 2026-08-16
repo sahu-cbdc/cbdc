@@ -9,6 +9,7 @@
 import { useEffect } from "react";
 import "../lib/store";
 import { initFirebase as initSharedFirebase } from "../lib/firebase";
+import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage, getImgbbKey, saveImgbbKey } from "../lib/imgbb";
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -2301,8 +2302,8 @@ function initPage() {
   
   /* ══════════ DATA ══════════ */
   const LS="cbdc.admin";   /* shared work data — both panels see the same queue */
-  const GROUPS=["A+","A-","B+","B-","AB+","AB-","O+","O-"];
-  const AREAS=["চকবাজার","বাকলিয়া","কোতোয়ালী","চাঁদগাঁও","পাঁচলাইশ","হালিশহর","পাহাড়তলী"];
+  const GROUPS=SITE.bloodGroups.slice();
+  const AREAS=SITE.areas.slice();
   const HOSPITALS=["চট্টগ্রাম মেডিকেল কলেজ হাসপাতাল","ম্যাক্স হাসপাতাল, মেহেদীবাগ","সিএসসিআর হাসপাতাল",
     "পার্কভিউ হাসপাতাল","ইম্পেরিয়াল হাসপাতাল","চমেক ব্লাড ব্যাংক"];
   const FIRST=["আরিফুর","সাদিয়া","তানভীর","নুসরাত","ইকবাল","ফারহানা","মেহরাব","রিফাতুল","শাকিল","জাহিদুল",
@@ -2318,11 +2319,11 @@ function initPage() {
        The shape is kept so every consumer finds the same keys. */
     return {donors:[],queue:[],live:[],audit:[],notices:[],messages:[],
       team:[],gallery:[],
-      site:{heroTitle:"রক্ত দিন, জীবন বাঁচান",
-        heroText:"চকবাজার ব্লাড ডোনার'স ক্লাব — চট্টগ্রামের স্বেচ্ছাসেবী রক্তদাতাদের সংগঠন।",
-        phone:"01617725464",email:"cbdc@example.com",address:"চকবাজার, চট্টগ্রাম",
-        facebook:"facebook.com/cbdc",showStats:true,showGallery:true,showEmergency:true},
-      rules:{minAge:18,maxAge:60,interval:90,donorApproval:true,reqApproval:true},
+      site:{heroTitle:SITE.hero.title,
+        heroText:SITE.hero.text,
+        phone:SITE.phone,email:SITE.email,address:SITE.address,
+        facebook:SITE.facebookHandle,showStats:true,showGallery:true,showEmergency:true},
+      rules:{minAge:SITE.rules.minAge,maxAge:SITE.rules.maxAge,interval:SITE.rules.interval,donorApproval:true,reqApproval:true},
       integr:{imgbbKey:"",firebase:true}};
   }
   let DB=seed(), SHARED_PULLING=false;

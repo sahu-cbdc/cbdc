@@ -26,7 +26,6 @@ import { getAuth, type Auth } from "firebase/auth";
 export const firebaseConfig = {
   apiKey: "AIzaSyALJJ7ZAFKWoFQmmjTtvaJia22qrnjJQuw",
   authDomain: "cbdc-a9418.firebaseapp.com",
-  databaseURL: "https://cbdc-a9418-default-rtdb.firebaseio.com",
   projectId: "cbdc-a9418",
   storageBucket: "cbdc-a9418.firebasestorage.app",
   messagingSenderId: "90475597825",
