@@ -19,18 +19,19 @@ import { getFirestore, type Firestore } from "firebase/firestore";
 import { getAuth, type Auth } from "firebase/auth";
 
 /**
- * Firebase project configuration (unchanged from the original HTML).
+ * Firebase project configuration — Updated with new project credentials.
  * These values are public client-side identifiers — access control is enforced
  * by Firestore Security Rules (see firestore.rules), not by hiding this config.
  */
 export const firebaseConfig = {
-  apiKey: "AIzaSyALJJ7ZAFKWoFQmmjTtvaJia22qrnjJQuw",
-  authDomain: "cbdc-a9418.firebaseapp.com",
-  projectId: "cbdc-a9418",
-  storageBucket: "cbdc-a9418.firebasestorage.app",
-  messagingSenderId: "90475597825",
-  appId: "1:90475597825:web:264a256ffccfc4cb9db000",
-  measurementId: "G-YBFHHRDC7V",
+  apiKey: "AIzaSyBxUlGig2NtQLf6tZMRwK6xxzjScNIqbrM",
+  authDomain: "chokbazarbloodclub-69d5f.firebaseapp.com",
+  databaseURL: "https://chokbazarbloodclub-69d5f-default-rtdb.firebaseio.com",
+  projectId: "chokbazarbloodclub-69d5f",
+  storageBucket: "chokbazarbloodclub-69d5f.firebasestorage.app",
+  messagingSenderId: "826987875853",
+  appId: "1:826987875853:web:8a9509b80867538393cf44",
+  measurementId: "G-KJTMR061LX",
 };
 
 /**
@@ -67,8 +68,6 @@ export function initFirebase(): { app: FirebaseApp; db: Firestore; auth: Auth } 
     initError = null;
   } catch (e) {
     initError = e as Error;
-    // Re-throw is too aggressive for the ported pages which guard with
-    // `fbReady`; instead we surface the error through the getter helpers.
     console.warn("Firebase init failed:", (e as Error)?.message);
   }
   return {
@@ -82,6 +81,12 @@ export function initFirebase(): { app: FirebaseApp; db: Firestore; auth: Auth } 
 export function getDb(): Firestore | null {
   if (!db) initFirebase();
   return db;
+}
+
+/** Auth instance (lazily initialised). */
+export function getAuthInstance(): Auth | null {
+  if (!auth) initFirebase();
+  return auth;
 }
 
 /** Whether Firebase initialised successfully. */
