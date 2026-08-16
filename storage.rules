@@ -1,0 +1,9 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read: if true; // public media (gallery images, avatars)
+      allow write: if false; // uploads via Admin SDK / signed URLs in production
+    }
+  }
+}
