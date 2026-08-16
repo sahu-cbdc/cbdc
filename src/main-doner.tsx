@@ -1,8 +1,8 @@
 import { createRoot } from "react-dom/client";
-import Home from "./pages/Home";
+import Doner from "./pages/Doner";
 
 const rootEl = document.getElementById("root");
 if (!rootEl) {
   throw new Error("#root element not found");
 }
-createRoot(rootEl).render(<Home />);
+createRoot(rootEl).render(<Doner />);

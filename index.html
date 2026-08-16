@@ -8,16 +8,11 @@
   <meta name="theme-color" content="#087a4b">
   <script>
 (function(){
-  const mq=matchMedia("(prefers-color-scheme: dark)");
-  const apply=()=>{
-    const dark=mq.matches;
-    document.documentElement.dataset.theme=dark?"dark":"light";
-    const meta=document.querySelector('meta[name="theme-color"]');
-    if(meta)meta.content=dark?"#0c1412":"#087a4b";
-  };
-  apply();
-  if(mq.addEventListener)mq.addEventListener("change",apply);else mq.addListener(apply);
-  window.__applySystemTheme=apply;
+  /* UI সর্বদা Light version — System (Dark/Light) অনুযায়ী auto theme বন্ধ।
+     Theme পরিবর্তনের ম্যানুয়াল অপশন User/Admin Panel-এর সেটিংসে আছে। */
+  document.documentElement.dataset.theme = "light";
+  var meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = "#087a4b";
 })();
 </script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
