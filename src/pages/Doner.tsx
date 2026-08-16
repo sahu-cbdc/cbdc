@@ -9,6 +9,8 @@
 import { useEffect } from "react";
 import "../lib/store";
 import { initFirebase as initSharedFirebase } from "../lib/firebase";
+import { navigateToPage } from "../lib/router";
+import { authErrorMessage } from "../lib/authx";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage } from "../lib/imgbb";
 
@@ -4103,7 +4105,7 @@ function initPage() {
     const t=$("#top");
     if(PUBLIC_MODE){
       t.className="top";
-      t.innerHTML=`<a class="brand" href="index.html">
+      t.innerHTML=`<a class="brand" href="#/home">
           <span class="lg"><img src="${LOGO}" alt="CBDC লোগো"></span>
           <b>চকবাজার ব্লাড ডোনার'স ক্লাব</b></a><div class="sp"></div>`;
       return;
@@ -4466,7 +4468,7 @@ function initPage() {
       <div class="ic">${ICON.search(26)}</div>
       <b>প্রোফাইল পাওয়া যায়নি</b>
       <p>রক্তদাতাটি আর তালিকায় নেই অথবা লিংকটি সঠিক নয়</p>
-      ${PUBLIC_MODE?`<a class="btn gh" href="index.html">${ICON.home?ICON.home(15):""} রক্তদাতা তালিকায় ফিরুন</a>`:""}
+      ${PUBLIC_MODE?`<a class="btn gh" href="#/home">${ICON.home?ICON.home(15):""} রক্তদাতা তালিকায় ফিরুন</a>`:""}
       </div></div>`;return}
     const saved=STORE.saved.includes(v.name);
     el.innerHTML=`
@@ -5773,8 +5775,7 @@ function initPage() {
         logAct("পাসওয়ার্ড পরিবর্তন","সফল","security");
         s.close();renderSub("security");toast("পাসওয়ার্ড পরিবর্তন হয়েছে","ok");
       }catch(err){
-        const code=err&&err.code||"";
-        toast(code==="auth/wrong-password"||code==="auth/invalid-credential"?"বর্তমান পাসওয়ার্ড সঠিক নয়":code==="auth/configuration-not-found"?"Firebase Authentication সঠিকভাবে কনফিগার করা হয়নি।":(err&&err.message?err.message:"পাসওয়ার্ড পরিবর্তন করা যায়নি"),"er");
+        toast(authErrorMessage(err,{wrongCredentials:"বর্তমান পাসওয়ার্ড সঠিক নয়",fallback:"পাসওয়ার্ড পরিবর্তন করা যায়নি"}),"er");
       }
     };
   }
@@ -5792,7 +5793,7 @@ function initPage() {
       localStorage.removeItem("cbdcMember");
     }catch(e){}
     toast("লগআউট হয়েছে","ok");
-    setTimeout(()=>{location.href="index.html"},700);
+    setTimeout(()=>{navigateToPage("home")},700);
   }
   
   /* ---------- policies (full text) ----------
@@ -5885,7 +5886,7 @@ function initPage() {
         await sendPasswordResetEmail(shared.auth, recipient);
         bd.innerHTML=`<div class="note g">${ICON.checkC(17)}<span>${esc(recipient)} ঠিকানায় রিসেট লিংক পাঠানো হয়েছে। ইমেইল খুলে নতুন পাসওয়ার্ড সেট করুন।</span></div>`;
         ft.innerHTML=`<button class="btn" data-close>বন্ধ করুন</button>`;
-      }catch(e){btn.disabled=false;btn.textContent="রিসেট লিংক পাঠান";error(e&&e.message?e.message:"রিসেট লিংক পাঠানো যায়নি")}
+      }catch(e){btn.disabled=false;btn.textContent="রিসেট লিংক পাঠান";error(authErrorMessage(e,{fallback:"রিসেট লিংক পাঠানো যায়নি"}))}
     };
   }
   /* ---------- delete account (4 steps) ---------- */
@@ -6021,7 +6022,7 @@ function initPage() {
       onAuthStateChanged(shared.auth, (user)=>{
         if(PUBLIC_MODE)return;
         if(!user){
-          setTimeout(()=>{location.href="index.html"},400);
+          setTimeout(()=>{navigateToPage("home")},400);
           return;
         }
         if(user.email)STORE.account.email=STORE.account.email||user.email;

@@ -9,6 +9,15 @@
 import { useEffect } from "react";
 import "../lib/store";
 import { initFirebase as initSharedFirebase, isFirebaseReady } from "../lib/firebase";
+import { navigateToPage } from "../lib/router";
+import {
+  authErrorMessage,
+  googleSignInWithFallback,
+  consumeGoogleRedirect,
+  ensureUserProfile,
+  onAuthUserChanged,
+  setGoogleIntent,
+} from "../lib/authx";
 import SITE from "../config/site";
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -2447,7 +2456,7 @@ function StaticShell() {
                 <p id="alreadyTitle">
                   {"—"}
                 </p>
-                <a id="alreadyLink" className="btn btn-green" href="admin.html" style={{ width: "100%", marginTop: "6px" }}>
+                <a id="alreadyLink" className="btn btn-green" href="#/admin" style={{ width: "100%", marginTop: "6px" }}>
                   {"ড্যাশবোর্ডে যান "}
                   <span>
                     {"→"}
@@ -3040,7 +3049,7 @@ function initPage() {
   /* ==========================================================================
      CBDC — index.html (পাবলিক ওয়েবসাইট + লগইন)
      Main Website • Donor Search • Registration • Emergency Request • Gallery • Login
-     Firebase Login সফল হলে role অনুযায়ী redirect: admin → admin.html, moderator → moderator.html
+     Firebase Login সফল হলে role অনুযায়ী পেজ: admin → অ্যাডমিন প্যানেল, moderator → মডারেটর প্যানেল
      ========================================================================== */
   
       const LOGO_SRC = "./img/logo.png";  /* img/logo.png ফাইল থেকে লোগো — ফাইল বদলালেই সর্বত্র নতুন লোগো */
@@ -3153,7 +3162,8 @@ function initPage() {
         sessionStorage.setItem("cbdcUserPermissions",JSON.stringify(perms||{}));
         sessionStorage.setItem("cbdcAuthMode",mode);
       }
-      function dashPage(role){ return role==="admin" ? "admin.html" : role==="moderator" ? "moderator.html" : "index.html"; }
+      /* প্যানেল লিংক — "#/admin" আকারের পেজ-হ্যাশ (src/lib/router.ts এটি ধরে পেজ বদলায়) */
+      function dashPage(role){ return role==="admin" ? "#/admin" : role==="moderator" ? "#/moderator" : "#/home"; }
       // Firestore `admins` ডকুমেন্টের role ফিল্ড বদলালেই ব্যবহারকারীর প্যানেল বদলে যায় (real-time)
       // ইতিমধ্যে লগইন করা থাকলে লগইন ভিউতে "ড্যাশবোর্ডে যান" কার্ড দেখায়
       function renderLoginGate(){
@@ -3226,7 +3236,7 @@ function initPage() {
         if(route==="dashboard"||route==="login"){showView("login");return}
         if(route==="signup"){ if(isLoggedIn()){ toast("আপনি ইতিমধ্যে লগইন করা আছেন"); showView("home"); } else showView("signup"); return}
         if(route==="logout"){ doLogout(); return}
-        if(route==="donorPanel"){ location.href="doner.html"; return}
+        if(route==="donorPanel"){ navigateToPage("doner"); return}
         showView(route);
       }
       $$("[data-route]").forEach(a=>a.addEventListener("click",routeClick));
@@ -4082,8 +4092,8 @@ function initPage() {
       /* ==========================================================================
          ROLE সিস্টেম — সম্পূর্ণ ডেটাবেস-নিয়ন্ত্রিত
          donor     → ডিফল্ট (সাধারণ ব্যবহারকারী, ওয়েবসাইটেই থাকে)
-         moderator → moderator.html (মিডিয়া/মডারেটর প্যানেল)
-         admin     → admin.html (অ্যাডমিন প্যানেল)
+         moderator → মডারেটর প্যানেল (#/moderator)
+         admin     → অ্যাডমিন প্যানেল (#/admin)
          role বদলাতে হলে Firestore-এ `admins` ডকুমেন্টের `role` ফিল্ড পরিবর্তন করতে হবে।
          ========================================================================== */
       const DEFAULT_ROLE = "donor";
@@ -4125,14 +4135,14 @@ function initPage() {
         if(r === "admin" || r === "moderator"){
           saveSession(email, name || email, r, permissions || {}, "firebase");
           toast(roleLabel(r) + " প্যানেলে যাওয়া হচ্ছে…");
-          location.href = dashPage(r);
+          navigateToPage(r);
           return;
         }
         // donor (ডিফল্ট) — ওয়েবসাইটেই লগইন অবস্থায় থাকবে
         saveMemberSession({email, name: name || email, photo: photo || "", role: r});
         toast("স্বাগতম, " + (name || "রক্তদাতা") + "!");
         toast("ডোনার প্যানেলে যাওয়া হচ্ছে…");
-        setTimeout(()=>{ location.href="doner.html"; },350);
+        setTimeout(()=>{ navigateToPage("doner"); },350);
       }
   
       /* --- Google প্রোফাইল স্টেট --- */
@@ -4167,15 +4177,17 @@ function initPage() {
         }
       }
   
-      async function googleSignIn(){
+      /* Google সাইন-ইন — ডেস্কটপে popup, মোবাইল/WebView বা popup ব্লক হলে
+         স্বয়ংক্রিয় redirect fallback (src/lib/authx.ts)।
+         null ফেরত মানে redirect শুরু হয়েছে (পেজ Google-এ চলে যাচ্ছে) —
+         ফিরে এলে consumeGoogleRedirect() ফলাফল resume করে। */
+      async function googleSignIn(intent){
         if(!fbReady || !auth){
           uiAlert("Google লগইনের জন্য Firebase সংযোগ প্রয়োজন। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।", {type:"error", title:"সংযোগ নেই"});
           return null;
         }
-        const {GoogleAuthProvider, signInWithPopup} = await import("firebase/auth");
-        const provider = new GoogleAuthProvider();
-        provider.setCustomParameters({prompt: "select_account"});
-        const res = await signInWithPopup(auth, provider);
+        const res = await googleSignInWithFallback(auth, intent === "signup" ? "signup" : "login");
+        if(!res) return null;
         const u = res.user;
         return {uid:u.uid, email:u.email || "", name:u.displayName || "", photo:u.photoURL || ""};
       }
@@ -4243,62 +4255,82 @@ function initPage() {
         showView("home");
       }
   
+      /* --- Google flow সম্পন্ন করা (popup এবং redirect-resume — দুই পথেই একই যুক্তি) --- */
+      async function continueGoogleLogin(p){
+        showAppLoading();
+        const {role, name, permissions} = await resolveRole(p.email, p.name);
+        if(role === "admin" || role === "moderator"){
+          if(db && p.uid) ensureUserProfile(db, {uid:p.uid, email:p.email, name:p.name, photo:p.photo}, {provider:"google"}).catch(e=>console.warn("profile upsert:", e&&e.message));
+          hideAppModal();
+          finishLogin({email:p.email, name: name || p.name, role, permissions, photo:p.photo});
+          return;
+        }
+        const member = await findUserByEmail(p.email);
+        if(member){
+          if(db && p.uid) ensureUserProfile(db, {uid:p.uid, email:p.email, name:member.name || p.name, photo:member.photoURL || p.photo}, {provider:"google"}).catch(e=>console.warn("profile upsert:", e&&e.message));
+          hideAppModal();
+          finishLogin({email:p.email, name: member.name || p.name, role: DEFAULT_ROLE, permissions:{}, photo: member.photoURL || p.photo});
+          return;
+        }
+        hideAppModal();
+        // অ্যাকাউন্ট নেই → Google তথ্যসহ অ্যাকাউন্ট তৈরির পেজ
+        setSignupGoogleMode(p);
+        showView("signup");
+        showMessage($("#signupMessage"), "এই Google অ্যাকাউন্টে কোনো CBDC অ্যাকাউন্ট নেই। নিচের তথ্যগুলো নিশ্চিত করে অ্যাকাউন্ট তৈরি সম্পন্ন করুন।", "error");
+      }
+      async function continueGoogleSignup(p){
+        const member = await findUserByEmail(p.email);
+        if(member){
+          const rr = await resolveRole(p.email, member.name || p.name);
+          if(db && p.uid) ensureUserProfile(db, {uid:p.uid, email:p.email, name: rr.name || member.name || p.name, photo: member.photoURL || p.photo}, {provider:"google"}).catch(e=>console.warn("profile upsert:", e&&e.message));
+          showAppMessage("এই Google অ্যাকাউন্টে ইতিমধ্যে একটি CBDC অ্যাকাউন্ট রয়েছে, তাই আপনাকে সরাসরি লগইন করানো হয়েছে।", false, "লগইন সফল");
+          finishLogin({email:p.email, name: rr.name || member.name || p.name, role: rr.role, permissions: rr.permissions, photo: member.photoURL || p.photo});
+          return;
+        }
+        setSignupGoogleMode(p);
+        showView("signup");
+        toast("Google তথ্য নেওয়া হয়েছে — বাকি তথ্য পূরণ করুন");
+        setTimeout(()=>$("#suUsername")?.focus(), 300);
+      }
+
       /* --- Google দিয়ে লগইন --- */
       $("#btnGoogleLogin")?.addEventListener("click", async () => {
         const btn = $("#btnGoogleLogin");
         try{
           btn.disabled = true;
-          const p = await googleSignIn();
-          if(!p) return;
-          showAppLoading();
-          const {role, name, permissions} = await resolveRole(p.email, p.name);
-          if(role === "admin" || role === "moderator"){
-            hideAppModal();
-            finishLogin({email:p.email, name: name || p.name, role, permissions, photo:p.photo});
-            return;
-          }
-          const member = await findUserByEmail(p.email);
-          hideAppModal();
-          if(member){
-            finishLogin({email:p.email, name: member.name || p.name, role: DEFAULT_ROLE, permissions:{}, photo: member.photoURL || p.photo});
-          } else {
-            // অ্যাকাউন্ট নেই → Google তথ্যসহ অ্যাকাউন্ট তৈরির পেজ
-            setSignupGoogleMode(p);
-            showView("signup");
-            showMessage($("#signupMessage"), "এই Google অ্যাকাউন্টে কোনো CBDC অ্যাকাউন্ট নেই। নিচের তথ্যগুলো নিশ্চিত করে অ্যাকাউন্ট তৈরি সম্পন্ন করুন।", "error");
-          }
+          const p = await googleSignIn("login");
+          if(!p) return; // redirect শুরু হয়েছে — ফিরে এলে boot-এ flow resume হবে
+          await continueGoogleLogin(p);
         }catch(err){
           hideAppModal();
           console.warn("Google login:", err);
-          if(err && err.code === "auth/popup-closed-by-user") toast("Google লগইন বাতিল করা হয়েছে", true);
-          else if(err && err.code === "auth/configuration-not-found") uiAlert("Firebase Authentication সঠিকভাবে কনফিগার করা হয়নি। Firebase Console-এ Authentication enable করুন।", {type:"error", title:"Firebase Error"});
-          else uiAlert("Google দিয়ে লগইন করা যায়নি: " + (err && err.message ? err.message : "অজানা ত্রুটি"), {type:"error", title:"লগইন ব্যর্থ"});
+          setGoogleIntent(null);
+          const code = err && err.code || "";
+          if(code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request"){
+            toast("Google লগইন বাতিল করা হয়েছে", true);
+          } else {
+            uiAlert(authErrorMessage(err), {type:"error", title:"লগইন ব্যর্থ"});
+          }
         }finally{ btn.disabled = false; }
       });
-  
+
       /* --- Google দিয়ে অ্যাকাউন্ট তৈরি --- */
       $("#btnGoogleSignup")?.addEventListener("click", async () => {
         const btn = $("#btnGoogleSignup");
         try{
           btn.disabled = true;
-          const p = await googleSignIn();
-          if(!p) return;
-          const member = await findUserByEmail(p.email);
-          if(member){
-            const rr = await resolveRole(p.email, member.name || p.name);
-            showAppMessage("এই Google অ্যাকাউন্টে ইতিমধ্যে একটি CBDC অ্যাকাউন্ট রয়েছে, তাই আপনাকে সরাসরি লগইন করানো হয়েছে।", false, "লগইন সফল");
-            finishLogin({email:p.email, name: rr.name || member.name || p.name, role: rr.role, permissions: rr.permissions, photo: member.photoURL || p.photo});
-            return;
-          }
-          setSignupGoogleMode(p);
-          showView("signup");
-          toast("Google তথ্য নেওয়া হয়েছে — বাকি তথ্য পূরণ করুন");
-          setTimeout(()=>$("#suUsername")?.focus(), 300);
+          const p = await googleSignIn("signup");
+          if(!p) return; // redirect শুরু হয়েছে — ফিরে এলে boot-এ flow resume হবে
+          await continueGoogleSignup(p);
         }catch(err){
           console.warn("Google signup:", err);
-          if(err && err.code === "auth/popup-closed-by-user") toast("Google সাইন-আপ বাতিল করা হয়েছে", true);
-          else if(err && err.code === "auth/configuration-not-found") uiAlert("Firebase Authentication সঠিকভাবে কনফিগার করা হয়নি। Firebase Console-এ Authentication enable করুন।", {type:"error", title:"Firebase Error"});
-          else uiAlert("Google দিয়ে অ্যাকাউন্ট তৈরি করা যায়নি: " + (err && err.message ? err.message : "অজানা ত্রুটি"), {type:"error", title:"ব্যর্থ হয়েছে"});
+          setGoogleIntent(null);
+          const code = err && err.code || "";
+          if(code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request"){
+            toast("Google সাইন-আপ বাতিল করা হয়েছে", true);
+          } else {
+            uiAlert(authErrorMessage(err), {type:"error", title:"ব্যর্থ হয়েছে"});
+          }
         }finally{ btn.disabled = false; }
       });
   
@@ -4359,7 +4391,7 @@ function initPage() {
             }
             await sendPasswordResetEmail(auth, recipient);
             success(recipient);
-          }catch(e){const code=e&&e.code||"";btn.disabled=false;btn.textContent="রিসেট লিংক পাঠান";err(code==="auth/configuration-not-found"?"Firebase Authentication সঠিকভাবে কনফিগার করা হয়নি।":(e.message||"রিসেট লিংক পাঠানো যায়নি। আবার চেষ্টা করুন।"))}
+          }catch(e){btn.disabled=false;btn.textContent="রিসেট লিংক পাঠান";err(authErrorMessage(e, {fallback: "রিসেট লিংক পাঠানো যায়নি। আবার চেষ্টা করুন।"}))}
         };
         const success=(recipient)=>{
           body.innerHTML=`<div class="otp-success"><span>✓</span><h3>রিসেট লিংক পাঠানো হয়েছে</h3><p>${esc(maskRecovery(recipient))} ঠিকানায় একটি পাসওয়ার্ড রিসেট লিংক পাঠানো হয়েছে। ইমেইল খুলে লিংকে ক্লিক করে নতুন পাসওয়ার্ড সেট করুন।</p></div><div class="otp-actions"><button class="btn btn-green" type="button" id="otpDone">লগইনে ফিরুন</button></div>`;
@@ -4479,12 +4511,7 @@ function initPage() {
         }catch(err){
           hideAppModal();
           console.warn("signup error:", err);
-          const code = err && err.code || "";
-          const msg = code === "auth/email-already-in-use" ? "এই ইমেইলে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।"
-                    : code === "auth/invalid-email" ? "ইমেইল ঠিকানাটি সঠিক নয়।"
-                    : code === "auth/weak-password" ? "পাসওয়ার্ড খুব দুর্বল, কমপক্ষে ৬ অক্ষর দিন।"
-                    : code === "auth/configuration-not-found" ? "Firebase Authentication সঠিকভাবে কনফিগার করা হয়নি। Firebase Console-এ Authentication enable করুন।"
-                    : "অ্যাকাউন্ট তৈরি করা যায়নি: " + (err && err.message ? err.message : "অজানা ত্রুটি");
+          const msg = authErrorMessage(err, {fallback: "অ্যাকাউন্ট তৈরি করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।"});
           showMessage(message, msg, "error");
           uiAlert(msg, {type:"error", title:"অ্যাকাউন্ট তৈরি ব্যর্থ"});
         }
@@ -4511,18 +4538,16 @@ function initPage() {
           }
           const cred=await signInWithEmailAndPassword(auth,email,password);
           const resolved=await resolveRole(email, cred.user.displayName || email);
+          // login-এর পর Firestore-এ user profile আছে কিনা নিশ্চিত করি (self-heal)
+          if(db && cred.user && cred.user.uid){
+            ensureUserProfile(db, {uid:cred.user.uid, email:(cred.user.email||email), name: resolved.name || cred.user.displayName || email, photo: cred.user.photoURL || ""}, {provider:"password"})
+              .catch(e=>console.warn("profile upsert:", e&&e.message));
+          }
           hideAppModal();$("#loginForm").reset();
           finishLogin({email,name:resolved.name||email,role:resolved.role,permissions:resolved.permissions,photo:cred.user.photoURL||""});
         }catch(err){
           hideAppModal();console.warn("login failed:",err&&err.code,err&&err.message);
-          const code=err&&err.code||"";
-          const msg=(code==="auth/invalid-credential"||code==="auth/wrong-password"||code==="auth/user-not-found"||code==="auth/invalid-login-credentials")
-            ?"ইমেইল/ইউজার নেইম অথবা পাসওয়ার্ড সঠিক নয়।"
-            :code==="auth/too-many-requests"?"অনেকবার ভুল চেষ্টা হয়েছে। কিছুক্ষণ পর আবার চেষ্টা করুন অথবা পাসওয়ার্ড রিসেট করুন।"
-            :code==="auth/user-disabled"?"এই অ্যাকাউন্টটি নিষ্ক্রিয় করা হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।"
-            :code==="auth/network-request-failed"?"নেটওয়ার্ক সংযোগ নেই। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।"
-            :code==="auth/configuration-not-found"?"Firebase Authentication সঠিকভাবে কনফিগার করা হয়নি। Firebase Console-এ Authentication enable করুন।"
-            :"লগইন করা যায়নি: "+(err&&err.message?err.message:"অজানা ত্রুটি");
+          const msg=authErrorMessage(err,{fallback:"লগইন করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।"});
           showMessage($("#loginMessage"),msg,"error");uiAlert(msg,{type:"error",title:"লগইন ব্যর্থ"});
         }
       });
@@ -4569,9 +4594,46 @@ function initPage() {
     
   
       /* ===== Boot ===== */
+      /* Google redirect-এ ফেরার পর ফলাফল resume — pending intent ("login"/"signup")
+         অনুযায়ী সঠিক flow শেষ করা হয় */
+      async function resumeGoogleRedirect(){
+        if(!fbReady || !auth) return;
+        let red = null;
+        try{
+          red = await consumeGoogleRedirect(auth);
+        }catch(err){
+          console.warn("Google redirect resume:", err);
+          setGoogleIntent(null);
+          uiAlert(authErrorMessage(err), {type:"error", title:"Google লগইন ব্যর্থ"});
+          return;
+        }
+        if(!red) return;
+        setGoogleIntent(null);
+        try{
+          if(red.intent === "signup") await continueGoogleSignup(red.profile);
+          else await continueGoogleLogin(red.profile);
+        }catch(err){
+          hideAppModal();
+          console.warn("Google redirect flow:", err);
+          uiAlert(authErrorMessage(err), {type:"error", title:"লগইন ব্যর্থ"});
+        }
+      }
+      /* Firebase auth state-এর প্রতিবিম্ব — অন্য ট্যাবে বা সেশন শেষে লগআউট হলে
+         স্থানীয় লগইন-ইঙ্গিত পরিষ্কার করে নেভিগেশন অবস্থা ঠিক রাখি */
+      function watchAuthMirror(){
+        if(!fbReady || !auth) return;
+        try{
+          onAuthUserChanged(auth, (user)=>{
+            if(!user && isLoggedIn()) clearMemberSession();
+            else if(user && user.displayName && isLoggedIn() && !localStorage.getItem("cbdcMemberName")){
+              localStorage.setItem("cbdcMemberName", user.displayName);
+            }
+          });
+        }catch(e){ console.warn("auth mirror:", e && e.message); }
+      }
       setLogo();
       if(window.CBDCShared)CBDCShared.subscribe(()=>{ renderPublic(); renderGallery(); });
-      initFirebase().then(()=>{ renderPublic(); renderGallery(); renderLoginGate(); renderAuthState(); });
+      initFirebase().then(()=>{ renderPublic(); renderGallery(); renderLoginGate(); renderAuthState(); resumeGoogleRedirect(); watchAuthMirror(); });
       renderAuthState();
   
       // Hash deep-link (index.html#dashboard ইত্যাদি — ড্যাশবোর্ড পেজ থেকে ফেরার লিংক)

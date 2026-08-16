@@ -1,28 +1,19 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { resolve } from "node:path";
 
 // https://vitejs.dev/config/
 //
 // `base: "./"` — relative asset paths, so the built `dist/` runs from ANY
 // static hosting site (GitHub Pages, Netlify, Vercel, shared cPanel, Apache,
-// Nginx, S3, ...) even when served from a sub-directory.
+// Nginx, S3, Cloudflare Workers/Pages, Firebase Hosting, ...) even when served
+// from a sub-directory.
 //
-// Multi-page build — index.html / doner.html / admin.html / moderator.html
-// are real files, so no server-side rewrites (SPA fallback) are needed.
+// Single-page build — শুধুমাত্র index.html। সব পেজ (Home / Doner / Admin /
+// Moderator) .tsx কম্পোনেন্ট হিসেবে একই entry থেকে বুট হয়
+// (src/main.tsx + src/lib/router.ts)। প্যানেলগুলো lazy-loaded chunk হিসেবে আসে।
 export default defineConfig({
   plugins: [react()],
   base: "./",
-  build: {
-    rollupOptions: {
-      input: {
-        main: resolve(process.cwd(), "index.html"),
-        doner: resolve(process.cwd(), "doner.html"),
-        admin: resolve(process.cwd(), "admin.html"),
-        moderator: resolve(process.cwd(), "moderator.html"),
-      },
-    },
-  },
   server: {
     host: "0.0.0.0",
     port: 5173,

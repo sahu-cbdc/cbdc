@@ -27,13 +27,33 @@ Firebase config এক জায়গায় রাখা হয়েছে:
 ```ts
 export const firebaseConfig = {
   apiKey: "AIzaSy...",
-  authDomain: "cbdc-a9418.firebaseapp.com",
-  projectId: "cbdc-a9418",
+  authDomain: "chokbazarbloodclub-69d5f.firebaseapp.com",
+  projectId: "chokbazarbloodclub-69d5f",
   // ...
 };
 ```
 
-Project: **`cbdc-a9418`** (`.firebaserc`-এও সেট করা আছে)।
+Project: **`chokbazarbloodclub-69d5f`** (`.firebaserc`-এও সেট করা আছে)।
+
+### ২.১ Authentication নোট (গুরুত্বপূর্ণ)
+
+- **Email/Password + Google** — দুটোই Firebase Console → Authentication →
+  Sign-in method-এ চালু করে Save করতে হবে। না করলে `auth/configuration-not-found`
+  বা `auth/operation-not-allowed` error আসবে।
+- **Google login popup প্রথম পছন্দ; মোবাইল/WebView/পপ-আপ ব্লকে redirect fallback**
+  — বাস্তবায়ন `src/lib/authx.ts`-এ (`googleSignInWithFallback` +
+  `consumeGoogleRedirect`)। redirect-ফলাফল boot-এ resume হয়।
+- **Authorized domains**: Custom/Cloudflare ডোমেইন (যেমন `cbdc.pages.dev`,
+  `cbdc.workers.dev` বা নিজস্ব ডোমেইন) থেকে Google লগইন চালাতে সেই ডোমেইন Platform
+  console-এর Auth Settings-এ যোগ করতে হয় — না হলে `auth/unauthorized-domain` আসে।
+  Console-এর নতুন UI-তে Settings ট্যাব না দেখালে এই সেটিং এখন Google Cloud
+  Console → APIs & Services ➜ OAuth consent screen / Identity Toolkit config-এও
+  ম্যানেজ করা যায়।
+- **API key restriction** দিলে `Identity Toolkit API` ও `Token Service API`
+  allowed রাখুন এবং deploy করা ডোমেইনকে HTTP referrer allowlist-এ যোগ করুন।
+- ঐচ্ছিক env override (`VITE_FIREBASE_API_KEY` ইত্যাদি) সেট করলে সবগুলোই দিতে হয়;
+  আংশিক সেট intentional error-এ ফেলা হয় (ভুল config silent অনুমোদন এড়াতে)।
+  `users/{uid}` প্রোফাইল login/signup-এর পর স্বয়ংক্রিয়ভাবে merge-আপডেট হয়।
 
 ## ৩. Data Layer আর্কিটেকচার
 

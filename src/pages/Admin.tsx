@@ -9,6 +9,8 @@
 import { useEffect } from "react";
 import "../lib/store";
 import { initFirebase as initSharedFirebase } from "../lib/firebase";
+import { navigateToPage } from "../lib/router";
+import { authErrorMessage } from "../lib/authx";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage, getImgbbKey, saveImgbbKey } from "../lib/imgbb";
 
@@ -2971,8 +2973,7 @@ function initPage() {
           logMe("পাসওয়ার্ড পরিবর্তন","এই ডিভাইস থেকে","security");
           s.close();renderSub("security");toast("পাসওয়ার্ড বদলানো হয়েছে","ok");
         }catch(e){
-          const code=e&&e.code||"";
-          toast(code==="auth/wrong-password"||code==="auth/invalid-credential"?"বর্তমান পাসওয়ার্ড সঠিক নয়":code==="auth/configuration-not-found"?"Firebase Authentication সঠিকভাবে কনফিগার করা হয়নি।":(e&&e.message?e.message:"পাসওয়ার্ড পরিবর্তন করা যায়নি"),"er");
+          toast(authErrorMessage(e,{wrongCredentials:"বর্তমান পাসওয়ার্ড সঠিক নয়",fallback:"পাসওয়ার্ড পরিবর্তন করা যায়নি"}),"er");
         }};
     }
     if(a==="photo"){
@@ -3108,7 +3109,7 @@ function initPage() {
         await sendPasswordResetEmail(shared.auth, recipient);
         bd.innerHTML=`<div class="note g">${SI.check(17)}<span>${esc(recipient)} ঠিকানায় রিসেট লিংক পাঠানো হয়েছে। ইমেইল খুলে নতুন পাসওয়ার্ড সেট করুন।</span></div>`;
         ft.innerHTML=`<button class="btn" data-close>বন্ধ করুন</button>`;
-      }catch(e){btn.disabled=false;btn.textContent="রিসেট লিংক পাঠান";toast(e&&e.message?e.message:"রিসেট লিংক পাঠানো যায়নি","er")}
+      }catch(e){btn.disabled=false;btn.textContent="রিসেট লিংক পাঠান";toast(authErrorMessage(e,{fallback:"রিসেট লিংক পাঠানো যায়নি"}),"er")}
     };
     start();
   }
@@ -3479,9 +3480,7 @@ function initPage() {
   };
   
   /* ══════════ LOGOUT — same behaviour in every panel ══════════
-     Signs out of the panel and returns to the public site, where the
-     user must log in again. When Firebase lands this also calls
-     signOut(); the redirect target stays the same.                  */
+     Firebase Auth signOut + স্থানীয় সেশন পরিষ্কার করে মূল ওয়েবসাইটে ফেরত। */
   async function doLogout(){
     if(!await confirmS({title:"লগআউট করবেন?",
       desc:"প্যানেল থেকে বের হয়ে মূল ওয়েবসাইটে ফিরে যাবেন। আবার ঢুকতে হলে নতুন করে লগইন করতে হবে।",
@@ -3492,8 +3491,9 @@ function initPage() {
       localStorage.removeItem(ACC_LS);
       sessionStorage.clear();
     }catch(e){}
+    try{(async()=>{try{const shared=initSharedFirebase();const {signOut}=await import("firebase/auth");if(shared.auth)await signOut(shared.auth)}catch(e){}})()}catch(e){}
     toast("লগআউট হয়েছে — মূল ওয়েবসাইটে ফিরে যাচ্ছেন","ok");
-    setTimeout(()=>{location.href="index.html"},700);
+    setTimeout(()=>{navigateToPage("home")},700);
   }
   function exportSheet(){
     if(!can("data.export"))return toast("রপ্তানির অনুমতি নেই","er");
@@ -4591,7 +4591,7 @@ function initPage() {
         const {onAuthStateChanged}=await import("firebase/auth");
         onAuthStateChanged(shared.auth, async (user)=>{
           if(!user){
-            location.href="index.html";
+            navigateToPage("home");
             return;
           }
           const email=String(user.email||"").toLowerCase();
@@ -4604,7 +4604,7 @@ function initPage() {
           const r=String(admin&&admin.role||"").toLowerCase();
           const ok=PANEL.id==="super" ? (r==="super"||r==="admin") : (r==="mod"||r==="moderator");
           if(!ok){
-            location.href="index.html";
+            navigateToPage("home");
             return;
           }
           ME.uid=user.uid;
