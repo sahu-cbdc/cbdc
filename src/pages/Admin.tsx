@@ -8,16 +8,20 @@
  */
 import { useEffect } from "react";
 import "../lib/store";
-import { initFirebase as initSharedFirebase } from "../lib/firebase";
-import { navigateToPage, screenPath, panelSubPath } from "../lib/router";
-import { authErrorMessage } from "../lib/authx";
+import { initFirebase as initSharedFirebase, NODES } from "../lib/firebase";
+import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
+import { authErrorMessage, resolveUserRole, panelForRole } from "../lib/authx";
+import { getRow, setRow, updateRow, removeRow, watchList, findBy, nowIso } from "../lib/rtdb";
+import { ageText, ageFromDob, dobBounds, isValidDob } from "../lib/age";
+import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
+import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage, getImgbbKey, saveImgbbKey } from "../lib/imgbb";
 
 /* ═══════════════════════════════════════════════════════════════════
    CSS — মূল admin.html-এর <style> ব্লক হুবহু কপি
    ═══════════════════════════════════════════════════════════════════ */
-const pageCss = `*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+const pageCss = FORM_ERROR_CSS + `*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 :root{
   --grn:#087a4b; --grn-d:#065c39; --grn-s:#e8f6ef;
   --red:#e0242f; --red-d:#b0161f; --red-s:#fdeced;
@@ -727,7 +731,7 @@ function StaticShell() {
       <div className="toasts" id="toasts">
       </div>
       {" "}
-      {/* Shared live state: same donors, requests and moderation queue across all pages (Firestore) */}
+      {/* Shared live state: same donors, requests and moderation queue across all pages (Realtime Database) */}
       {" "}
     </>
   );
@@ -739,7 +743,8 @@ function StaticShell() {
 function initPage() {
   /* which panel this build is */
   const PANEL={id:"super",role:"super",label:"অ্যাডমিন প্যানেল"};
-  const LOGO = "./img/logo.png";  /* img/logo.png ফাইল থেকে লোগো — ফাইল বদলালেই সর্বত্র নতুন লোগো */
+  /* লোগো — কেন্দ্রীয় উৎস (src/config/logo.ts)। কোনো পেজে আলাদা path নেই। */
+  const LOGO = logoUrl();
   const I=(p,sz=22)=>`<svg width="${sz}" height="${sz}" viewBox="0 0 24 24" fill="none" stroke="currentColor"
     stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
   const ICON={
@@ -2251,7 +2256,7 @@ function initPage() {
      fixed top bar → 4 nav items → screens → sub-pages with a back
      button → sheets for detail work. Nothing here re-invents the
      shell; only the screens are new.
-     Data source: Firestore (live sync)
+     Data source: Firebase Realtime Database (live sync)
      later touches seed()/persist()/restore()/logAudit() only.
      ══════════════════════════════════════════════════════════════ */
   const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -2308,13 +2313,10 @@ function initPage() {
   const AREAS=SITE.areas.slice();
   const HOSPITALS=["চট্টগ্রাম মেডিকেল কলেজ হাসপাতাল","ম্যাক্স হাসপাতাল, মেহেদীবাগ","সিএসসিআর হাসপাতাল",
     "পার্কভিউ হাসপাতাল","ইম্পেরিয়াল হাসপাতাল","চমেক ব্লাড ব্যাংক"];
-  const FIRST=["আরিফুর","সাদিয়া","তানভীর","নুসরাত","ইকবাল","ফারহানা","মেহরাব","রিফাতুল","শাকিল","জাহিদুল",
-    "সাবরিনা","কামরুল","আশরাফুল","নাবিলা","তাসনিম","রায়হান","সুমাইয়া","জুবায়ের","মাহমুদা","সাইফুল",
-    "রুবেল","নাফিসা","হাসান","তানিয়া","ইমরান","শারমিন","ফাহিম","রুমানা","আসিফ","প্রিয়াঙ্কা"];
-  const LAST=["রহমান","আক্তার","হোসাইন","জাহান","মাহমুদ","তানজিম","হোসেন","করিম","আহমেদ","ইসলাম",
-    "মুস্তফা","হাসান","আলম","চৌধুরী","উদ্দিন","নূর","খাতুন","বেগম","সুলতানা"];
-  const rnd=a=>a[Math.floor(Math.random()*a.length)];
-  const ri=(a,b)=>a+Math.floor(Math.random()*(b-a+1));
+  /* ── ডেমো/মক ডেটা সম্পূর্ণ রিমুভ ──────────────────────────────────────
+     আগে এখানে নমুনা বাংলা নাম ও random সংখ্যা তৈরির helper ছিল, যেগুলো
+     পরিসংখ্যান/চার্টে বানানো মান দেখাত। এখন প্রতিটি সংখ্যা Realtime Database-এর
+     বাস্তব রেকর্ড থেকেই আসে — কোনো hardcoded বা random ডেটা নেই। */
   
   function seed(){
     /* Firebase is the single source of truth — no seeded/dummy records.
@@ -2360,7 +2362,35 @@ function initPage() {
     if(st.accounts.length)DB.accounts=st.accounts.map(x=>CBDCShared.clone(x));
     SHARED_PULLING=false;
   }
-  function persist(){publishSharedState()}
+  /* persist() — সব পরিবর্তন Realtime Database-এ। donors/queue/requests/gallery/
+     notices/accounts যায় shared store দিয়ে; site/rules-এর মতো সেটিংস `settings`
+     নোডে। দুটোতেই RTDB listener বসানো, তাই যে-কোনো প্যানেল/পেজে সঙ্গে সঙ্গে
+     পরিবর্তন দেখা যায় — কিছুই দ্বিতীয়বার লিখতে হয় না। */
+  let SETTINGS_PULLING=false;
+  function persist(){
+    publishSharedState();
+    if(!SETTINGS_PULLING)queueMicrotask(pushSettings);
+  }
+  async function pushSettings(){
+    if(SETTINGS_PULLING)return;
+    try{
+      await setRow(NODES.settings,"app",{
+        site:DB.site||{},
+        rules:DB.rules||{},
+        autoApproveEmergency:!(DB.rules&&DB.rules.reqApproval)
+      });
+    }catch(e){ console.warn("settings push:", e && e.message); }
+  }
+  /* settings live listener — এক প্যানেলে বদলালে অন্য প্যানেল ও ওয়েবসাইটেও সাথে সাথে */
+  watchList(NODES.settings,(rows)=>{
+    const app=rows.find(r=>r.id==="app");
+    if(!app)return;
+    SETTINGS_PULLING=true;
+    if(app.site&&typeof app.site==="object")Object.assign(DB.site,app.site);
+    if(app.rules&&typeof app.rules==="object")Object.assign(DB.rules,app.rules);
+    SETTINGS_PULLING=false;
+    try{ if(!document.querySelector(".sheet"))go(CUR,SUB,false,ARG); }catch(e){}
+  });
   pullSharedState();persist();
   function logAudit(act,target,mod){
     DB.audit.unshift({at:new Date().toISOString(),who:ME.name,role:ME.role,act,target,mod});
@@ -2542,7 +2572,7 @@ function initPage() {
   /* proper nouns must survive translation — register them once */
   (function(){
     if(typeof protectNames!=="function")return;
-    protectNames([...FIRST,...LAST,...AREAS,...HOSPITALS]);
+    protectNames([...AREAS,...HOSPITALS]);
     protectNames(DB.donors.map(d=>d.name));
     protectNames(DB.team.map(t=>t.name));
     protectNames(DB.queue.map(q=>q.name||q.patient));
@@ -2911,7 +2941,7 @@ function initPage() {
             `<option ${o===val?"selected":""}>${esc(o)}</option>`).join("")}</select>`
           :opts.type==="textarea"?`<textarea id="mi" rows="3">${esc(val||"")}</textarea>`
           :`<input id="mi" value="${esc(val||"")}" ${opts.max?`maxlength="${opts.max}"`:""}
-             ${opts.mode?`inputmode="${opts.mode}"`:""} placeholder="${esc(opts.ph||"")}">`}
+             ${opts.mode?`inputmode="${opts.mode}"`:""}>`}
         </div>${opts.hint?`<p class="hint2" style="margin-top:8px">${esc(opts.hint)}</p>`:""}`,
         `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="mok">সংরক্ষণ</button>`);
       s.q("#mok").onclick=()=>{const v=s.q("#mi").value.trim();if(ok(v,s)!==false)s.close()};
@@ -2955,8 +2985,8 @@ function initPage() {
   
     if(a==="editPass"){
       const s=sheet("পাসওয়ার্ড বদলান",`<div class="f">
-        <label>বর্তমান পাসওয়ার্ড</label><input id="p0" type="password" placeholder="••••••••">
-        <label>নতুন পাসওয়ার্ড</label><input id="p1" type="password" minlength="6" placeholder="কমপক্ষে ৬ অক্ষর">
+        <label>বর্তমান পাসওয়ার্ড</label><input id="p0" type="password">
+        <label>নতুন পাসওয়ার্ড</label><input id="p1" type="password" minlength="6">
         <label>আবার লিখুন</label><input id="p2" type="password" minlength="6"></div>
         <div id="pstr" class="pgb" style="margin-top:10px"><i></i></div>
         <p class="hint2" id="pmsg" style="margin-top:6px">বড় হাতের অক্ষর, সংখ্যা ও চিহ্ন মিশিয়ে দিন।</p>
@@ -3096,29 +3126,10 @@ function initPage() {
     await reauthenticateWithCredential(user,cred);
     await updatePassword(user,newPassword);
   }
+  /* পাসওয়ার্ড ভুলে গেলে — সাইটের আলাদা full-page UI (/forgot-password)।
+     সেখান থেকেই Firebase-এর built-in reset link পাঠানো হয়; কোনো custom OTP নেই। */
   function sheetForgot(){
-    const s=sheet("পাসওয়ার্ড ভুলে গেছেন?","",`<button class="btn gh" data-close>বাতিল</button><button class="btn" id="fo_send">রিসেট লিংক পাঠান</button>`);
-    const bd=s.q(".bd"),ft=s.q(".ft");
-    const start=()=>{
-      bd.innerHTML=`<div class="note i">${SI.info(17)}<span>Firebase Authentication থেকে একটি <b>পাসওয়ার্ড রিসেট লিংক</b> ইমেইলে পাঠানো হবে।</span></div>
-        <div class="f"><label>ইমেইল</label>
-          <input id="fo_rec" value="${esc(ME.email||"")}" placeholder="you@example.com"></div>`;
-      ft.innerHTML=`<button class="btn gh" data-close>বাতিল</button><button class="btn" id="fo_send">রিসেট লিংক পাঠান</button>`;
-      s.q("#fo_send").onclick=send;
-    };
-    const send=async()=>{
-      const recipient=s.q("#fo_rec").value.trim();
-      if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(recipient))return toast("সঠিক ইমেইল দিন","er");
-      const btn=s.q("#fo_send");btn.disabled=true;btn.textContent="পাঠানো হচ্ছে…";
-      try{
-        const shared=initSharedFirebase();
-        const {sendPasswordResetEmail}=await import("firebase/auth");
-        await sendPasswordResetEmail(shared.auth, recipient);
-        bd.innerHTML=`<div class="note g">${SI.check(17)}<span>${esc(recipient)} ঠিকানায় রিসেট লিংক পাঠানো হয়েছে। ইমেইল খুলে নতুন পাসওয়ার্ড সেট করুন।</span></div>`;
-        ft.innerHTML=`<button class="btn" data-close>বন্ধ করুন</button>`;
-      }catch(e){btn.disabled=false;btn.textContent="রিসেট লিংক পাঠান";toast(authErrorMessage(e,{fallback:"রিসেট লিংক পাঠানো যায়নি"}),"er")}
-    };
-    start();
+    try{ window.location.assign(appBase()+"forgot-password"); }catch(e){ navigateToPage("home"); }
   }
   /* ---------- delete my own admin account ----------
      A staff account is never deleted silently: the last super admin must stay,
@@ -3140,7 +3151,7 @@ function initPage() {
         <p class="mut" style="font-size:.81rem;margin-bottom:14px">আপনার করা অনুমোদন ও অডিট লগ (নাম ছাড়া) —
           কারণ এগুলো ক্লাবের কাজের রেকর্ডের অংশ</p>
         <div class="f"><label>নিশ্চিত করতে <b style="color:var(--red)">মুছে ফেলুন</b> লিখুন</label>
-          <input id="dmt" placeholder="মুছে ফেলুন" autocapitalize="off"></div>`,
+          <input id="dmt" autocapitalize="off"></div>`,
       lastSuper
       ? `<button class="btn" data-close style="flex:1">বুঝেছি</button>`
       : `<button class="btn gh" data-close>বাতিল</button><button class="btn red" id="dmok">অনুরোধ পাঠান</button>`);
@@ -3191,8 +3202,9 @@ function initPage() {
     if(unread())alerts.push({cl:"var(--blu)",ic:"mail",b:tp(`${bn(unread())}টি নতুন বার্তা`,`${unread()} new messages`),
       s:"ওয়েবসাইটের যোগাযোগ ফর্ম থেকে",fn:()=>go("home","inbox")});
   
+    /* বাস্তব সংখ্যা — ঐ দিনে সত্যিই যত রক্তদান রেকর্ড আছে (কোনো random নয়) */
     const week=[...Array(7)].map((_,i)=>{const d=addD(new Date(),i-6);
-      return {d,v:DB.donors.filter(x=>x.last===d).length+ri(0,3)}});
+      return {d,v:DB.donors.filter(x=>x.last===d).length}});
     const wMax=Math.max(3,...week.map(w=>w.v));
   
     el.innerHTML=ptitle(greet+", "+ME.name.split(" ")[0],
@@ -3279,7 +3291,7 @@ function initPage() {
   };
   function wkItem(q){
     const k=QK[q.kind],urg=q.kind==="request"&&q.urgency==="অতিজরুরি",sel=wSel.has(q.id);
-    const meta={donor:`${q.group} · ${q.area} · ${bn(q.age)} বছর`,
+    const meta={donor:`${q.group} · ${q.area} · ${ageText(q)}`,
       donation:`${q.place} · ${dL(q.date)}`,
       request:`${q.group} · ${bn(q.bags)} ব্যাগ · ${q.hospital}`,
       group:`${q.from} → ${q.to}`,report:q.type}[q.kind];
@@ -3304,8 +3316,11 @@ function initPage() {
   function reviewWarning(q){
     const w=[];
     if(q.kind==="donor"){
-      if(q.age<DB.rules.minAge)w.push(`বয়স ${bn(q.age)} — নিয়ম অনুযায়ী কমপক্ষে ${bn(DB.rules.minAge)} বছর`);
-      if(q.age>DB.rules.maxAge)w.push(`বয়স ${bn(q.age)} — সর্বোচ্চ ${bn(DB.rules.maxAge)} বছর`);
+      /* বয়স জন্ম তারিখ থেকে হিসাব হয় — আবেদনের সময় যা-ই হোক, যাচাইয়ের দিন যা, সেটাই */
+      const qAge=ageFromDob(q.dob);
+      if(qAge===null)w.push("জন্ম তারিখ দেওয়া হয়নি বা সঠিক নয়");
+      else if(qAge<DB.rules.minAge)w.push(`বয়স ${bn(qAge)} — নিয়ম অনুযায়ী কমপক্ষে ${bn(DB.rules.minAge)} বছর`);
+      else if(qAge>DB.rules.maxAge)w.push(`বয়স ${bn(qAge)} — সর্বোচ্চ ${bn(DB.rules.maxAge)} বছর`);
       if(q.last&&dayDiff(q.last)<DB.rules.interval)w.push(`শেষ রক্তদানের পর মাত্র ${bn(dayDiff(q.last))} দিন হয়েছে`);
       if(/ওষুধ|রোগ|থাইরয়েড|ডায়াবেটিস/.test(q.health)&&!/কোনো রোগ নেই/.test(q.health))
         w.push("স্বাস্থ্য তথ্যে ওষুধ/রোগের উল্লেখ আছে — যাচাই করুন");
@@ -3332,7 +3347,7 @@ function initPage() {
     const q=DB.queue.find(x=>x.id===id);if(!q)return;
     const k=QK[q.kind],w=reviewWarning(q);
     const rows={
-      donor:[["নাম",q.name],["রক্তের গ্রুপ",q.group],["এলাকা",q.area],["বয়স",bn(q.age)+" বছর"],
+      donor:[["নাম",q.name],["রক্তের গ্রুপ",q.group],["এলাকা",q.area],["জন্ম তারিখ",q.dob?dL(q.dob):"—"],["বয়স",ageText(q)],
         ["লিঙ্গ",q.gender],["ফোন",maskPhone(q.phone)],["শেষ রক্তদান",q.last?dL(q.last):"কখনো দেননি"],
         ["স্বাস্থ্য",q.health]],
       donation:[["ডোনার",q.name],["স্থান",q.place],["তারিখ",dL(q.date)],["ব্যাগ",bn(q.bags)],
@@ -3355,7 +3370,7 @@ function initPage() {
       <p class="hint2" style="margin-top:12px">${can("contact.reveal")
         ?"নম্বর দেখা হয়েছে — এটি অডিট লগে থেকে যাবে।":"ফোন নম্বর দেখার অনুমতি আপনার নেই।"}</p>
       ${may?`<div class="sec-t">সিদ্ধান্তের নোট (ঐচ্ছিক)</div>
-        <textarea id="rv_note" rows="2" placeholder="টিমের জন্য নোট…"></textarea>`:""}`,
+        <textarea id="rv_note" rows="2"></textarea>`:""}`,
       may?`<button class="btn gh amb" id="rv_no">${SI.x(16)} বাতিল</button>
            <button class="btn" id="rv_yes">${SI.check(16)} অনুমোদন</button>`
          :`<button class="btn gh w" data-close>বন্ধ</button>`);
@@ -3372,7 +3387,7 @@ function initPage() {
       <p class="hint2" style="margin-bottom:10px">কারণটি ব্যবহারকারীর অ্যাপে দেখানো হবে, তাই স্পষ্ট করে লিখুন। কারণ ছাড়া বাতিল করা যাবে না।</p>
       <div class="strip wrap chips" id="rj_chips">
         ${reasons.map(r=>`<button data-r="${esc(r)}">${esc(r)}</button>`).join("")}</div>
-      <textarea id="rj_txt" rows="3" placeholder="বিস্তারিত কারণ…"></textarea>`,
+      <textarea id="rj_txt" rows="3"></textarea>`,
       `<button class="btn gh" data-close>ফিরে যান</button>
        <button class="btn amb" id="rj_ok">${SI.x(16)} বাতিল করুন</button>`);
     s.querySelectorAll("#rj_chips button").forEach(b=>b.onclick=()=>{
@@ -3389,7 +3404,7 @@ function initPage() {
     const i=DB.queue.findIndex(x=>x.id===id);if(i<0)return;
     const q=DB.queue[i];
     if(q.kind==="donor"&&ok)DB.donors.unshift({id:q.donorId||("CBDC-2026-"+pad(DB.donors.length+1)),
-      name:q.name,group:q.group,area:q.area,phone:q.phone,whatsapp:q.whatsapp||q.phone,gender:q.gender,age:q.age,last:q.last,
+      name:q.name,group:q.group,area:q.area,phone:q.phone,whatsapp:q.whatsapp||q.phone,gender:q.gender,dob:q.dob||"",last:q.last,
       ownerUid:q.ownerUid||"",available:true,verified:true,suspended:false,joined:iso(now()),donations:q.last?1:0});
     if(q.kind==="donation"&&ok){const d=DB.donors.find(x=>x.name===q.name);
       if(d){d.donations++;if(!d.last||q.date>d.last)d.last=q.date}}
@@ -3519,8 +3534,8 @@ function initPage() {
     s.q("#ex_ok").onclick=()=>{
       let csv="";
       if(pick==="donors")csv=toCSV(DB.donors.map(d=>[d.id,d.name,d.group,d.area,maskPhone(d.phone),
-        d.age,d.gender,d.last,d.donations,d.suspended?"স্থগিত":"সক্রিয়"]),
-        ["আইডি","নাম","গ্রুপ","এলাকা","ফোন","বয়স","লিঙ্গ","শেষ দান","মোট দান","অবস্থা"]);
+        d.dob||"",ageText(d),d.gender,d.last,d.donations,d.suspended?"স্থগিত":"সক্রিয়"]),
+        ["আইডি","নাম","গ্রুপ","এলাকা","ফোন","জন্ম তারিখ","বয়স","লিঙ্গ","শেষ দান","মোট দান","অবস্থা"]);
       if(pick==="queue")csv=toCSV(DB.queue.map(q=>[q.id,QK[q.kind].t,q.name||q.patient,q.group||"",iso(q.at)]),
         ["আইডি","ধরন","নাম","গ্রুপ","তারিখ"]);
       if(pick==="live")csv=toCSV(DB.live.map(r=>[r.id,r.patient,r.group,r.bags,r.hospital,r.urgency,r.status]),
@@ -3556,7 +3571,7 @@ function initPage() {
     dPage=Math.min(dPage,pages-1);
     const rows=list.slice(dPage*per,dPage*per+per);
     el.innerHTML=`<div class="frow">
-        <input class="gw" id="dq" placeholder="নাম, আইডি, এলাকা বা ফোন…" value="${esc(dF.q)}">
+        <input class="gw" id="dq" value="${esc(dF.q)}">
         <select id="dg"><option value="">সব গ্রুপ</option>${GROUPS.map(g=>`<option ${dF.g===g?"selected":""}>${g}</option>`).join("")}</select>
         <select id="da"><option value="">সব এলাকা</option>${AREAS.map(a=>`<option ${dF.area===a?"selected":""}>${a}</option>`).join("")}</select>
         <select id="ds"><option value="">সব অবস্থা</option>
@@ -3592,13 +3607,15 @@ function initPage() {
     $("#dExp")&&($("#dExp").onclick=exportSheet);
   };
   function donorForm(id){
-    const d=id?DB.donors.find(x=>x.id===id):{name:"",group:"O+",area:AREAS[0],phone:"",age:20,gender:"পুরুষ",last:""};
+    const DB_=dobBounds(DB.rules.minAge,DB.rules.maxAge);
+    const d=id?DB.donors.find(x=>x.id===id):{name:"",group:"O+",area:AREAS[0],phone:"",dob:"",gender:"পুরুষ",last:""};
     const s=sheet(id?"তথ্য সম্পাদনা":"নতুন রক্তদাতা",`<div class="f">
       <label>নাম</label><input id="f_n" value="${esc(d.name)}">
       <label>রক্তের গ্রুপ</label><select id="f_g">${GROUPS.map(g=>`<option ${d.group===g?"selected":""}>${g}</option>`).join("")}</select>
       <label>এলাকা</label><select id="f_a">${AREAS.map(a=>`<option ${d.area===a?"selected":""}>${a}</option>`).join("")}</select>
-      <label>ফোন</label><input id="f_p" value="${esc(d.phone)}" placeholder="01XXXXXXXXX" inputmode="numeric">
-      <label>বয়স</label><input id="f_ag" type="number" value="${d.age}">
+      <label>ফোন</label><input id="f_p" value="${esc(d.phone)}" inputmode="numeric">
+      <label>জন্ম তারিখ</label><input id="f_ag" type="date" value="${esc(d.dob||"")}" min="${DB_.min}" max="${DB_.max}">
+      <span class="hint2">বয়স জন্ম তারিখ থেকে স্বয়ংক্রিয়ভাবে হিসাব হবে${d.dob?" — বর্তমানে "+ageText(d):""}।</span>
       <label>লিঙ্গ</label><select id="f_s"><option ${d.gender==="পুরুষ"?"selected":""}>পুরুষ</option><option ${d.gender==="মহিলা"?"selected":""}>মহিলা</option></select>
       <label>শেষ রক্তদান</label><input id="f_l" type="date" value="${d.last||""}">
     </div>`,`<button class="btn gh" data-close>বাতিল</button><button class="btn" id="f_ok">সংরক্ষণ</button>`);
@@ -3606,8 +3623,10 @@ function initPage() {
       const n=s.q("#f_n").value.trim(),p=s.q("#f_p").value.trim();
       if(n.length<3)return toast("নাম লিখুন","er");
       if(!phoneOK(p))return toast("সঠিক ফোন নম্বর দিন (০১…, ১১ সংখ্যা)","er");
+      const dobVal=s.q("#f_ag").value;
+      if(dobVal&&!isValidDob(dobVal))return toast("সঠিক জন্ম তারিখ দিন","er");
       const o={name:n,group:s.q("#f_g").value,area:s.q("#f_a").value,phone:p,
-        age:+s.q("#f_ag").value||20,gender:s.q("#f_s").value,last:s.q("#f_l").value};
+        dob:dobVal,gender:s.q("#f_s").value,last:s.q("#f_l").value};
       if(id){Object.assign(d,o);logAudit("ডোনার তথ্য সম্পাদনা",id,"donor")}
       else{DB.donors.unshift({id:"CBDC-2026-"+pad(DB.donors.length+1),...o,available:true,verified:true,
         suspended:false,joined:iso(now()),donations:0});logAudit("নতুন ডোনার যোগ",n,"donor")}
@@ -3651,7 +3670,7 @@ function initPage() {
     el.querySelectorAll("[data-cx]").forEach(b=>b.onclick=()=>{
       const id=b.dataset.cx;
       const s=sheet("আবেদন বাতিল",`<p class="hint2" style="margin-bottom:9px">কারণ লিখুন — আবেদনকারীর অ্যাপে দেখানো হবে।</p>
-        <textarea id="lv_t" rows="3" placeholder="কারণ…"></textarea>`,
+        <textarea id="lv_t" rows="3"></textarea>`,
         `<button class="btn gh" data-close>ফিরে যান</button><button class="btn red" id="lv_ok">বাতিল করুন</button>`);
       s.q("#lv_ok").onclick=()=>{
         if(!s.q("#lv_t").value.trim())return toast("কারণ লিখতে হবে","er");
@@ -3770,7 +3789,7 @@ function initPage() {
           <div class="i">
             <b style="font-size:1rem">${esc(d.name)}</b>
             <small>${d.id} · ${esc(d.area)}</small>
-            <small>${esc(d.gender)} · ${bn(d.age)} বছর</small>
+            <small>${esc(d.gender)} · ${esc(ageText(d))}</small>
           </div>
           <span class="bg2" style="width:46px;height:46px;border-radius:12px;font-size:1rem">${d.group}</span>
         </div>
@@ -3835,7 +3854,8 @@ function initPage() {
       <div class="card pad0">
         ${dRow("নাম",d.name,"name",ro)}
         ${dRow("লিঙ্গ",d.gender,"gender",ro)}
-        ${dRow("বয়স",bn(d.age)+" বছর","age",ro)}
+        ${dRow("জন্ম তারিখ",d.dob?dL(d.dob):"—","dob",ro)}
+        ${dRow("বয়স",ageText(d),null,true)}
         ${dRow("মোবাইল",maskPhone(d.phone),"phone",ro)}
       </div>
       <div class="sec-t">রক্ত ও অবস্থান</div>
@@ -3919,8 +3939,9 @@ function initPage() {
        <span class="rt">${SI.right(17)}</span></button>`;
   /* donations & requests linked to a donor */
   function donorDonations(d){
-    d.log=d.log||[];
-    if(!d.log.length&&d.last)d.log.push({date:d.last,place:"চমেক ব্লাড ব্যাংক",bags:1,ok:true});
+    /* কোনো রেকর্ড বানিয়ে নেওয়া হয় না — ডাটাবেসে যা আছে শুধু তা-ই দেখানো হয়।
+       (আগে শেষ রক্তদানের তারিখ থাকলে একটি কাল্পনিক এন্ট্রি তৈরি করা হতো।) */
+    d.log=Array.isArray(d.log)?d.log:[];
     return d.log.slice().sort((a,b)=>b.date.localeCompare(a.date));
   }
   function donorReqs(d){
@@ -3929,12 +3950,12 @@ function initPage() {
   function editDonorField(d,key){
     const F={
       name:{t:"নাম",type:"text"},gender:{t:"লিঙ্গ",type:"select",options:["পুরুষ","মহিলা"]},
-      age:{t:"বয়স",type:"number"},phone:{t:"মোবাইল",type:"text",max:11},
+      dob:{t:"জন্ম তারিখ",type:"date"},phone:{t:"মোবাইল",type:"text",max:11},
       group:{t:"রক্তের গ্রুপ",type:"select",options:GROUPS},
       area:{t:"এলাকা",type:"select",options:AREAS},
       last:{t:"সর্বশেষ রক্তদান",type:"date"}
     }[key];
-    const cur=key==="age"?d.age:d[key];
+    const cur=d[key];
     const s=sheet(F.t+" বদলান",`<div class="f"><label>${esc(F.t)}</label>
       ${F.type==="select"?`<select id="di">${F.options.map(o=>
           `<option ${o===cur?"selected":""}>${esc(o)}</option>`).join("")}</select>`
@@ -3945,7 +3966,12 @@ function initPage() {
       let v=s.q("#di").value.trim();
       if(key==="name"&&v.length<3)return toast("নাম খুব ছোট","er");
       if(key==="phone"&&!phoneOK(v))return toast("সঠিক নম্বর দিন","er");
-      if(key==="age"){v=+v;if(v<15||v>75)return toast("বয়স ১৫–৭৫ এর মধ্যে হতে হবে","er")}
+      if(key==="dob"){
+        if(!isValidDob(v))return toast("সঠিক জন্ম তারিখ দিন","er");
+        const a=ageFromDob(v);
+        if(a===null||a<DB.rules.minAge||a>DB.rules.maxAge)
+          return toast(`জন্ম তারিখ অনুযায়ী বয়স ${bn(DB.rules.minAge)}–${bn(DB.rules.maxAge)} বছরের মধ্যে হতে হবে`,"er");
+      }
       d[key]=v;logAudit("ডোনার তথ্য সম্পাদনা — "+F.t,d.id,"donor");persist();
       s.close();renderSub("donor");toast("সংরক্ষণ হয়েছে","ok")};
   }
@@ -3954,7 +3980,7 @@ function initPage() {
     if(a==="addDon"){
       const s=sheet("রক্তদান যোগ করুন",`<div class="f">
         <label>তারিখ</label><input id="ad_d" type="date" value="${iso(now())}" max="${iso(now())}">
-        <label>স্থান</label><input id="ad_p" placeholder="হাসপাতাল বা ক্যাম্পের নাম">
+        <label>স্থান</label><input id="ad_p">
         <label>ব্যাগ</label><input id="ad_b" type="number" value="1" min="1" max="3"></div>`,
         `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="ad_ok">যোগ করুন</button>`);
       s.q("#ad_ok").onclick=()=>{
@@ -4000,7 +4026,7 @@ function initPage() {
           const fs=sheet("অ্যাডমিনের নজরে আনুন",
             `<p class="hint2" style="margin-bottom:9px">কেন এই রক্তদাতাকে অ্যাডমিনের দেখা দরকার তা লিখুন।
                এটি অপেক্ষমাণ কাজে রিপোর্ট হিসেবে যুক্ত হবে।</p>
-             <textarea id="fl_t" rows="3" placeholder="কারণ…"></textarea>`,
+             <textarea id="fl_t" rows="3"></textarea>`,
             `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="fl_ok">${SI.send(15)} পাঠান</button>`);
           fs.q("#fl_ok").onclick=()=>{
             const t=fs.q("#fl_t").value.trim();
@@ -4014,7 +4040,7 @@ function initPage() {
           const t=`${d.name}\n${d.group} · ${d.area}\n${maskPhone(d.phone)}\n${d.id}`;
           navigator.clipboard?.writeText(t).then(()=>toast("কপি হয়েছে","ok"),()=>toast("কপি করা যায়নি","er"))}
         if(m==="csv"){
-          dlFile(`${d.id}.csv`,toCSV([[d.id,d.name,d.group,d.area,maskPhone(d.phone),d.age,d.gender,
+          dlFile(`${d.id}.csv`,toCSV([[d.id,d.name,d.group,d.area,maskPhone(d.phone),d.dob||"",ageText(d),d.gender,
             d.last,d.donations,d.suspended?"স্থগিত":"সক্রিয়"]],
             ["আইডি","নাম","গ্রুপ","এলাকা","ফোন","বয়স","লিঙ্গ","শেষ দান","মোট দান","অবস্থা"]));
           logAudit("প্রোফাইল রপ্তানি",d.id,"data");toast("ফাইল নামছে","ok")}
@@ -4090,7 +4116,7 @@ function initPage() {
       <div class="note i">${SI.info(17)}<span>${tp(
         "যাকে অ্যাক্সেস দেবেন তার অ্যাকাউন্ট আগে থেকেই থাকতে হবে। নাম, ইউজারনেম বা ইমেইল দিয়ে খুঁজুন।",
         "The person must already have an account. Search by name, username or email.")}</span></div>
-      <div class="f"><input id="acq" placeholder="নাম, ইউজারনেম বা ইমেইল…"
+      <div class="f"><input id="acq"
         value="${esc(acQuery)}" autocomplete="off"></div>
       <div class="strip chips" id="acf">
         <button data-f="all" class="${acFilter==="all"?"on":""}">সবাই <i class="c">${bn(DB.accounts.length)}</i></button>
@@ -4170,7 +4196,7 @@ function initPage() {
             >${ROLE_META[r].icon} ${ROLE_META[r].label}</button>`).join("")}</div>
         <div id="acpw"></div>
         <div class="sec-t">কারণ <i style="color:var(--red)">*</i></div>
-        <textarea id="acwhy" rows="2" placeholder="কেন এই পরিবর্তন করছেন…" ${isMe?"disabled":""}></textarea>`}`;
+        <textarea id="acwhy" rows="2" ${isMe?"disabled":""}></textarea>`}`;
   
     const s=sheet("অ্যাক্সেস ও ভূমিকা",body(),
       (isMe||a.role==="super")
@@ -4351,7 +4377,7 @@ function initPage() {
         <small>JPG / PNG · সর্বোচ্চ ৩২ MB</small>
         <input type="file" id="fi" accept="image/*" hidden></div>
       <div class="f" style="margin-top:12px"><label>শিরোনাম</label>
-        <input id="up_t" placeholder="যেমন: রক্তদান ক্যাম্প ২০২৬"></div>
+        <input id="up_t"></div>
       <div class="pgb hide" id="pg"><i></i></div>
       <p class="hint2" style="margin-top:9px">ছবি ImgBB-তে আপলোড হয়ে লিংক হিসেবে সংরক্ষণ হবে।</p>`,
       `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="up_ok">${SI.up(15)} আপলোড</button>`);
@@ -4376,10 +4402,10 @@ function initPage() {
       const okBtn=s.q("#up_ok");okBtn.disabled=true;
       pg.firstElementChild.style.width="12%";
       try{
-        /* ছবি ImgBB-তে upload → link + metadata ডাটাবেসে (Firestore) সেভ */
+        /* ছবি ImgBB-তে upload → link + metadata Realtime Database-এ সেভ */
         const res=await imgbbUploadImage(file);
         pg.firstElementChild.style.width="100%";
-        DB.gallery.push({id:"IMG-"+(20+DB.gallery.length),title:t,url:res.url,imageUrl:res.url,thumbUrl:res.thumbUrl,status:"draft"});
+        DB.gallery.push({id:"IMG-"+Date.now().toString(36).toUpperCase(),title:t,url:res.url,imageUrl:res.url,thumbUrl:res.thumbUrl,status:"draft",order:DB.gallery.length+1});
         logAudit("গ্যালারিতে ছবি যোগ",t,"gallery");persist();s.close();renderSub("gallery");
         toast("ছবি আপলোড হয়েছে — খসড়া অবস্থায়","ok");
       }catch(e){
@@ -4411,8 +4437,8 @@ function initPage() {
       logAudit("নোটিশ মুছে ফেলা",b.dataset.nd,"notice");persist();renderSub("notice");toast("মুছে ফেলা হয়েছে")});
     $("#nAdd")&&($("#nAdd").onclick=()=>{
       const s=sheet("নতুন নোটিশ",`<div class="f">
-        <label>শিরোনাম</label><input id="n_t" placeholder="যেমন: রক্তদান ক্যাম্প ১৫ আগস্ট">
-        <label>বিবরণ</label><textarea id="n_b" rows="3" placeholder="সংক্ষেপে লিখুন…"></textarea>
+        <label>শিরোনাম</label><input id="n_t">
+        <label>বিবরণ</label><textarea id="n_b" rows="3"></textarea>
         <label>কারা দেখবে</label><select id="n_a"><option>সবাই</option>
           ${GROUPS.map(g=>`<option>${g} গ্রুপ</option>`).join("")}
           ${AREAS.map(a=>`<option>${a} এলাকা</option>`).join("")}</select>
@@ -4454,9 +4480,12 @@ function initPage() {
   /* ---------- stats ---------- */
   SUBP.stats=el=>{
     const c=bloodCounts(),tot=Object.values(c).reduce((a,b)=>a+b,0)||1;
+    /* মাসভিত্তিক পরিসংখ্যান — ডাটাবেসের বাস্তব রক্তদানের তারিখ থেকে গণনা */
     const months=[...Array(6)].map((_,i)=>{const d=new Date();d.setMonth(d.getMonth()-(5-i));
-      return {m:d.toLocaleDateString("bn-BD",{month:"short"}),v:ri(4,22)}});
-    const mMax=Math.max(...months.map(m=>m.v));
+      const key=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
+      return {m:d.toLocaleDateString("bn-BD",{month:"short"}),
+              v:DB.donors.filter(x=>String(x.last||"").startsWith(key)).length}});
+    const mMax=Math.max(1,...months.map(m=>m.v));
     const colors=["#e0242f","#087a4b","#2563eb","#b3760a","#7c3aed","#0891b2","#be185d","#4d7c0f"];
     let acc=0;const seg=GROUPS.map((g,i)=>{const p=c[g]/tot*100;const t=`${colors[i]} ${acc}% ${acc+p}%`;acc+=p;return t});
     const low=GROUPS.filter(g=>c[g]<3);
@@ -4524,9 +4553,9 @@ function initPage() {
             style="width:20px;height:20px;accent-color:var(--grn);flex:none"></label>`).join("")}</div>
       <div class="sec-t">সংযোগ</div>
       <div class="card"><div class="f">
-        <label>ImgBB API কী</label><input id="i_key" value="${esc(DB.integr.imgbbKey)}" placeholder="কী পেস্ট করুন"></div>
+        <label>ImgBB API কী</label><input id="i_key" value="${esc(DB.integr.imgbbKey)}"></div>
         <div class="row" style="padding-left:0;padding-right:0;border:0;margin-top:6px">
-          <span class="tx"><b>Firebase / Firestore</b>
+          <span class="tx"><b>Firebase / Realtime Database</b>
             <small>"যুক্ত"</small></span>
           <span class="pill ${DB.integr.firebase?"g":"a"}">${DB.integr.firebase?"সক্রিয়":"অপেক্ষায়"}</span></div></div>
       <div class="sec-t">ডেটা</div>
@@ -4541,14 +4570,14 @@ function initPage() {
     $("#rSave").onclick=()=>{
       r.minAge=+$("#r_min").value||18;r.maxAge=+$("#r_max").value||60;r.interval=+$("#r_int").value||90;
       DB.integr.imgbbKey=$("#i_key").value.trim();
-      saveImgbbKey(DB.integr.imgbbKey);  /* Firestore settings/imgbb — সব পেজে শেয়ার */
+      saveImgbbKey(DB.integr.imgbbKey);  /* RTDB settings/imgbb — সব পেজে শেয়ার, live */
       logAudit("সেটিংস হালনাগাদ","নিয়ম ও সংযোগ","settings");persist();
       toast("সেটিংস সংরক্ষিত","ok")};
   };
   
   /* ---------- global search ---------- */
   SUBP.search=el=>{
-    el.innerHTML=`<div class="f"><input id="sq" placeholder="নাম, আইডি, এলাকা বা ফোন নম্বর…" autocomplete="off"></div>
+    el.innerHTML=`<div class="f"><input id="sq" autocomplete="off"></div>
       <div id="sout"><p class="hint2" style="margin-top:12px">রক্তদাতা, অপেক্ষমাণ আবেদন ও চলমান আবেদন — সব একসাথে খোঁজা হবে।</p></div>`;
     const inp=$("#sq"),out=$("#sout");
     inp.focus();
@@ -4591,7 +4620,10 @@ function initPage() {
       go(RENDER[a]?a:"home",b||null,false);
       if(isEN())translateNode(document.body);
     };
-    /* Firebase Auth gate + ME identity/role/permission from Firestore (`admins`) */
+    /* ══════════ Firebase Auth gate + role (Realtime Database `admins`) ══════════
+       role শুধু ডাটাবেস থেকে আসে — RTDB-তে `admins/{uid}` রেকর্ড বদলালেই
+       ব্যবহারকারীর প্যানেল বদলে যায়। ভুল প্যানেলে ঢুকলে (যেমন Doner এসে
+       /admin খুললে) তাকে তার নিজের dashboard-এ পাঠিয়ে দেওয়া হয়। */
     (async function authorize(){
       try{
         const shared=initSharedFirebase();
@@ -4602,27 +4634,32 @@ function initPage() {
             return;
           }
           const email=String(user.email||"").toLowerCase();
-          const {collection,query,where,getDocs,limit}=await import("firebase/firestore");
-          let admin=null;
+          let resolved={role:"donor",name:"",permissions:[],staff:null};
           try{
-            const snap=await getDocs(query(collection(shared.db,"admins"),where("email","==",email),limit(1)));
-            if(!snap.empty)admin={id:snap.docs[0].id,...snap.docs[0].data()};
-          }catch(e){console.warn("admins lookup:",e&&e.message)}
-          const r=String(admin&&admin.role||"").toLowerCase();
-          const ok=PANEL.id==="super" ? (r==="super"||r==="admin") : (r==="mod"||r==="moderator");
-          if(!ok){
-            navigateToPage("home");
+            resolved=await resolveUserRole({uid:user.uid,email,name:user.displayName||""});
+          }catch(e){console.warn("role lookup:",e&&e.message)}
+
+          const target=panelForRole(resolved.role);          // doner | moderator | admin
+          const here=PANEL.id==="super"?"admin":"moderator";
+          if(target!==here){
+            /* এই প্যানেলে ঢোকার অনুমতি নেই — নিজের dashboard-এ পাঠানো হচ্ছে */
+            navigateToPage(target);
             return;
           }
+
+          const staff=resolved.staff||{};
           ME.uid=user.uid;
           ME.email=email||ME.email;
-          ME.name=admin&&admin.name||user.displayName||ME.name;
-          ME.username=admin&&admin.username||ME.username||"";
-          ME.designation=admin&&admin.designation||ME.designation||"";
-          ME.permissions=admin&&Array.isArray(admin.permissions)?admin.permissions:null;
-          ME.role=PANEL.id==="super"?(r==="admin"?"admin":"super"):"mod";
+          ME.name=staff.name||user.displayName||ME.name;
+          ME.username=staff.username||ME.username||"";
+          ME.designation=staff.designation||ME.designation||"";
+          ME.permissions=Array.isArray(staff.permissions)?staff.permissions:null;
+          /* RTDB-তে লেখা role → প্যানেলের অভ্যন্তরীণ role */
+          const raw=String(staff.role||"").toLowerCase();
+          ME.role=PANEL.id==="super"?(raw==="admin"?"admin":"super"):"mod";
           if(user.photoURL)ME.photo=ME.photo||user.photoURL;
           saveMe();
+          applyLogo(document);
           paintTop();paintNav();
           proceed();
         });

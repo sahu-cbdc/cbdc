@@ -10,9 +10,13 @@
  *       পপ-আপ ব্লক / webview-এ প্রয়োজন হলে স্বয়ংক্রিয়ভাবে signInWithRedirect।
  *    ৩. consumeGoogleRedirect() — redirect দিয়ে ফেরার পর ফলাফল পুনরুদ্ধার
  *       (getRedirectResult) — intent ("login"|"signup")-সহ।
- *    ৪. ensureUserProfile() — login/signup সফল হলে Firestore `users` কালেকশনে
- *       প্রোফাইল তৈরি/আপডেট (merge) — আগের role/status নষ্ট হয় না।
+ *    ৪. ensureUserProfile() — login/signup সফল হলে Realtime Database-এর
+ *       `users/{uid}` নোডে প্রোফাইল তৈরি/আপডেট (merge) — আগের role/status নষ্ট হয় না।
  *    ৫. onAuthUserChanged() — auth state লিসেনারের ছোট wrapper।
+ *    ৬. resolveUserRole() — role কোথা থেকে আসে তার একমাত্র সিদ্ধান্তকেন্দ্র
+ *       (RTDB `admins` → তারপর `users`)।
+ *    ৭. requestPasswordReset() / completePasswordReset() — Firebase-এর built-in
+ *       password reset link ব্যবহার করে (কোনো custom OTP backend নেই)।
  */
 
 import {
@@ -25,8 +29,14 @@ import {
   type User,
   type UserCredential,
 } from "firebase/auth";
-import { doc, getDoc, setDoc, serverTimestamp, type Firestore } from "firebase/firestore";
-import { COLLECTIONS } from "./firebase";
+import {
+  sendPasswordResetEmail,
+  verifyPasswordResetCode,
+  confirmPasswordReset,
+  type ActionCodeSettings,
+} from "firebase/auth";
+import { NODES } from "./firebase";
+import { getRow, updateRow, setRow, findBy, nowIso } from "./rtdb";
 
 /* ═══════════════════════════════════════════════════════════════════
    ১. বাংলা error message
@@ -298,35 +308,173 @@ export function onAuthUserChanged(auth: Auth, cb: (user: User | null) => void): 
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   ৩. Firestore user profile upsert
+   ৩. Realtime Database user profile upsert
    ═══════════════════════════════════════════════════════════════════ */
 
 /**
  * Login/signup সফল হলে `users/{uid}` প্রোফাইল তৈরি বা আপডেট করে।
- *  - merge:true — তাই অ্যাডমিন-নির্ধারিত role/status বা আগের তথ্য নষ্ট হয় না।
- *  - নতুন ডকুমেন্টে role:"donor", status:"active" ডিফল্ট বসে।
+ *  - merge আপডেট — তাই অ্যাডমিন-নির্ধারিত role/status বা আগের তথ্য নষ্ট হয় না।
+ *  - নতুন রেকর্ডে role:"donor", status:"active" ডিফল্ট বসে।
+ *  - এখানে লেখা হলে RTDB listener-এর কল্যাণে সব dashboard-এ সাথে সাথে দেখা যায়।
  */
 export async function ensureUserProfile(
-  db: Firestore,
-  user: { uid: string; email?: string; name?: string; photo?: string },
+  user: { uid: string; email?: string; name?: string; photo?: string; dob?: string; phone?: string },
   extra: { provider?: string } = {}
 ): Promise<void> {
   if (!user || !user.uid) return;
-  const ref = doc(db, COLLECTIONS.users, user.uid);
-  const snap = await getDoc(ref);
+  const existing = await getRow(NODES.users, user.uid);
   const base: Record<string, unknown> = {
     uid: user.uid,
     email: (user.email || "").toLowerCase(),
-    name: user.name || "",
-    photoURL: user.photo || "",
-    updatedAt: serverTimestamp(),
+    name: user.name || existing?.name || "",
+    photoURL: user.photo || existing?.photoURL || "",
+    updatedAt: nowIso(),
   };
+  if (user.dob) base.dob = user.dob;
+  if (user.phone) base.phone = user.phone;
   if (extra.provider) base.provider = extra.provider;
-  if (!snap.exists()) {
+  if (!existing) {
     base.role = "donor";
     base.status = "active";
-    base.createdAt = serverTimestamp();
-    if (extra.provider) base.provider = extra.provider;
+    base.createdAt = nowIso();
+    await setRow(NODES.users, user.uid, base);
+    return;
   }
-  await setDoc(ref, base, { merge: true });
+  await updateRow(NODES.users, user.uid, base);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ৪. Role — একটিই সিদ্ধান্তকেন্দ্র (RTDB)
+   ═══════════════════════════════════════════════════════════════════ */
+
+export type AppRole = "donor" | "moderator" | "admin";
+
+export interface ResolvedRole {
+  role: AppRole;
+  name: string;
+  permissions: string[] | Record<string, unknown>;
+  /** RTDB `admins` নোডের রেকর্ড (থাকলে) — প্যানেলের designation/username ইত্যাদি। */
+  staff: Record<string, any> | null;
+}
+
+/** RTDB-র role লেখা (super/mod ইত্যাদি) অ্যাপের তিনটি role-এ মেলানো। */
+function normaliseRole(raw: unknown): AppRole | null {
+  const r = String(raw || "").toLowerCase();
+  if (r === "admin" || r === "super" || r === "superadmin") return "admin";
+  if (r === "moderator" || r === "mod") return "moderator";
+  if (r === "donor" || r === "user" || r === "member") return "donor";
+  return null;
+}
+
+/**
+ * একজন ব্যবহারকারীর কার্যকর role বের করা — **শুধু ডাটাবেস থেকে**।
+ *
+ *   ১. `admins/{uid}` — staff রেকর্ড (সবচেয়ে নির্ভরযোগ্য, uid দিয়ে)
+ *   ২. `admins` node-এ email দিয়ে খোঁজা (uid এখনো ম্যাপ না হলে)
+ *   ৩. `users/{uid}` — সাধারণ ব্যবহারকারী (role না থাকলে ডিফল্ট donor)
+ *
+ * `admins`-এ না থাকলে কেউ কখনো admin/moderator হতে পারে না — `users` নোডে
+ * role লেখা থাকলেও তা গ্রাহ্য নয় (নিরাপত্তা)।
+ */
+export async function resolveUserRole(
+  user: { uid?: string; email?: string; name?: string } | null | undefined
+): Promise<ResolvedRole> {
+  const out: ResolvedRole = { role: "donor", name: user?.name || "", permissions: [], staff: null };
+  if (!user) return out;
+  const uid = String(user.uid || "");
+  const email = String(user.email || "").toLowerCase();
+
+  let staff: Record<string, any> | null = null;
+  try {
+    if (uid) staff = await getRow(NODES.admins, uid);
+    if (!staff && email) staff = await findBy(NODES.admins, "email", email);
+  } catch (e) {
+    console.warn("role lookup (admins):", (e as Error)?.message);
+  }
+  if (staff && staff.status !== "disabled") {
+    const r = normaliseRole(staff.role);
+    if (r === "admin" || r === "moderator") {
+      out.role = r;
+      out.name = staff.name || out.name;
+      out.permissions = staff.permissions || [];
+      out.staff = staff;
+      return out;
+    }
+  }
+
+  try {
+    let profile: Record<string, any> | null = uid ? await getRow(NODES.users, uid) : null;
+    if (!profile && email) profile = await findBy(NODES.users, "email", email);
+    if (profile) {
+      out.name = profile.name || out.name;
+      // users নোডে admin/moderator লেখা থাকলেও তা উপেক্ষা করা হয়
+      out.role = "donor";
+    }
+  } catch (e) {
+    console.warn("role lookup (users):", (e as Error)?.message);
+  }
+  return out;
+}
+
+/** role অনুযায়ী কোন পেজ/প্যানেল খুলবে — সব জায়গায় একই নিয়ম। */
+export function panelForRole(role: unknown): "doner" | "moderator" | "admin" {
+  const r = normaliseRole(role) || "donor";
+  if (r === "admin") return "admin";
+  if (r === "moderator") return "moderator";
+  return "doner";
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ৫. পাসওয়ার্ড রিসেট — Firebase-এর built-in link (custom OTP নেই)
+   ═══════════════════════════════════════════════════════════════════ */
+
+/**
+ * রিসেট লিংকে ক্লিক করলে ব্যবহারকারী **এই সাইটেরই** সুন্দর reset পেজে আসবে
+ * (`/reset-password?oobCode=…`)। Firebase Console → Authentication → Templates →
+ * Password reset-এ "Customize action URL" হিসেবেও এই ঠিকানাটিই বসাতে হবে,
+ * তাহলে ইমেইল ও ওয়েবসাইট — দুটোরই branding মিলে যাবে।
+ */
+export function resetActionSettings(): ActionCodeSettings | undefined {
+  try {
+    const origin = window.location.origin;
+    let base = window.location.pathname || "/";
+    const m = base.match(/^(.*?\/)(?:reset-password|forgot-password|login|signup|doner|admin|moderator)(?:\/.*)?$/i);
+    base = m ? m[1] : base.endsWith("/") ? base : base.replace(/[^/]*$/, "");
+    return { url: origin + base + "reset-password", handleCodeInApp: false };
+  } catch {
+    return undefined;
+  }
+}
+
+/** ইমেইলে Firebase-এর password reset link পাঠায়। */
+export async function requestPasswordReset(auth: Auth, email: string): Promise<void> {
+  const address = String(email || "").trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) {
+    throw new Error("সঠিক ইমেইল ঠিকানা দিন।");
+  }
+  const settings = resetActionSettings();
+  try {
+    await sendPasswordResetEmail(auth, address, settings);
+  } catch (err) {
+    // continue URL অনুমোদিত না হলে (auth/unauthorized-continue-uri) সাধারণ লিংকেই পাঠাই
+    if (authErrorCode(err) === "auth/unauthorized-continue-uri") {
+      await sendPasswordResetEmail(auth, address);
+      return;
+    }
+    throw err;
+  }
+}
+
+/** রিসেট লিংকের কোড যাচাই — বৈধ হলে সংশ্লিষ্ট ইমেইল ফেরত দেয়। */
+export async function verifyResetCode(auth: Auth, oobCode: string): Promise<string> {
+  return verifyPasswordResetCode(auth, String(oobCode || ""));
+}
+
+/** নতুন পাসওয়ার্ড সেট করা (রিসেট লিংক থেকে)। */
+export async function completePasswordReset(
+  auth: Auth,
+  oobCode: string,
+  newPassword: string
+): Promise<void> {
+  await confirmPasswordReset(auth, String(oobCode || ""), String(newPassword || ""));
 }

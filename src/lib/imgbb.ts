@@ -4,17 +4,16 @@
  * ছবি Firebase Storage-এ নয়, **ImgBB API**-তে সংরক্ষণ করা হয়:
  *   1. ImgBB API key দিয়ে ছবি upload করা হয়,
  *   2. ImgBB থেকে পাওয়া image URL (link) সংগ্রহ করা হয়,
- *   3. সেই link + metadata শুধু ডাটাবেসে (Firestore) সেভ হয়,
+ *   3. সেই link + metadata শুধু ডাটাবেসে (Realtime Database) সেভ হয়,
  *   4. UI-তে ওই link দিয়ে সরাসরি ছবি দেখানো হয়।
  *
  * API key-এর উৎস (priority ক্রমে):
  *   - localStorage cache (`cbdc.imgbb.key`)
- *   - Firestore `settings/imgbb` doc (Admin Settings থেকে save হয়)
+ *   - Realtime Database `settings/imgbb` node (Admin Settings থেকে save হয়)
  *   - build-time env `VITE_IMGBB_API_KEY` (fallback)
  */
 
-import { getDb } from "./firebase";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { getRow, setRow } from "./rtdb";
 
 const UPLOAD_URL = "https://api.imgbb.com/1/upload";
 const KEY_CACHE = "cbdc.imgbb.key";
@@ -29,7 +28,7 @@ function getEnvImgbbKey(): string {
   }
 }
 
-/** ImgBB API key পড়া (cache → Firestore settings → env)। */
+/** ImgBB API key পড়া (cache → RTDB settings → env)। */
 export async function getImgbbKey(): Promise<string> {
   try {
     const c = localStorage.getItem(KEY_CACHE);
@@ -38,20 +37,15 @@ export async function getImgbbKey(): Promise<string> {
     /* ignore */
   }
   try {
-    const db = getDb();
-    if (db) {
-      const snap = await getDoc(doc(db, "settings", "imgbb"));
-      if (snap.exists()) {
-        const k = String(snap.data()?.key || "").trim();
-        if (k) {
-          try {
-            localStorage.setItem(KEY_CACHE, k);
-          } catch {
-            /* ignore */
-          }
-          return k;
-        }
+    const row = await getRow("settings", "imgbb");
+    const k = String(row?.key || "").trim();
+    if (k) {
+      try {
+        localStorage.setItem(KEY_CACHE, k);
+      } catch {
+        /* ignore */
       }
+      return k;
     }
   } catch {
     /* ignore */
@@ -59,7 +53,7 @@ export async function getImgbbKey(): Promise<string> {
   return getEnvImgbbKey();
 }
 
-/** ImgBB API key সংরক্ষণ (Admin Settings থেকে; Firestore settings/imgbb)। */
+/** ImgBB API key সংরক্ষণ (Admin Settings থেকে; RTDB `settings/imgbb`)। */
 export async function saveImgbbKey(key: string): Promise<void> {
   const k = String(key || "").trim();
   try {
@@ -68,16 +62,10 @@ export async function saveImgbbKey(key: string): Promise<void> {
   } catch {
     /* ignore */
   }
-  const db = getDb();
-  if (db) {
-    try {
-      await setDoc(doc(db, "settings", "imgbb"), {
-        key: k,
-        updatedAt: new Date().toISOString(),
-      });
-    } catch (e) {
-      console.warn("imgbb key save:", (e as Error)?.message);
-    }
+  try {
+    await setRow("settings", "imgbb", { key: k, updatedAt: new Date().toISOString() });
+  } catch (e) {
+    console.warn("imgbb key save:", (e as Error)?.message);
   }
 }
 
@@ -146,7 +134,7 @@ function compressImage(file: File, maxDim = 1600, quality = 0.85): Promise<Blob>
 
 /**
  * একটি image file ImgBB-তে upload করে hosted URL গুলো ফেরত দেয়।
- * এই URL গুলোই ডাটাবেসে (Firestore) সংরক্ষণ করা হয় — image file নয়।
+ * এই URL গুলোই ডাটাবেসে (Realtime Database) সংরক্ষণ করা হয় — image file নয়।
  */
 export async function uploadImage(
   file: File,

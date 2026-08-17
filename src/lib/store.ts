@@ -1,34 +1,27 @@
 /**
- * CBDC — shared application state store (Firestore-backed)
+ * CBDC — shared application state store (Realtime Database-backed)
  *
  * This is the React + TypeScript replacement for the original
  * `window.CBDCShared` IIFE that every HTML page shipped with.
  *
- * IMPORTANT CHANGE (Firebase integration):
- *   - Firestore is now the single source of truth for all app data
- *     (donors / requests / queue / gallery / notices / accounts).
- *   - All dummy / static seed data has been removed — a fresh browser shows an
- *     empty list until real data exists in Firestore.
- *   - localStorage is no longer used for the shared data. The store keeps an
- *     in-memory cache that is fed by Firestore `onSnapshot` listeners and
- *     pushed back to Firestore on change.
+ * DATA SOURCE (single source of truth):
+ *   - **Firebase Realtime Database** — donors / requests / queue / gallery /
+ *     notices / accounts. Cloud Firestore is no longer used anywhere.
+ *   - কোনো dummy / demo / seed data নেই — ডাটাবেস খালি থাকলে UI-ও খালি দেখায়।
+ *   - localStorage-এ shared data রাখা হয় না। স্টোরটি শুধু একটি in-memory cache
+ *     রাখে যা RTDB `onValue` listener থেকে লাইভ ভরে ওঠে এবং পরিবর্তন হলে
+ *     আবার RTDB-তে লেখা হয়।
+ *   - তাই কোথাও Add / Edit / Delete করলে সেটি সঙ্গে সঙ্গে **সব dashboard-এ**
+ *     (Home, Doner, Admin, Moderator) live আপডেট হয়ে যায়।
  *
  * The public API (`load`, `save`, `update`, `subscribe`, `clone`, and the
  * donor converters) is kept byte-for-byte compatible with the original so the
  * ported page logic works unchanged.
  */
 
-import { getDb, COLLECTIONS } from "./firebase";
-import {
-  collection,
-  query,
-  where,
-  orderBy,
-  onSnapshot,
-  setDoc,
-  deleteDoc,
-  doc,
-} from "firebase/firestore";
+import { NODES } from "./firebase";
+import { watchList, setRow, removeRow } from "./rtdb";
+import { resolveAge } from "./age";
 
 const KEY = "cbdc.shared.v1"; // kept for API compatibility only
 const CHANNEL = "cbdc-sync";
@@ -50,7 +43,7 @@ function fresh(): any {
     version: 1,
     revision: 0,
     updatedAt: new Date().toISOString(),
-    source: "firebase",
+    source: "rtdb",
     donors: [],
     requests: [],
     queue: [],
@@ -69,18 +62,10 @@ function clean(s: any): any {
   return s;
 }
 
-/** Firestore Timestamp → ISO string, recursively (keeps JSON round-trips safe). */
+/** RTDB থেকে আসা মান JSON-নিরাপদ করা (numeric timestamp → ISO)। */
 function normalizeDoc(data: any): any {
   const fix = (v: any): any => {
     if (v && typeof v === "object") {
-      // Firestore Timestamp instances
-      if (typeof v.toDate === "function" && typeof v.seconds === "number") {
-        return v.toDate().toISOString();
-      }
-      // Timestamps that already survived a JSON round-trip
-      if (typeof v.seconds === "number" && typeof v.nanoseconds === "number" && Object.keys(v).length <= 2) {
-        return new Date(v.seconds * 1000 + v.nanoseconds / 1e6).toISOString();
-      }
       const out: any = Array.isArray(v) ? [] : {};
       for (const k of Object.keys(v)) out[k] = fix(v[k]);
       return out;
@@ -90,7 +75,7 @@ function normalizeDoc(data: any): any {
   return fix(data);
 }
 
-// ── in-memory cache (fed by Firestore, mutated optimistically on write) ──
+// ── in-memory cache (fed by Realtime Database, mutated optimistically on write) ──
 let cache: any = fresh();
 
 // ── subscribers ──
@@ -112,50 +97,60 @@ function load(): any {
   return clean(clone(cache));
 }
 
-// ── Firestore live sync ──
-const firestoreUnsubs: Array<() => void> = [];
-let firestoreStarted = false;
+// ── Realtime Database live sync ──
+const rtdbUnsubs: Array<() => void> = [];
+let rtdbStarted = false;
 
-function startFirestoreSync() {
-  if (firestoreStarted) return;
-  firestoreStarted = true;
-  const db = getDb();
-  if (!db) return;
+/**
+ * প্রতিটি node-এ একটি করে live listener বসায়। RTDB-তে কিছু বদলালেই
+ * cache আপডেট হয় এবং সব subscriber (প্রতিটি dashboard) সাথে সাথে re-render হয়।
+ */
+function startRealtimeSync() {
+  if (rtdbStarted) return;
+  rtdbStarted = true;
 
-  const specs: Record<string, any> = {
-    donors: query(collection(db, COLLECTIONS.donors), where("status", "==", "approved")),
-    requests: query(collection(db, COLLECTIONS.requests), where("status", "==", "approved")),
-    queue: collection(db, COLLECTIONS.queue),
-    gallery: query(collection(db, COLLECTIONS.gallery), orderBy("order", "asc")),
-    notices: collection(db, COLLECTIONS.notices),
-    accounts: collection(db, COLLECTIONS.accounts),
+  /* কোন node-এ কী filter হবে — পাবলিক তালিকায় শুধু অনুমোদিত ডেটা যায়। */
+  const filters: Record<string, (rows: any[]) => any[]> = {
+    donors: (rows) => rows.filter((r) => (r.status || "approved") === "approved"),
+    requests: (rows) => rows.filter((r) => (r.status || "approved") === "approved"),
+    queue: (rows) => rows,
+    gallery: (rows) => rows.slice().sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0)),
+    notices: (rows) => rows,
+    accounts: (rows) => rows,
   };
 
   for (const name of COLLECTION_NAMES) {
     try {
-      const un = onSnapshot(
-        specs[name],
-        (snap) => {
-          const items = snap.docs.map((d) => normalizeDoc({ id: d.id, ...d.data() }));
-          // Skip no-op echoes (e.g. our own write coming back unchanged).
-          if (JSON.stringify(items) === JSON.stringify(cache[name])) return;
-          cache[name] = clone(items);
-          cache.version = 1;
-          notify({ source: "firestore" });
-        },
-        (err) => console.warn("store listener:", name, err && err.message)
-      );
-      firestoreUnsubs.push(un);
+      const un = watchList((NODES as any)[name] || name, (rows) => {
+        const items = (filters[name] || ((x: any[]) => x))(rows.map((r) => normalizeDoc(r)));
+        // Skip no-op echoes (e.g. our own write coming back unchanged).
+        if (JSON.stringify(items) === JSON.stringify(cache[name])) return;
+        cache[name] = clone(items);
+        cache.version = 1;
+        notify({ source: "rtdb" });
+      });
+      rtdbUnsubs.push(un);
     } catch (e) {
       console.warn("store listener setup failed:", name, (e as Error)?.message);
     }
   }
 }
 
-/** Incrementally push the diff between two lists of a collection to Firestore. */
+/** সব live listener বন্ধ করা (সাধারণত দরকার হয় না — অ্যাপ-জীবনভর চলে)। */
+export function stopRealtimeSync(): void {
+  while (rtdbUnsubs.length) {
+    try {
+      (rtdbUnsubs.pop() as () => void)();
+    } catch {
+      /* ignore */
+    }
+  }
+  rtdbStarted = false;
+}
+
+/** Incrementally push the diff between two lists of a node to the Realtime Database. */
 async function writeDiff(name: string, oldList: any[], newList: any[]) {
-  const db = getDb();
-  if (!db) return;
+  const node = (NODES as any)[name] || name;
   const oldById = new Map<string, any>(oldList.map((x) => [String(x.id), x]));
   const newById = new Map<string, any>(newList.map((x) => [String(x.id), x]));
   const tasks: Array<Promise<void>> = [];
@@ -164,8 +159,8 @@ async function writeDiff(name: string, oldList: any[], newList: any[]) {
     const prev = oldById.get(id);
     if (!prev || JSON.stringify(prev) !== JSON.stringify(item)) {
       tasks.push(
-        setDoc(doc(db, name, id), clone(item))
-          .catch((e) => console.warn("store write:", name, id, (e as Error)?.message))
+        setRow(node, id, clone(item))
+          .catch((e) => console.warn("store write:", node, id, (e as Error)?.message))
           .then(() => undefined)
       );
     }
@@ -173,8 +168,8 @@ async function writeDiff(name: string, oldList: any[], newList: any[]) {
   for (const id of oldById.keys()) {
     if (!newById.has(id)) {
       tasks.push(
-        deleteDoc(doc(db, name, id))
-          .catch((e) => console.warn("store delete:", name, id, (e as Error)?.message))
+        removeRow(node, id)
+          .catch((e) => console.warn("store delete:", node, id, (e as Error)?.message))
           .then(() => undefined)
       );
     }
@@ -182,7 +177,7 @@ async function writeDiff(name: string, oldList: any[], newList: any[]) {
   if (tasks.length) await Promise.all(tasks);
 }
 
-/** Persist a state snapshot: update cache, broadcast, and write diffs to Firestore. */
+/** Persist a state snapshot: update cache, broadcast, and write diffs to Realtime Database. */
 function save(state: any, source = "unknown"): any {
   const prev = load();
   const s = clean(clone(state));
@@ -193,7 +188,7 @@ function save(state: any, source = "unknown"): any {
   // optimistic local update
   cache = clean(clone(s));
 
-  // background Firestore sync (diff-based, so unchanged collections cost nothing)
+  // background RTDB sync (diff-based, so unchanged collections cost nothing)
   for (const name of COLLECTION_NAMES) {
     void writeDiff(name, prev[name], s[name]);
   }
@@ -233,7 +228,9 @@ function subscribe(fn: (state: any, meta?: any) => void): () => void {
   };
 }
 
-// ── donor converters (unchanged from the original shared store) ──
+// ── donor converters ──
+// বয়স আর সংরক্ষণ করা হয় না: ডাটাবেসে থাকে `dob` (জন্ম তারিখ), আর `age`
+// প্রতিবার সেখান থেকে হিসাব করে দেওয়া হয় (src/lib/age.ts)।
 const toAdminDonor = (d: any) => ({
   id: d.id || d.donorId,
   name: d.name || "",
@@ -241,7 +238,8 @@ const toAdminDonor = (d: any) => ({
   area: d.area || "",
   phone: d.phone || "",
   gender: d.gender || "",
-  age: Number(d.age) || 20,
+  dob: d.dob || "",
+  age: resolveAge(d),
   last: d.lastDonationDate || d.last || "",
   available: d.available !== false,
   verified: d.verified !== false,
@@ -259,7 +257,7 @@ const fromAdminDonor = (d: any) => ({
   name: d.name || "",
   bloodGroup: d.group || "",
   gender: d.gender || "",
-  age: Number(d.age) || "",
+  dob: d.dob || "",
   phone: d.phone || "",
   whatsapp: d.whatsapp || d.phone || "",
   area: d.area || "",
@@ -283,7 +281,8 @@ const toDonerDonor = (d: any) => ({
   photo: d.photo || "",
   group: d.bloodGroup || d.group || "",
   area: d.area || "",
-  age: Number(d.age) || "",
+  dob: d.dob || "",
+  age: resolveAge(d),
   occupation: d.occupation || "",
   phone: d.phone || "",
   whatsapp: !!d.whatsapp,
@@ -301,7 +300,7 @@ const fromDonerDonor = (d: any) => ({
   name: d.name || "",
   bloodGroup: d.group || d.bloodGroup || "",
   gender: d.gender || "",
-  age: Number(d.age) || "",
+  dob: d.dob || "",
   phone: d.phone || "",
   whatsapp: d.whatsapp === false ? "" : typeof d.whatsapp === "string" ? d.whatsapp : d.phone || "",
   area: d.area || "",
@@ -334,7 +333,7 @@ const store = {
 window.CBDCShared = store;
 globalThis.CBDCShared = store;
 
-// Start Firestore live sync immediately (idempotent).
-startFirestoreSync();
+// Start Realtime Database live sync immediately (idempotent).
+startRealtimeSync();
 
 export default store;

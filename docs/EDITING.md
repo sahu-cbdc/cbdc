@@ -10,11 +10,16 @@ Firebase config ইত্যাদি পরিবর্তন করবেন, 
 ```
 src/
 ├── config/
-│   └── site.ts          ★ সাইটের সব কেন্দ্রীয় Text এখানে (সবচেয়ে বেশি edit হবে)
+│   ├── site.ts          ★ সাইটের সব কেন্দ্রীয় Text এখানে (সবচেয়ে বেশি edit হবে)
+│   └── logo.ts          ★ পুরো সাইটের লোগোর একমাত্র উৎস
 ├── lib/
-│   ├── firebase.ts      Firebase config (project id ইত্যাদি)
+│   ├── firebase.ts      Firebase config (project id, Realtime Database URL)
+│   ├── rtdb.ts          Realtime Database helper — ডেটার একমাত্র দরজা
+│   ├── age.ts           জন্ম তারিখ → বয়স (সব জায়গায় একই নিয়ম)
+│   ├── forms.ts         ফর্ম ভ্যালিডেশন (popup নয় — ঘর highlight + ইনলাইন বার্তা)
+│   ├── authx.ts         Auth, role resolve, password reset
 │   ├── imgbb.ts         ImgBB image hosting helper
-│   └── store.ts         Firestore data layer (সাধারণত edit লাগে না)
+│   └── store.ts         RTDB live data layer (সাধারণত edit লাগে না)
 ├── pages/
 │   ├── Home.tsx         পাবলিক ওয়েবসাইট + লগইন
 │   ├── Doner.tsx        ডোনার (রক্তদাতা) প্যানেল
@@ -93,6 +98,7 @@ export const firebaseConfig = {
   apiKey: "...",
   authDomain: "...",
   projectId: "chokbazarbloodclub-69d5f",   // ← নতুন project হলে এখানে বদলান
+  databaseURL: "https://chokbazarbloodclub-69d5f-default-rtdb.firebaseio.com",
   // ...
 };
 ```
@@ -100,21 +106,35 @@ export const firebaseConfig = {
 ### ৩.২ ImgBB API key
 
 - Admin Panel → Settings → সংযোগ → **ImgBB API কী** ঘরে বসিয়ে "সংরক্ষণ করুন"।
-- এটা Firestore `settings/imgbb`-এ সেভ হয় (সব পেজ/browser-এ শেয়ার)।
+- এটা Realtime Database-এর `settings/imgbb`-এ সেভ হয় (সব পেজ/browser-এ শেয়ার, live)।
 - বিকল্প: build-time env `VITE_IMGBB_API_KEY` (fallback)।
 
-### ৩.৩ Database (Firestore — RTDB নয়)
+### ৩.৩ Database — Firebase Realtime Database
 
-**সিদ্ধান্ত:** এই অ্যাপ **শুধু Cloud Firestore** ব্যবহার করে। Realtime Database (RTDB)
-ব্যবহৃত হয় না — কারণ:
+এই অ্যাপের একমাত্র ডাটাবেস **Firebase Realtime Database**। Cloud Firestore ব্যবহার
+করা হয় **না**, Firebase Storage-ও নয় (ছবি → ImgBB, শুধু link ডাটাবেসে)।
 
-- Data structured + query-heavy (`where status=="approved"`, `where email`, `orderBy`)
-  — Firestore-ই এর জন্য সঠিক টুল।
-- Firestore-এর `onSnapshot` দিয়েই real-time update পাওয়া যাচ্ছে।
-- RTDB শুধু high-frequency ছোট লেখার (presence/typing/counter) জন্য ভালো — এই অ্যাপে
-  দরকার নেই, আর যোগ করলে আলাদা sync + cost + জটিলতা বাড়ে।
+- সব read/write একটাই জায়গা দিয়ে যায়: `src/lib/rtdb.ts`।
+- প্রতিটি স্ক্রিন `watchList()` / `watchRow()` দিয়ে live subscribe করা, তাই কোথাও
+  Add / Edit / Delete করলে **সব dashboard-এ সঙ্গে সঙ্গে** আপডেট হয় — একই তথ্য
+  দ্বিতীয়বার লিখতে হয় না।
+- schema ও security rules: `docs/FIREBASE.md` এবং `database.rules.json`।
 
-কোনো Firebase Storage-ও ব্যবহৃত হয় না (ছবি → ImgBB, link Firestore-এ)।
+### ৩.৪ Logo (এক জায়গা থেকে পুরো সাইট)
+
+- সবচেয়ে সহজ: **`public/img/logo.png`** ফাইলটি নতুন ছবি দিয়ে replace করুন — ব্যস,
+  ওয়েবসাইট, Doner Dashboard, Admin/Moderator প্যানেল, ডোনার কার্ড, favicon — সব
+  জায়গায় নতুন লোগো চলে আসবে।
+- অন্য কোনো URL (যেমন ImgBB link) ব্যবহার করতে চাইলে `src/config/logo.ts`-এর
+  `LOGO_FILE` মানটি বদলান।
+- কোনো পেজ/কম্পোনেন্টে আলাদা করে logo path লেখা **নিষেধ** — সবাই `logoUrl()`
+  ব্যবহার করে।
+
+### ৩.৫ বয়স ও জন্ম তারিখ
+
+- ফর্মে শুধু **জন্ম তারিখ** নেওয়া হয়; বয়স আলাদা করে কোথাও লেখা বা সংরক্ষণ করা হয় না।
+- বয়স সবসময় `src/lib/age.ts` → `ageFromDob()` দিয়ে হিসাব হয়, তাই তা কখনো পুরোনো হয় না।
+- বয়সসীমার নিয়ম (১৮–৬০) `src/config/site.ts` → `SITE.rules.minAge/maxAge`-এ।
 
 ---
 
@@ -133,7 +153,7 @@ Firebase deploy:
 ```bash
 npm i -g firebase-tools
 firebase login
-firebase deploy --only firestore:rules
+firebase deploy --only database
 npm run build && firebase deploy --only hosting
 ```
 
@@ -144,8 +164,11 @@ npm run build && firebase deploy --only hosting
 - **সব ব্র্যান্ড/কনটেন্ট** `src/config/site.ts`-এ → এক জায়গায় বদলান।
 - **প্রতি পেজ স্বয়ংসম্পূর্ণ**: প্রতিটি `.tsx`-এ নিজের CSS + UI + logic — একটা পেজের
   বদল অন্য পেজে প্রভাব ফেলে না।
-- **Data layer আলাদা**: `src/lib/store.ts` (Firestore), `src/lib/firebase.ts` (config),
-  `src/lib/imgbb.ts` (ছবি) — UI থেকে data আলাদা, তাই backend বদলানো সহজ।
+- **Data layer আলাদা**: `src/lib/rtdb.ts` + `src/lib/store.ts` (Realtime Database),
+  `src/lib/firebase.ts` (config), `src/lib/imgbb.ts` (ছবি) — UI থেকে data আলাদা,
+  তাই backend বদলানো সহজ।
+- **ফর্মের নিয়ম এক জায়গায়**: `src/lib/forms.ts` — placeholder নেই, popup নেই;
+  ফাঁকা ঘর highlight হয় ও নিচে বার্তা আসে, পূরণ করলেই মুছে যায়।
 - **একটা জিনিস ভাঙলে চেক:** `npm run build` + `npm run smoke` চালান — syntax/runtime
   সমস্যা ধরা পড়বে।
 - **নতুন পেজ যোগ করতে:** `src/pages/`-এ নতুন `.tsx` কম্পোনেন্ট → `src/lib/router.ts`-এ

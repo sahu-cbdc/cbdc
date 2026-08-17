@@ -11,6 +11,8 @@
  *      /admin               → অ্যাডমিন প্যানেল
  *      /moderator           → মডারেটর প্যানেল
  *      /signup, /login …    → হোমপেজের ভেতরের ভিউ (Home.tsx)
+ *      /forgot-password     → পাসওয়ার্ড রিসেট লিংক চাওয়ার full-page UI
+ *      /reset-password      → Firebase রিসেট লিংক থেকে নতুন পাসওয়ার্ড সেট করার পেজ
  *      /profile/<id>        → পাবলিক ডোনার প্রোফাইল ভিউ
  *      /?uid=<id>           → ডোনার কার্ড মোড (Doner অ্যাপ)
  *
@@ -31,6 +33,8 @@ const HOME_VIEWS = [
   "login",
   "dashboard",
   "signup",
+  "forgot-password",
+  "reset-password",
   "create-account",
   "register",
   "emergency",
@@ -58,7 +62,7 @@ function computeBase(): string {
     return "/";
   }
   const m = p.match(
-    /^(.*?)(?:\/(doner|admin|moderator|login|dashboard|signup|create-account|register|emergency|eligibility|donor-search|gallery|about|profile|home)(?:\.html)?(?:\/.*)?)$/i
+    /^(.*?)(?:\/(doner|admin|moderator|login|dashboard|signup|forgot-password|reset-password|create-account|register|emergency|eligibility|donor-search|gallery|about|profile|home)(?:\.html)?(?:\/.*)?)$/i
   );
   let base = m ? m[1] : p;
   if (!base.endsWith("/")) base += "/";
