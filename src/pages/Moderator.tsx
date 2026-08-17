@@ -9,6 +9,8 @@
 import { useEffect } from "react";
 import "../lib/store";
 import { initFirebase as initSharedFirebase } from "../lib/firebase";
+import { navigateToPage, screenPath, panelSubPath } from "../lib/router";
+import { authErrorMessage } from "../lib/authx";
 import SITE from "../config/site";
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -2425,7 +2427,11 @@ function initPage() {
     if(sub){$("#s-sub").classList.add("on");renderSub(sub)}
     else{$("#s-"+id).classList.add("on");RENDER[id]()}
     paintTop();paintNav();
-    if(push){const h=sub?`#${id}/${sub}`:`#${id}`;if(location.hash!==h)location.hash=h}
+    if(push){
+      /* URL-এ clean path বসে: /moderator/<screen>/<sub> — কোনো "#" নয় */
+      const p=screenPath("moderator",id,sub||null)+location.search;
+      try{ if(location.pathname+location.search!==p)history.pushState(null,"",p); }catch(e){}
+    }
     window.scrollTo({top:0,behavior:"instant"});
   }
   function paintNav(){
@@ -2444,7 +2450,7 @@ function initPage() {
         <button class="bell" id="tbell" aria-label="বিজ্ঞপ্তি">${SI.bell(21)}${badge()}</button>`;
     }else{
       t.className="top";
-      t.innerHTML=`<a class="brand" href="#home" data-nav="home">
+      t.innerHTML=`<a class="brand" href="${screenPath("moderator","home")}" data-nav="home">
           <span class="lg"><img src="${LOGO}" alt="CBDC লোগো"></span>
           <span class="btx"><b>চকবাজার ব্লাড ডোনার'স ক্লাব</b><small>${esc(PANEL.label)}</small></span></a>
         <nav class="dnav">${NAV().map(n=>{const c=(!ME.prefs||ME.prefs.badge!==false)&&n.count?n.count():0;
@@ -2465,11 +2471,14 @@ function initPage() {
     const s=e.target.closest("[data-sub]");
     if(s){go(CUR,s.dataset.sub);return}
   });
-  window.addEventListener("hashchange",()=>{
-    const [a,b]=location.hash.replace("#","").split("/");
+  const reRoute=()=>{
+    const seg=panelSubPath("moderator");
+    const [a,b]=(seg||location.hash.replace("#","")).split("/");
     if(!a)return go("home",null,false);
     if(RENDER[a]&&(a!==CUR||(b||null)!==SUB))go(a,b||null,false);
-  });
+  };
+  window.addEventListener("popstate",reRoute);
+  window.addEventListener("hashchange",reRoute); /* পুরোনো #hash লিংক compat */
   
   /* ══════════ notification panel (same shape as the app's) ══════════ */
   function openNotifs(){
@@ -3104,7 +3113,7 @@ function initPage() {
         await sendPasswordResetEmail(shared.auth, recipient);
         bd.innerHTML=`<div class="note g">${SI.check(17)}<span>${esc(recipient)} ঠিকানায় রিসেট লিংক পাঠানো হয়েছে। ইমেইল খুলে নতুন পাসওয়ার্ড সেট করুন।</span></div>`;
         ft.innerHTML=`<button class="btn" data-close>বন্ধ করুন</button>`;
-      }catch(e){btn.disabled=false;btn.textContent="রিসেট লিংক পাঠান";toast(e&&e.message?e.message:"রিসেট লিংক পাঠানো যায়নি","er")}
+      }catch(e){btn.disabled=false;btn.textContent="রিসেট লিংক পাঠান";toast(authErrorMessage(e,{fallback:"রিসেট লিংক পাঠানো যায়নি"}),"er")}
     };
     start();
   }
@@ -3475,9 +3484,7 @@ function initPage() {
   };
   
   /* ══════════ LOGOUT — same behaviour in every panel ══════════
-     Signs out of the panel and returns to the public site, where the
-     user must log in again. When Firebase lands this also calls
-     signOut(); the redirect target stays the same.                  */
+     Firebase Auth signOut + স্থানীয় সেশন পরিষ্কার করে মূল ওয়েবসাইটে ফেরত। */
   async function doLogout(){
     if(!await confirmS({title:"লগআউট করবেন?",
       desc:"প্যানেল থেকে বের হয়ে মূল ওয়েবসাইটে ফিরে যাবেন। আবার ঢুকতে হলে নতুন করে লগইন করতে হবে।",
@@ -3488,8 +3495,9 @@ function initPage() {
       localStorage.removeItem(ACC_LS);
       sessionStorage.clear();
     }catch(e){}
+    try{(async()=>{try{const shared=initSharedFirebase();const {signOut}=await import("firebase/auth");if(shared.auth)await signOut(shared.auth)}catch(e){}})()}catch(e){}
     toast("লগআউট হয়েছে — মূল ওয়েবসাইটে ফিরে যাচ্ছেন","ok");
-    setTimeout(()=>{location.href="index.html"},700);
+    setTimeout(()=>{navigateToPage("home")},700);
   }
   function exportSheet(){
     if(!can("data.export"))return toast("রপ্তানির অনুমতি নেই","er");
@@ -4567,7 +4575,7 @@ function initPage() {
     watchI18n();
     if(isEN())document.documentElement.lang="en";
     const proceed=()=>{
-      const [a,b]=location.hash.replace("#","").split("/");
+      const [a,b]=(panelSubPath("moderator")||location.hash.replace("#","")).split("/");
       go(RENDER[a]?a:"home",b||null,false);
       if(isEN())translateNode(document.body);
     };
@@ -4578,7 +4586,7 @@ function initPage() {
         const {onAuthStateChanged}=await import("firebase/auth");
         onAuthStateChanged(shared.auth, async (user)=>{
           if(!user){
-            location.href="index.html";
+            navigateToPage("home");
             return;
           }
           const email=String(user.email||"").toLowerCase();
@@ -4591,7 +4599,7 @@ function initPage() {
           const r=String(admin&&admin.role||"").toLowerCase();
           const ok=PANEL.id==="super" ? (r==="super"||r==="admin") : (r==="mod"||r==="moderator");
           if(!ok){
-            location.href="index.html";
+            navigateToPage("home");
             return;
           }
           ME.uid=user.uid;

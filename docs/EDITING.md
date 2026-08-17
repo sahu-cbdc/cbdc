@@ -92,7 +92,7 @@ grep -rn "যে লেখাটা বদলাতে চান" src/pages/
 export const firebaseConfig = {
   apiKey: "...",
   authDomain: "...",
-  projectId: "cbdc-a9418",   // ← নতুন project হলে এখানে বদলান
+  projectId: "chokbazarbloodclub-69d5f",   // ← নতুন project হলে এখানে বদলান
   // ...
 };
 ```
@@ -148,9 +148,9 @@ npm run build && firebase deploy --only hosting
   `src/lib/imgbb.ts` (ছবি) — UI থেকে data আলাদা, তাই backend বদলানো সহজ।
 - **একটা জিনিস ভাঙলে চেক:** `npm run build` + `npm run smoke` চালান — syntax/runtime
   সমস্যা ধরা পড়বে।
-- **নতুন পেজ যোগ করতে:** `src/pages/`-এ নতুন `.tsx` → root-এ নতুন `.html` এন্ট্রি
-  (মূল HTML-এর shell কপি করে `<script src="/src/main-XXX.tsx">`) → `vite.config.ts`-এর
-  `rollupOptions.input`-এ যোগ করুন → `src/main-XXX.tsx` তৈরি করুন।
+- **নতুন পেজ যোগ করতে:** `src/pages/`-এ নতুন `.tsx` কম্পোনেন্ট → `src/lib/router.ts`-এ
+  `PageName`-এ নাম যোগ করুন → `src/main.tsx`-এর `ActivePage()`-এ lazy import + case
+  যোগ করুন (আলাদা `.html` এন্ট্রি আর নেই — শুধু index.html)।
 
 ---
 

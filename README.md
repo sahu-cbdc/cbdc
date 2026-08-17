@@ -4,25 +4,42 @@
 **১০০% হুবহু** রাখা হয়েছে। Backend/Data layer **Firebase**-এর সাথে যুক্ত এবং প্রজেক্টটি
 **যেকোনো স্ট্যাটিক হোস্টিং সাইটে** run করা যায়।
 
-## ফাইল ম্যাপিং
+## ফাইল ম্যাপিং ও URL
 
-| মূল HTML | React কম্পোনেন্ট | এন্ট্রি (পেজ ফাইল) |
-| --- | --- | --- |
-| `index.html` | `src/pages/Home.tsx` | `index.html` |
-| `doner.html` | `src/pages/Doner.tsx` | `doner.html` |
-| `admin.html` | `src/pages/Admin.tsx` | `admin.html` |
-| `moderator.html` | `src/pages/Moderator.tsx` | `moderator.html` |
+এখন **একটিই HTML entry** (`index.html`) — সব পেজ `.tsx` কম্পোনেন্ট হিসেবে
+এই entry থেকেই বুট হয় (src/main.tsx + src/lib/router.ts)। সব URL
+**hash-বিহীন clean path** (কোনো `#` নেই):
+
+| URL | পেজ / ভিউ |
+| --- | --- |
+| `/` | পাবলিক সাইট (`src/pages/Home.tsx`) |
+| `/signup`, `/login`, `/register`, `/emergency`, `/eligibility`, `/about` | হোমপেজের ভেতরের ভিউ |
+| `/profile/<id>` | পাবলিক ডোনার প্রোফাইল ভিউ |
+| `/doner`, `/doner/<screen>` | ডোনার প্যানেল (`src/pages/Doner.tsx`) |
+| `/admin`, `/admin/<screen>` | অ্যাডমিন প্যানেল (`src/pages/Admin.tsx`) |
+| `/moderator`, `/moderator/<screen>` | মডারেটর প্যানেল (`src/pages/Moderator.tsx`) |
+| `/?uid=<donor id>` | ডোনার কার্ড মোড (শেয়ারযোগ্য পাবলিক কার্ড) |
+
+পুরোনো লিংক (`/doner.html?uid=…`, `#/admin`, `#dashboard` ইত্যাদি) স্বয়ংক্রিয়ভাবে
+সঠিক পেজে খুলে এবং clean URL-এ রূপান্তরিত হয় — শেয়ার করা পুরোনো লিংক ভাঙে না।
 
 
 ## যেকোনো হোস্টিং সাইটে চালানো
 
-Build করলে **৪টি আলাদা HTML ফাইল** (index/doner/admin/moderator) তৈরি হয় এবং সব asset
+Build করলে **একটি `index.html` + assets** তৈরি হয় এবং সব asset
 **relative path** (`./assets/...`) ব্যবহার করে। ফলে `dist/` ফোল্ডারটি **যেকোনো স্ট্যাটিক
-হোস্টে** শুধু upload করলেই চলে — কোনো server-side rewrite/SPA fallback লাগে না:
+হোস্টে** শুধু upload করলেই চলে:
 
-- GitHub Pages, Netlify, Vercel, Cloudflare Pages, Firebase Hosting
+- GitHub Pages, Netlify, Vercel, Cloudflare Pages/Workers, Firebase Hosting
 - shared cPanel / FTP hosting, Apache, Nginx, S3/র static bucket
 - sub-directory-তে বসালেও চলে (যেমন `https://host/cbdc/`)
+
+Cloudflare Workers-এ deploy-এর জন্য `wrangler.jsonc`-এ SPA fallback
+(`not_found_handling: single-page-application`) সেট করা আছে, আর Firebase
+Hosting-এর জন্য `firebase.json`-এ rewrite (`** → /index.html`) আছে — তাই
+`/doner`, `/admin`, `/profile/...` যেকোনো clean path সরাসরি খুললেও `index.html`-ই
+পরিবেশিত হয় (পুরোনো ভাগ করা লিংকও ভাঙে না)। Nginx/Apache-এ হোস্ট করলে একই ধরনের
+fallback (যেকোনো path → index.html) কনফিগার করতে হবে।
 
 ```bash
 npm run build      # dist/ ফোল্ডার তৈরি
@@ -125,7 +142,7 @@ Logic** থাকে:
 
 ```bash
 npm install
-npm run dev        # dev server (http://localhost:5173) — / /doner.html /admin.html /moderator.html
+npm run dev        # dev server (http://localhost:5173) — একটি entry; প্যানেলগুলো ভেতরের নেভিগেশনে
 npm run build      # production build (dist/)
 npm run preview    # production preview
 npm run smoke      # jsdom-ভিত্তিক smoke test (৪টি পেজ render + logic চেক)
