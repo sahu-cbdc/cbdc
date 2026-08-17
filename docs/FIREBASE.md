@@ -11,14 +11,16 @@ structure, Authentication flow, Role & Permission model, **Image system (ImgBB)*
 | কাজ | সার্ভিস |
 | --- | --- |
 | Authentication (register/login/logout/session) | Firebase Authentication |
-| Structured data + complex query + realtime | Cloud Firestore (primary source of truth) |
+| Structured data + realtime sync | **Firebase Realtime Database** (একমাত্র source of truth) |
 | Image hosting | **ImgBB API** (Firebase Storage ব্যবহার হয় **না**) |
 
-> **RTDB নাকি Firestore? → Firestore-only।** Realtime Database (RTDB) ব্যবহার করা হয় না।
-> কারণ: এখানকার data structured ও query-heavy (`where status=="approved"`, `where email`,
-> `orderBy`) — এগুলো Firestore-ই ভালো সামলায়, এবং Firestore-এর `onSnapshot` দিয়েই
-> real-time update পাওয়া যায়। RTDB শুধু presence/typing/counter-এর মতো high-frequency
-> লেখার জন্য ভালো — এই অ্যাপে দরকার নেই; যোগ করলে আলাদা sync + cost + জটিলতা বাড়ে।
+> **ডাটাবেস: Realtime Database (RTDB)-only।** Cloud Firestore ব্যবহার করা হয় **না**।
+> প্রতিটি স্ক্রিন RTDB-র `onValue` listener-এ যুক্ত, তাই কোথাও কিছু Add / Edit / Delete
+> করলে সেটি সঙ্গে সঙ্গে **সব dashboard-এ** (Home, Doner, Admin, Moderator) দেখা যায় —
+> একই তথ্য দ্বিতীয়বার হাতে লেখার দরকার হয় না।
+>
+> ডেটা অ্যাক্সেসের একমাত্র জায়গা `src/lib/rtdb.ts`; পেজগুলো সরাসরি
+> `firebase/database` আমদানি করে না।
 
 ## ২. কনফিগারেশন
 
@@ -29,6 +31,7 @@ export const firebaseConfig = {
   apiKey: "AIzaSy...",
   authDomain: "chokbazarbloodclub-69d5f.firebaseapp.com",
   projectId: "chokbazarbloodclub-69d5f",
+  databaseURL: "https://chokbazarbloodclub-69d5f-default-rtdb.firebaseio.com",
   // ...
 };
 ```
@@ -53,23 +56,29 @@ Project: **`chokbazarbloodclub-69d5f`** (`.firebaserc`-এও সেট কর�
   allowed রাখুন এবং deploy করা ডোমেইনকে HTTP referrer allowlist-এ যোগ করুন।
 - ঐচ্ছিক env override (`VITE_FIREBASE_API_KEY` ইত্যাদি) সেট করলে সবগুলোই দিতে হয়;
   আংশিক সেট intentional error-এ ফেলা হয় (ভুল config silent অনুমোদন এড়াতে)।
-  `users/{uid}` প্রোফাইল login/signup-এর পর স্বয়ংক্রিয়ভাবে merge-আপডেট হয়।
+  RTDB `users/{uid}` প্রোফাইল login/signup-এর পর স্বয়ংক্রিয়ভাবে merge-আপডেট হয়।
+- **Google consent screen branding** (App name + logo) — দেখুন
+  `docs/GOOGLE_LOGIN_BRANDING.md`।
 
 ## ৩. Data Layer আর্কিটেকচার
 
-- **`src/lib/firebase.ts`** — একক Firebase instance (App / Auth / Firestore)। **Storage নয়।**
-- **`src/lib/store.ts`** — `window.CBDCShared` API-র Firestore-backed port। এটিই এখন
-  **একমাত্র data source**:
+- **`src/lib/firebase.ts`** — একক Firebase instance (App / Auth / Realtime Database)। **Storage নয়।**
+- **`src/lib/rtdb.ts`** — RTDB read/write/listen helper (`watchList`, `addRow`, `updateRow`,
+  `removeRow`, `findBy` …)। ডেটা স্পর্শ করার একমাত্র দরজা।
+- **`src/lib/age.ts`** — জন্ম তারিখ → বয়স (সব জায়গায় একই নিয়ম)।
+- **`src/lib/forms.ts`** — ইনলাইন ফর্ম ভ্যালিডেশন (popup নয়, ঘর highlight + নিচে বার্তা)।
+- **`src/config/logo.ts`** — পুরো সাইটের লোগোর একমাত্র উৎস।
+- **`src/lib/store.ts`** — `window.CBDCShared` API-র RTDB-backed port:
 
-  | আগে (demo) | এখন (Firebase) |
+  | আগে (demo) | এখন (Realtime Database) |
   | --- | --- |
-  | localStorage `cbdc.shared.v1`-এ seed করা dummy data | Firestore `onSnapshot` থেকে লাইভ ডেটা |
-  | BroadcastChannel + localStorage cross-page sync | Firestore realtime listener + offline cache |
-  | `load()` = localStorage read | `load()` = in-memory cache (Firestore-fed) |
-  | `save()/update()` = localStorage write | diff-based Firestore `setDoc`/`deleteDoc` |
+  | localStorage `cbdc.shared.v1`-এ seed করা dummy data | RTDB `onValue` থেকে লাইভ ডেটা |
+  | BroadcastChannel + localStorage cross-page sync | RTDB realtime listener (সব ট্যাব/ডিভাইসে) |
+  | `load()` = localStorage read | `load()` = in-memory cache (RTDB-fed) |
+  | `save()/update()` = localStorage write | diff-based RTDB `set` / `remove` |
 
 - সব dummy/static seed data রিমুভ করা হয়েছে।
-- পাসওয়ার্ড রিসেট Firebase Authentication-এর `sendPasswordResetEmail`; password change
+- পাসওয়ার্ড রিসেট Firebase Authentication-এর built-in reset link; password change
   = re-auth + `updatePassword`।
 
 ## ৪. 🖼️ Image System (ImgBB API)
@@ -82,81 +91,107 @@ metadata** সেভ হয়।
 2. `src/lib/imgbb.ts` → `uploadImage(file)` → canvas-এ compress/resize → ImgBB
    `POST https://api.imgbb.com/1/upload` (multipart: `key` + `image`)।
 3. ImgBB থেকে `url` / `thumbUrl` / `deleteUrl` ফেরত আসে।
-4. শুধু সেই **link + metadata** Firestore-এ সেভ হয় (`gallery` collection-এ
+4. শুধু সেই **link + metadata** Realtime Database-এ সেভ হয় (`gallery` node-এ
    `url`/`imageUrl`/`thumbUrl`, `donors`/`accounts`-এ `photo` URL ইত্যাদি)।
 5. UI-তে ওই link দিয়ে **সরাসরি ছবি** render হয়।
 
 **যেখানে ImgBB ব্যবহার হয়:**
-- Admin → গ্যালারিতে ছবি যোগ (link + title + status → Firestore `gallery`)
+- Admin/Moderator → গ্যালারিতে ছবি যোগ (link + title + status → RTDB `gallery`)
 - Admin/Moderator → প্রোফাইল ছবি
 - Doner → প্রোফাইল ছবি
 
 **ImgBB API key-এর উৎস (priority ক্রমে):**
 1. localStorage cache (`cbdc.imgbb.key`)
-2. Firestore `settings/imgbb` doc (Admin Settings থেকে save — সব পেজ/browser-এ শেয়ার)
+2. RTDB `settings/imgbb` (Admin Settings থেকে save — সব পেজ/browser-এ শেয়ার)
 3. build-time env `VITE_IMGBB_API_KEY` (fallback)
 
 > ⚠️ ImgBB key client-side (public) থাকে — এটা ImgBB-র স্বাভাবিক মডেল। key লিক হলে
 > কেউ আপনার ImgBB quota ব্যবহার করতে পারে; তাই প্রোডাকশনে ImgBB account-এর
 > monthly quota খেয়াল রাখুন।
 
-## ৫. Firestore Database Structure
+## ৫. Realtime Database Structure
 
-| Collection | Doc ID | Fields | Access |
+প্রতিটি top-level node একটি map: `donors/{id} = {...}`। কোড পড়ার সময় সেটি
+`{ id, ...value }` array-তে রূপান্তর করে (`src/lib/rtdb.ts` → `snapToList`)।
+
+| Node | Key | Fields | Access |
 | --- | --- | --- | --- |
-| `donors` | donor id (`CBDC-2026-XXXX`) | name, bloodGroup, gender, age, phone, whatsapp, area, lastDonationDate, donations, totalDonations, status, available, verified, suspended, joined, occupation, ownerUid, photo (ImgBB URL) | approved = public read; staff = full |
-| `requests` | request id | patientName, bloodGroup, bags, urgency, status, workflowStatus, hospitalName, hospitalAddress, requesterName, phone, whatsapp, createdAt, expiresAt, responders | anyone can create; approved = public read; staff = full |
-| `members` | auto id | donor sign-up application (status: `pending`) | anyone can create; staff = read/manage |
-| `users` | **auth uid** | name, username, email, phone, uid, photoURL (ImgBB URL), provider, role, status, createdAt | owner + staff |
-| `admins` | **auth uid** | email, role (`admin`/`super`/`moderator`/`mod`), permissions[], name, username, designation | own read; console/Admin SDK write |
-| `queue` | queue id (`PD-*`, `REQ-*`, `DN-*`, `GC-*`, `RP-*`) | kind, name, group, area, phone, … (moderation queue) | staff only |
-| `gallery` | image id | title, caption, url (ImgBB link), imageUrl, thumbUrl, status, order | published = public read; staff = full |
-| `notices` | notice id | title, body, audience, status, from, to | published = public read; staff = full |
+| `donors` | donor id (`CBDC-2026-XXXX`) | name, bloodGroup, gender, **dob**, phone, whatsapp, area, lastDonationDate, donations, totalDonations, status, available, verified, suspended, joined, occupation, ownerUid, photo (ImgBB URL) | public read; staff/owner write |
+| `requests` | push id | patientName, bloodGroup, bags, urgency, status, workflowStatus, hospitalName, hospitalAddress, requesterName, phone, whatsapp, **patientDob**, createdAt, expiresAt, responders | anyone can create; public read; staff manage |
+| `members` | push id | donor sign-up application (status `pending`, **dob**) | anyone can create; owner/staff read |
+| `users` | **auth uid** | uid, name, username, email, phone, **dob**, gender, area, photoURL, provider, role, status, createdAt, `data:{donations,mine,notifs,activity}` | owner + staff |
+| `admins` | **auth uid** | email, role (`admin`/`super`/`moderator`/`mod`), permissions[], name, username, designation | own read; super admin write |
+| `queue` | record id | kind (`donor`/`request`/`donation`), name, group, area, **dob**, phone, … | create খোলা (নতুন আবেদনের জন্য); পড়া/সম্পাদনা staff only |
+| `gallery` | image id | title, caption, url (ImgBB link), imageUrl, thumbUrl, status, order | public read; staff write |
+| `notices` | notice id | title, body, audience, status, from, to | public read; staff write |
 | `accounts` | account id | panel/team account records | staff only |
-| `settings` | `imgbb` | `{ key, updatedAt }` — ImgBB API key | public read (client key); staff write |
+| `settings` | `imgbb`, `app` | `imgbb:{key,updatedAt}`, `app:{autoApproveEmergency}` | public read; staff write |
 
-> **গুরুত্বপূর্ণ:** `users/{uid}` ও `admins/{uid}` doc ID **Firebase Auth uid**-তে
-> কী করা হয় — Security Rules ওই uid দিয়েই role যাচাই করে। Signup-এ
-> `setDoc(doc(db,"users", uid), ...)` ব্যবহার করা হয়েছে।
+> **গুরুত্বপূর্ণ:**
+> - `users/{uid}` ও `admins/{uid}`-এর key **Firebase Auth uid** — Security Rules
+>   ওই uid দিয়েই role যাচাই করে (`root.child('admins').child(auth.uid)`)।
+> - **বয়স কোথাও সংরক্ষিত হয় না।** শুধু `dob` (জন্ম তারিখ, `YYYY-MM-DD`) রাখা হয়,
+>   আর বয়স প্রতিবার `src/lib/age.ts` → `ageFromDob()` দিয়ে হিসাব করা হয় —
+>   ফলে বয়স কখনো পুরোনো হয় না।
 
 ## ৬. Firebase Authentication
 
 | কাজ | Implementation |
 | --- | --- |
-| Register (email/password) | `createUserWithEmailAndPassword` + `users` ও `members`-এ লেখা |
+| Register (email/password) | `createUserWithEmailAndPassword` + RTDB `users/{uid}`, `members`, `queue`-এ লেখা |
 | Register (Google) | `signInWithPopup` + GoogleAuthProvider |
-| Login | `signInWithEmailAndPassword` (username/phone দিলে `users` থেকে email resolve) |
+| Login | `signInWithEmailAndPassword` (username/phone দিলে RTDB `users` থেকে email resolve) |
 | Logout | `signOut` (Home-এর লগইন গেট + Doner `doLogout`) |
 | Session | `onAuthStateChanged` (Home, Doner, Admin, Moderator — সব পেজে) |
-| Password reset | `sendPasswordResetEmail` (Home + Doner + Admin/Moderator) |
+| Password reset | Firebase built-in reset link + সাইটের নিজস্ব `/forgot-password` ও `/reset-password` full-page UI (দেখুন `docs/PASSWORD_RESET_EMAIL.md`) |
 | Change password | `reauthenticateWithCredential` + `updatePassword` |
 
-## ৭. Role ও Permission (Firebase-নিয়ন্ত্রিত)
+## ৭. Role ও Permission (ডাটাবেস-নিয়ন্ত্রিত)
 
-- **Role resolve** (Home-এ লগইনের সময়): `admins` collection-এ `where("email","==",email)`
-  query করে role বের করা হয় — `admin`/`super` → `/admin`, `moderator`/`mod` → `/moderator`,
-  নাহলে donor (ওয়েবসাইটেই থাকে)।
-- **Admin/Moderator panel gate**: `onAuthStateChanged` → Firebase user → `admins/{uid}`
-  থেকে role/permissions → role না মিললে `index.html`-এ redirect।
-- **Permission**: panel-এর `can()` এখন `ME.permissions` (Firestore `admins` doc-এর array)
-  থাকলে সেটি ব্যবহার করে, না থাকলে role-ভিত্তিক default permission map (`ROLES`)।
-- Security Rules-এও role যাচাই করা হয় (দেখুন `firestore.rules`)।
+role নির্ধারণের **একমাত্র জায়গা** `src/lib/authx.ts` → `resolveUserRole()`:
 
-### Staff account তৈরি (কনসোল / Admin SDK)
+1. RTDB `admins/{uid}` — staff রেকর্ড (uid দিয়ে)
+2. না পেলে `admins` node-এ email দিয়ে খোঁজা
+3. তাও না পেলে → `donor`
 
-Firebase Console → Authentication-এ user তৈরি করুন, তারপর Firestore-এ doc:
+`users` node-এ `role:"admin"` লেখা থাকলেও তা **গ্রাহ্য নয়** — `admins`-ই একমাত্র
+কর্তৃপক্ষ (নিরাপত্তা)।
+
+**কে কোথায় যাবে** — `panelForRole()`:
+
+| RTDB role | পেজ |
+| --- | --- |
+| `admin` / `super` | `/admin` — Admin Panel |
+| `moderator` / `mod` | `/moderator` — Moderator Panel |
+| অন্য সব (`donor`) | `/doner` — Doner Dashboard |
+
+- লগইন/সাইনআপ শেষে `finishLogin()` এই ম্যাপ ধরেই সরাসরি নিজ dashboard-এ পাঠায়
+  (কোনো success popup ছাড়াই)।
+- প্রতিটি প্যানেল boot-এ নিজেই আবার যাচাই করে: ভুল প্যানেলে ঢুকলে ব্যবহারকারীকে
+  তার নিজের dashboard-এ সরিয়ে দেওয়া হয়। **Admin/Moderator কখনোই সাধারণ Doner
+  dashboard ব্যবহার করে না**, এবং উল্টোটাও নয়।
+- **Permission**: প্যানেলের `can()` আগে `ME.permissions` (RTDB `admins`-এর array)
+  দেখে, না থাকলে role-ভিত্তিক default map (`ROLES`)।
+- Security Rules-এও একই যাচাই আছে (দেখুন `database.rules.json`)।
+
+### Staff account তৈরি
+
+Firebase Console → Authentication-এ user তৈরি করুন, তারপর Realtime Database-এ:
 
 ```
-admins/{uid}
+admins/<auth-uid>
 {
   "email": "staff@cbdc.org",
-  "role": "admin",           // "admin" | "super" | "moderator" | "mod"
-  "permissions": [],          // optional — role-based default না হলে
+  "role": "admin",            // "admin" | "super" | "moderator" | "mod"
+  "permissions": [],           // ঐচ্ছিক — না দিলে role-ভিত্তিক ডিফল্ট
   "name": "শাহাদাত আহমেদ",
   "username": "shahadat",
   "designation": "সাধারণ সম্পাদক"
 }
 ```
+
+লেখামাত্রই ব্যবহারকারী পরের লগইনে (বা রিফ্রেশে) নতুন প্যানেল পাবেন — কোনো
+কোড deploy লাগে না।
 
 ## ৮. Security Rules deploy
 
@@ -165,22 +200,25 @@ admins/{uid}
 npm i -g firebase-tools
 firebase login
 
-# Rules deploy (শুধু Firestore — Storage ব্যবহৃত হয় না)
-firebase deploy --only firestore:rules
+# Rules deploy (Realtime Database — Firestore/Storage ব্যবহৃত হয় না)
+firebase deploy --only database
 
 # (ঐচ্ছিক) hosting deploy — production build প্রথমে
 npm run build
 firebase deploy --only hosting
 ```
 
-`firestore.rules`-এ যা যা আছে:
+`database.rules.json`-এ যা যা আছে:
 
-- `donors` / `requests` / `gallery` / `notices` — approved/published ডেটা public read.
-- `members` / `requests` — public create (রেজিস্ট্রেশন ও ইমারজেন্সি আবেদন)।
-- `users/{uid}` — owner read/write; staff full access।
-- `admins/{uid}` — নিজের doc পড়া যায়; client থেকে write বন্ধ (console/Admin SDK)।
-- `queue` / `accounts` — staff only।
-- `settings` — public read (ImgBB key), staff write।
+- `donors` / `requests` / `gallery` / `notices` — public read (পাবলিক ওয়েবসাইটের জন্য)।
+- `members` / `requests` / `queue` — নতুন রেকর্ড তৈরি খোলা (রেজিস্ট্রেশন ও ইমারজেন্সি
+  আবেদন), কিন্তু পড়া/সম্পাদনা মালিক বা staff ছাড়া বন্ধ।
+- `users/{uid}` — owner read/write; staff full access; `role` ফিল্ড শুধু staff বদলাতে পারে।
+- `admins/{uid}` — নিজের রেকর্ড পড়া যায়; লেখা শুধু super admin।
+- `accounts` — staff only।
+- `settings` — public read (ImgBB client key), staff write।
+- `.indexOn` — যেসব ফিল্ডে খোঁজা হয় (`email`, `username`, `phone`, `status` …) সেগুলোতে
+  index দেওয়া আছে, তাই query দ্রুত চলে ও কনসোলে warning আসে না।
 
 ## ৯. Environment Variables
 
@@ -192,3 +230,13 @@ VITE_IMGBB_API_KEY=...   # ImgBB fallback key (build-time)
 ```
 
 `src/lib/imgbb.ts`-এ `import.meta.env.VITE_IMGBB_API_KEY` পড়া হয় (সবচেয়ে কম priority)।
+
+চাইলে পুরো Firebase config-ও env দিয়ে override করা যায় — তখন **সবগুলো required
+ভ্যারিয়েবল একসাথে** দিতে হবে (`VITE_FIREBASE_DATABASE_URL` সহ)। বিস্তারিত `.env.example`-এ।
+
+## ১০. আরও ডকুমেন্ট
+
+- `docs/PASSWORD_RESET_EMAIL.md` — Firebase password reset ইমেইলকে সাইটের ডিজাইনে
+  ব্র্যান্ড করা (কপি-পেস্ট করার মতো template HTML সহ)।
+- `docs/GOOGLE_LOGIN_BRANDING.md` — Google "Choose an account" স্ক্রিনে অ্যাপের নাম
+  **Chawkbazar Blood Donor's Club** ও অফিশিয়াল লোগো দেখানোর ধাপ।

@@ -17,7 +17,17 @@ import {
   ensureUserProfile,
   onAuthUserChanged,
   setGoogleIntent,
+  resolveUserRole,
+  panelForRole,
+  requestPasswordReset,
+  verifyResetCode,
+  completePasswordReset,
 } from "../lib/authx";
+import { addRow, setRow, findBy, getRow, nowIso } from "../lib/rtdb";
+import { NODES } from "../lib/firebase";
+import { validateForm, clearFormErrors, attachLiveClear, setFieldError, clearFieldError } from "../lib/forms";
+import { ageFromDob, ageText, dobBounds, isValidDob, toBanglaDigits } from "../lib/age";
+import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -1219,6 +1229,40 @@ const pageCss = `    @font-face {
 .top-link:hover{border-color:var(--green);background:var(--green-soft)}
 
 
+    /* ===== ফর্ম ভ্যালিডেশন — highlight + ইনলাইন এরর (কোনো popup নয়) ===== */
+    input.is-invalid,select.is-invalid,textarea.is-invalid{border-color:#e0242f !important;background:rgba(224,36,47,.04);box-shadow:0 0 0 3px rgba(224,36,47,.12) !important}
+    input.is-invalid:focus,select.is-invalid:focus,textarea.is-invalid:focus{box-shadow:0 0 0 4px rgba(224,36,47,.18) !important}
+    .check.is-invalid,label.check.is-invalid{box-shadow:none !important;background:transparent}
+    .check.is-invalid span{color:#c31824}
+    .field-error{display:block;margin-top:6px;color:#c31824;font-size:.76rem;font-weight:700;line-height:1.5}
+    [data-theme="dark"] .field-error{color:#ff8f96}
+
+    /* ===== পাসওয়ার্ড রিসেট — আলাদা full-page UI ===== */
+    .reset-wrap{min-height:calc(100vh - 76px);display:flex;align-items:center;padding:48px 0 72px;background:radial-gradient(circle at 88% 8%,rgba(229,31,42,.10),transparent 38%),linear-gradient(160deg,#f2faf6 0%,#f4f8f6 55%,#eef4f1 100%)}
+    .reset-card{width:min(500px,100%);margin:auto;padding:38px 34px 32px;border:1px solid rgba(8,122,75,.14);border-radius:26px;background:#fff;box-shadow:0 26px 70px rgba(15,52,43,.15)}
+    .reset-mark{display:grid;place-items:center;width:82px;height:82px;margin:0 auto 18px;border-radius:50%;background:linear-gradient(145deg,var(--green-soft),#e3f5ec);box-shadow:inset 0 0 0 1px rgba(8,122,75,.12)}
+    .reset-mark img{width:66px;height:66px;border-radius:50%;object-fit:cover;border:3px solid #fff;box-shadow:0 6px 16px rgba(8,122,75,.22)}
+    .reset-card h1{margin:0 0 6px;color:var(--navy);font-size:1.52rem;text-align:center;line-height:1.3}
+    .reset-card .reset-sub{margin:0 0 24px;color:var(--muted);font-size:.83rem;text-align:center;line-height:1.7}
+    .reset-brandline{margin:0 0 20px;color:var(--green-dark);font-size:.74rem;font-weight:900;text-align:center;letter-spacing:.02em}
+    .reset-note{display:flex;gap:9px;padding:12px 14px;margin-bottom:18px;border:1px solid #bfe0d0;border-radius:13px;background:#f6fbf8;color:#2f5b4a;font-size:.77rem;line-height:1.65}
+    .reset-note.warn{border-color:#f0d9a6;background:#fffaef;color:#7a5200}
+    .reset-note.err{border-color:#f3c5c9;background:#fdecee;color:#a41e27}
+    .reset-actions{margin-top:20px;display:flex;flex-direction:column;gap:10px}
+    .reset-actions .btn{width:100%}
+    .reset-back{margin-top:18px;text-align:center;font-size:.78rem;color:var(--muted)}
+    .reset-back a{color:var(--green-dark);font-weight:800;cursor:pointer}
+    .reset-back a:hover{text-decoration:underline}
+    .reset-done{text-align:center;padding:6px 0 2px}
+    .reset-done .tick{display:grid;place-items:center;width:64px;height:64px;margin:0 auto 14px;border-radius:50%;background:var(--green-soft);color:var(--green);font-size:1.9rem;font-weight:900;box-shadow:inset 0 0 0 1px rgba(8,122,75,.18)}
+    .reset-done h2{margin:0 0 8px;color:var(--navy);font-size:1.18rem}
+    .reset-done p{margin:0;color:var(--muted);font-size:.82rem;line-height:1.75}
+    .reset-steps{margin:18px 0 0;padding:0 0 0 18px;color:var(--muted);font-size:.78rem;line-height:1.9}
+    [data-theme="dark"] .reset-wrap{background:linear-gradient(160deg,#0e1a16,#101d19)}
+    [data-theme="dark"] .reset-card{background:#141f1c;border-color:var(--line)}
+    [data-theme="dark"] .reset-note{background:#111b18;border-color:var(--line);color:var(--ink)}
+    @media(max-width:520px){.reset-card{padding:28px 20px 24px;border-radius:20px}.reset-card h1{font-size:1.32rem}}
+
     /* ===== Auth (লগইন / অ্যাকাউন্ট তৈরি) ===== */
     .auth-card{width:min(520px,100%)}
     .auth-forgot{margin-top:14px;text-align:center}
@@ -1810,7 +1854,7 @@ function StaticShell() {
                       <label className="required" htmlFor="donorName">
                         {"নাম"}
                       </label>
-                      <input id="donorName" name="name" required={true} placeholder="আপনার পূর্ণ নাম" />
+                      <input id="donorName" name="name" required={true} />
                     </div>
                     <div className="field">
                       <label className="required" htmlFor="donorGroup">
@@ -1866,10 +1910,13 @@ function StaticShell() {
                       </select>
                     </div>
                     <div className="field">
-                      <label htmlFor="donorAge">
-                        {"বয়স (বছর)"}
+                      <label className="required" htmlFor="donorDob">
+                        {"জন্ম তারিখ"}
                       </label>
-                      <input id="donorAge" name="age" type="number" min="1" max="100" placeholder="যেমন: ২৪" />
+                      <input id="donorDob" name="dob" type="date" required={true} />
+                      <span className="note" id="donorAgeNote">
+                        {"জন্ম তারিখ দিলে বয়স স্বয়ংক্রিয়ভাবে হিসাব হবে।"}
+                      </span>
                     </div>
                   </div>
                   <h2 className="form-title">
@@ -1914,14 +1961,14 @@ function StaticShell() {
                       <label htmlFor="donorAddress">
                         {"বিস্তারিত ঠিকানা"}
                       </label>
-                      <textarea id="donorAddress" name="address" placeholder="বাসা/রোড/এলাকার বিস্তারিত ঠিকানা">
+                      <textarea id="donorAddress" name="address">
                       </textarea>
                     </div>
                     <div className="field">
                       <label className="required" htmlFor="donorPhone">
                         {"মোবাইল নম্বর (১১ ডিজিট)"}
                       </label>
-                      <input id="donorPhone" name="phone" required={true} inputMode="numeric" maxLength="11" placeholder="01XXXXXXXXX" />
+                      <input id="donorPhone" name="phone" required={true} inputMode="numeric" maxLength="11" />
                       <span className="note">
                         {`উদাহরণ: ${SITE.phone}`}
                       </span>
@@ -1933,7 +1980,7 @@ function StaticShell() {
                           {"(ঐচ্ছিক)"}
                         </span>
                       </label>
-                      <input id="donorWhatsapp" name="whatsapp" inputMode="numeric" maxLength="11" placeholder="01XXXXXXXXX" />
+                      <input id="donorWhatsapp" name="whatsapp" inputMode="numeric" maxLength="11" />
                     </div>
                   </div>
                   <h2 className="form-title">
@@ -1956,7 +2003,7 @@ function StaticShell() {
                       <label htmlFor="healthNotes">
                         {"শারীরিক সুস্থতা / কোনো রোগ আছে কি?"}
                       </label>
-                      <textarea id="healthNotes" name="healthNotes" placeholder="বর্তমান শারীরিক অবস্থা বা উল্লেখযোগ্য রোগের কথা লিখুন">
+                      <textarea id="healthNotes" name="healthNotes">
                       </textarea>
                     </div>
                   </div>
@@ -2046,7 +2093,7 @@ function StaticShell() {
                 </p>
                 <ul className="info-list">
                   <li>
-                    {"আপনার বয়স ১৮ থেকে ৬০ বছরের মধ্যে হতে হবে।"}
+                    {`আপনার বয়স ${SITE.rules.minAge} থেকে ${SITE.rules.maxAge} বছরের মধ্যে হতে হবে (জন্ম তারিখ থেকে হিসাব হবে)।`}
                   </li>
                   <li>
                     {"সর্বশেষ রক্তদানের পর কমপক্ষে ৯০ দিন অতিক্রম হতে হবে।"}
@@ -2086,10 +2133,13 @@ function StaticShell() {
                     </select>
                   </div>
                   <div className="field" style={{ marginTop: "16px" }}>
-                    <label className="required" htmlFor="age">
-                      {"আপনার বয়স (বছর)"}
+                    <label className="required" htmlFor="dob">
+                      {"আপনার জন্ম তারিখ"}
                     </label>
-                    <input id="age" type="number" min="1" max="120" placeholder="যেমন: ২৪" required={true} />
+                    <input id="dob" name="dob" type="date" required={true} />
+                    <span className="note" id="eligAgeNote">
+                      {"জন্ম তারিখ থেকে বয়স স্বয়ংক্রিয়ভাবে হিসাব হবে।"}
+                    </span>
                   </div>
                   <label className="check">
                     <input id="healthCheck" type="checkbox" required={true} />
@@ -2165,13 +2215,16 @@ function StaticShell() {
                       <label className="required" htmlFor="patientName">
                         {"রোগীর নাম"}
                       </label>
-                      <input id="patientName" required={true} placeholder="রোগীর পূর্ণ নাম" />
+                      <input id="patientName" required={true} />
                     </div>
                     <div className="field">
-                      <label htmlFor="patientAge">
-                        {"রোগীর বয়স"}
+                      <label htmlFor="patientDob">
+                        {"রোগীর জন্ম তারিখ"}
                       </label>
-                      <input id="patientAge" type="number" min="0" placeholder="যেমন: ৩৫" />
+                      <input id="patientDob" name="patientDob" type="date" />
+                      <span className="note" id="patientAgeNote">
+                        {"বয়স জন্ম তারিখ থেকে হিসাব হবে।"}
+                      </span>
                     </div>
                     <div className="field">
                       <label className="required" htmlFor="requestGroup">
@@ -2211,7 +2264,7 @@ function StaticShell() {
                       <label className="required" htmlFor="bags">
                         {"প্রয়োজনীয় ব্যাগ সংখ্যা"}
                       </label>
-                      <input id="bags" type="number" min="1" max="99" required={true} placeholder="যেমন: ২" />
+                      <input id="bags" type="number" min="1" max="99" required={true} />
                     </div>
                   </div>
                   <h2 className="form-title">
@@ -2225,13 +2278,13 @@ function StaticShell() {
                       <label className="required" htmlFor="hospital">
                         {"হাসপাতালের নাম"}
                       </label>
-                      <input id="hospital" required={true} placeholder="হাসপাতালের নাম" />
+                      <input id="hospital" required={true} />
                     </div>
                     <div className="field">
                       <label className="required" htmlFor="hospitalAddress">
                         {"হাসপাতালের ঠিকানা / এলাকা"}
                       </label>
-                      <input id="hospitalAddress" required={true} placeholder="যেমন: পাঁচলাইশ, চট্টগ্রাম" />
+                      <input id="hospitalAddress" required={true} />
                     </div>
                     <div className="field full">
                       <label className="required" htmlFor="urgency">
@@ -2281,13 +2334,13 @@ function StaticShell() {
                       <label className="required" htmlFor="requester">
                         {"যোগাযোগকারীর নাম"}
                       </label>
-                      <input id="requester" required={true} placeholder="আপনার নাম" />
+                      <input id="requester" required={true} />
                     </div>
                     <div className="field">
                       <label className="required" htmlFor="requestPhone">
                         {"মোবাইল নম্বর"}
                       </label>
-                      <input id="requestPhone" required={true} inputMode="numeric" maxLength="11" placeholder="01XXXXXXXXX" />
+                      <input id="requestPhone" required={true} inputMode="numeric" maxLength="11" />
                     </div>
                     <div className="field">
                       <label htmlFor="requestWhatsapp">
@@ -2296,7 +2349,7 @@ function StaticShell() {
                           {"(ঐচ্ছিক)"}
                         </span>
                       </label>
-                      <input id="requestWhatsapp" inputMode="numeric" maxLength="11" placeholder="01XXXXXXXXX" />
+                      <input id="requestWhatsapp" inputMode="numeric" maxLength="11" />
                     </div>
                   </div>
                   <h2 className="form-title">
@@ -2310,7 +2363,7 @@ function StaticShell() {
                       <label htmlFor="description">
                         {"রোগীর সমস্যার সংক্ষিপ্ত বিবরণ"}
                       </label>
-                      <textarea id="description" placeholder="রোগীর অবস্থা বা অপারেশনের তথ্য">
+                      <textarea id="description">
                       </textarea>
                     </div>
                     <div className="field">
@@ -2320,7 +2373,7 @@ function StaticShell() {
                           {"(ঐচ্ছিক)"}
                         </span>
                       </label>
-                      <textarea id="instructions" placeholder="দাতার জন্য কোনো বিশেষ নির্দেশনা থাকলে লিখুন">
+                      <textarea id="instructions">
                       </textarea>
                     </div>
                   </div>
@@ -2374,14 +2427,14 @@ function StaticShell() {
                     <label className="required" htmlFor="username">
                       {"ইমেইল / ইউজার নেইম"}
                     </label>
-                    <input id="username" name="identifier" autoComplete="username" required={true} placeholder="আপনার ইমেইল অথবা ইউজার নেইম লিখুন" />
+                    <input id="username" name="identifier" autoComplete="username" required={true} />
                   </div>
                   <div className="field" style={{ marginTop: "14px" }}>
                     <label className="required" htmlFor="password">
                       {"পাসওয়ার্ড"}
                     </label>
                     <div className="pw-wrap">
-                      <input id="password" type="password" autoComplete="current-password" placeholder="আপনার পাসওয়ার্ড লিখুন" required={true} />
+                      <input id="password" type="password" autoComplete="current-password" required={true} />
                       <button className="pw-toggle" type="button" data-pw-toggle="password" aria-label="পাসওয়ার্ড দেখান">
                         <svg className="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                           <path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0Z" />
@@ -2471,6 +2524,205 @@ function StaticShell() {
           </div>
         </section>
         {" "}
+        {/* FORGOT PASSWORD — আলাদা full-page UI (Firebase built-in reset link) */}
+        {" "}
+        <section className="view" id="view-forgot" data-view="forgot-password">
+          <div className="reset-wrap">
+            <div className="container">
+              <div className="reset-card">
+                <div className="reset-mark">
+                  <img data-logo={true} alt="CBDC লোগো" />
+                </div>
+                <p className="reset-brandline">
+                  {SITE.name}
+                </p>
+                <div id="forgotStart">
+                  <h1>
+                    {"পাসওয়ার্ড ভুলে গেছেন?"}
+                  </h1>
+                  <p className="reset-sub">
+                    {"চিন্তার কিছু নেই। অ্যাকাউন্টের ইমেইল ঠিকানাটি লিখুন — আমরা সেখানে একটি নিরাপদ পাসওয়ার্ড রিসেট লিংক পাঠিয়ে দেব।"}
+                  </p>
+                  <div className="reset-note">
+                    {"🔐 "}
+                    <span>
+                      {"লিংকটি Firebase Authentication থেকে সরাসরি পাঠানো হয় এবং সীমিত সময়ের জন্য কার্যকর থাকে।"}
+                    </span>
+                  </div>
+                  <form id="forgotForm" noValidate={true}>
+                    <div className="field">
+                      <label className="required" htmlFor="forgotEmail">
+                        {"ইমেইল ঠিকানা"}
+                      </label>
+                      <input id="forgotEmail" name="email" type="email" autoComplete="email" />
+                    </div>
+                    <div className="reset-actions">
+                      <button className="btn btn-green" id="forgotSubmit" type="submit">
+                        {"রিসেট লিংক পাঠান "}
+                        <span>
+                          {"→"}
+                        </span>
+                      </button>
+                    </div>
+                  </form>
+                  <div className="reset-back">
+                    {"পাসওয়ার্ড মনে পড়েছে? "}
+                    <a href={appBase()+"login"} data-route="dashboard">
+                      {"লগইনে ফিরে যান"}
+                    </a>
+                  </div>
+                </div>
+                <div id="forgotSent" className="hidden">
+                  <div className="reset-done">
+                    <div className="tick">
+                      {"✓"}
+                    </div>
+                    <h2>
+                      {"রিসেট লিংক পাঠানো হয়েছে"}
+                    </h2>
+                    <p id="forgotSentText">
+                      {"—"}
+                    </p>
+                  </div>
+                  <ol className="reset-steps">
+                    <li>
+                      {"ইমেইলের Inbox (না পেলে Spam / Promotions) খুলুন।"}
+                    </li>
+                    <li>
+                      {"“নতুন পাসওয়ার্ড সেট করুন” লিংকে ক্লিক করুন।"}
+                    </li>
+                    <li>
+                      {"নতুন পাসওয়ার্ড দিয়ে আবার লগইন করুন।"}
+                    </li>
+                  </ol>
+                  <div className="reset-actions">
+                    <a className="btn btn-green" href={appBase()+"login"} data-route="dashboard">
+                      {"লগইনে ফিরে যান"}
+                    </a>
+                    <button className="btn btn-outline" id="forgotResend" type="button">
+                      {"আবার পাঠান"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        {" "}
+        {/* RESET PASSWORD — Firebase রিসেট লিংক থেকে নতুন পাসওয়ার্ড */}
+        {" "}
+        <section className="view" id="view-reset" data-view="reset-password">
+          <div className="reset-wrap">
+            <div className="container">
+              <div className="reset-card">
+                <div className="reset-mark">
+                  <img data-logo={true} alt="CBDC লোগো" />
+                </div>
+                <p className="reset-brandline">
+                  {SITE.name}
+                </p>
+                <div id="resetChecking">
+                  <h1>
+                    {"লিংক যাচাই করা হচ্ছে…"}
+                  </h1>
+                  <p className="reset-sub">
+                    {"একটু অপেক্ষা করুন।"}
+                  </p>
+                </div>
+                <div id="resetInvalid" className="hidden">
+                  <h1>
+                    {"লিংকটি আর কার্যকর নেই"}
+                  </h1>
+                  <p className="reset-sub" id="resetInvalidText">
+                    {"রিসেট লিংকটির মেয়াদ শেষ হয়ে গেছে অথবা এটি ইতিমধ্যে ব্যবহার করা হয়েছে।"}
+                  </p>
+                  <div className="reset-actions">
+                    <a className="btn btn-green" href={appBase()+"forgot-password"} data-route="forgot-password">
+                      {"নতুন রিসেট লিংক নিন"}
+                    </a>
+                    <a className="btn btn-outline" href={appBase()+"login"} data-route="dashboard">
+                      {"লগইনে ফিরে যান"}
+                    </a>
+                  </div>
+                </div>
+                <div id="resetForm" className="hidden">
+                  <h1>
+                    {"নতুন পাসওয়ার্ড সেট করুন"}
+                  </h1>
+                  <p className="reset-sub" id="resetForEmail">
+                    {"—"}
+                  </p>
+                  <form id="resetPassForm" noValidate={true}>
+                    <div className="field">
+                      <label className="required" htmlFor="resetPass1">
+                        {"নতুন পাসওয়ার্ড"}
+                      </label>
+                      <div className="pw-wrap">
+                        <input id="resetPass1" type="password" autoComplete="new-password" minLength="6" />
+                        <button className="pw-toggle" type="button" data-pw-toggle="resetPass1" aria-label="পাসওয়ার্ড দেখান">
+                          <svg className="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0Z" />
+                            <circle cx="12" cy="12" r="3" />
+                          </svg>
+                          <svg className="icon-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c5.1 0 8.6 3.6 9.94 6.65a1 1 0 0 1 0 .7 12.9 12.9 0 0 1-2.28 3.4" />
+                            <path d="M6.61 6.61A13.5 13.5 0 0 0 2.06 11.65a1 1 0 0 0 0 .7C3.4 15.4 6.9 19 12 19a10.5 10.5 0 0 0 5.39-1.61" />
+                            <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+                            <path d="M3 3l18 18" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                    <div className="field" style={{ marginTop: "14px" }}>
+                      <label className="required" htmlFor="resetPass2">
+                        {"পাসওয়ার্ড আবার লিখুন"}
+                      </label>
+                      <div className="pw-wrap">
+                        <input id="resetPass2" type="password" autoComplete="new-password" minLength="6" />
+                        <button className="pw-toggle" type="button" data-pw-toggle="resetPass2" aria-label="পাসওয়ার্ড দেখান">
+                          <svg className="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0Z" />
+                            <circle cx="12" cy="12" r="3" />
+                          </svg>
+                          <svg className="icon-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c5.1 0 8.6 3.6 9.94 6.65a1 1 0 0 1 0 .7 12.9 12.9 0 0 1-2.28 3.4" />
+                            <path d="M6.61 6.61A13.5 13.5 0 0 0 2.06 11.65a1 1 0 0 0 0 .7C3.4 15.4 6.9 19 12 19a10.5 10.5 0 0 0 5.39-1.61" />
+                            <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+                            <path d="M3 3l18 18" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                    <div className="reset-actions">
+                      <button className="btn btn-green" id="resetSubmit" type="submit">
+                        {"পাসওয়ার্ড সংরক্ষণ করুন"}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+                <div id="resetDone" className="hidden">
+                  <div className="reset-done">
+                    <div className="tick">
+                      {"✓"}
+                    </div>
+                    <h2>
+                      {"পাসওয়ার্ড বদলে গেছে"}
+                    </h2>
+                    <p>
+                      {"আপনার নতুন পাসওয়ার্ড দিয়ে এখন লগইন করতে পারবেন।"}
+                    </p>
+                  </div>
+                  <div className="reset-actions">
+                    <a className="btn btn-green" href={appBase()+"login"} data-route="dashboard">
+                      {"লগইন করুন"}
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        {" "}
         {/* SIGNUP / নতুন অ্যাকাউন্ট তৈরি */}
         {" "}
         <section className="view" id="view-signup" data-view="signup">
@@ -2540,7 +2792,7 @@ function StaticShell() {
                       <label className="required" htmlFor="suName">
                         {"নাম"}
                       </label>
-                      <input id="suName" name="name" required={true} placeholder="আপনার পূর্ণ নাম" />
+                      <input id="suName" name="name" required={true} />
                       <span id="suNameSuggest" className="suggest-note hidden">
                       </span>
                     </div>
@@ -2549,7 +2801,7 @@ function StaticShell() {
                       <label className="required" htmlFor="suUsername">
                         {"ইউজার নেইম"}
                       </label>
-                      <input id="suUsername" name="username" required={true} autoComplete="username" placeholder="যেমন: shahadat_cbdc" />
+                      <input id="suUsername" name="username" required={true} autoComplete="username" />
                       <span className="note">
                         {"ইংরেজি ছোট হাতের অক্ষর, সংখ্যা ও আন্ডারস্কোর ব্যবহার করুন।"}
                       </span>
@@ -2559,7 +2811,7 @@ function StaticShell() {
                       <label className="required" htmlFor="suEmail">
                         {"ইমেইল"}
                       </label>
-                      <input id="suEmail" name="email" type="email" required={true} autoComplete="email" placeholder="example@gmail.com" />
+                      <input id="suEmail" name="email" type="email" required={true} autoComplete="email" />
                       <span id="suEmailNote" className="note hidden">
                         <span className="lock-hint">
                           {"🔒 Google-এ যাচাইকৃত ইমেইল — পরিবর্তন করা যাবে না।"}
@@ -2572,7 +2824,7 @@ function StaticShell() {
                         {"পাসওয়ার্ড"}
                       </label>
                       <div className="pw-wrap">
-                        <input id="suPassword" name="password" type="password" autoComplete="new-password" required={true} minLength="6" placeholder="কমপক্ষে ৬ অক্ষর" />
+                        <input id="suPassword" name="password" type="password" autoComplete="new-password" required={true} minLength="6" />
                         <button className="pw-toggle" type="button" data-pw-toggle="suPassword" aria-label="পাসওয়ার্ড দেখান">
                           <svg className="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                             <path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0Z" />
@@ -2593,7 +2845,7 @@ function StaticShell() {
                         {"পাসওয়ার্ড নিশ্চিত করুন"}
                       </label>
                       <div className="pw-wrap">
-                        <input id="suPassword2" type="password" autoComplete="new-password" required={true} minLength="6" placeholder="পুনরায় পাসওয়ার্ড লিখুন" />
+                        <input id="suPassword2" type="password" autoComplete="new-password" required={true} minLength="6" />
                         <button className="pw-toggle" type="button" data-pw-toggle="suPassword2" aria-label="পাসওয়ার্ড দেখান">
                           <svg className="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                             <path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0Z" />
@@ -2676,10 +2928,13 @@ function StaticShell() {
                     </div>
                     {" "}
                     <div className="field">
-                      <label htmlFor="suAge">
-                        {"বয়স (বছর)"}
+                      <label className="required" htmlFor="suDob">
+                        {"জন্ম তারিখ"}
                       </label>
-                      <input id="suAge" name="age" type="number" min="1" max="100" placeholder="যেমন: ২৪" />
+                      <input id="suDob" name="dob" type="date" required={true} />
+                      <span className="note" id="suAgeNote">
+                        {"জন্ম তারিখ দিলে বয়স স্বয়ংক্রিয়ভাবে হিসাব হবে।"}
+                      </span>
                     </div>
                     {" "}
                     <div className="field">
@@ -2723,7 +2978,7 @@ function StaticShell() {
                       <label className="required" htmlFor="suPhone">
                         {"মোবাইল নম্বর (১১ ডিজিট)"}
                       </label>
-                      <input id="suPhone" name="phone" required={true} inputMode="numeric" maxLength="11" placeholder="01XXXXXXXXX" />
+                      <input id="suPhone" name="phone" required={true} inputMode="numeric" maxLength="11" />
                       <span className="note">
                         {`উদাহরণ: ${SITE.phone}`}
                       </span>
@@ -2736,14 +2991,14 @@ function StaticShell() {
                           {"(ঐচ্ছিক)"}
                         </span>
                       </label>
-                      <input id="suWhatsapp" name="whatsapp" inputMode="numeric" maxLength="11" placeholder="01XXXXXXXXX" />
+                      <input id="suWhatsapp" name="whatsapp" inputMode="numeric" maxLength="11" />
                     </div>
                     {" "}
                     <div className="field full">
                       <label htmlFor="suAddress">
                         {"বিস্তারিত ঠিকানা"}
                       </label>
-                      <textarea id="suAddress" name="address" placeholder="বাসা/রোড/এলাকার বিস্তারিত ঠিকানা">
+                      <textarea id="suAddress" name="address">
                       </textarea>
                     </div>
                     {" "}
@@ -2772,7 +3027,7 @@ function StaticShell() {
                       <label htmlFor="suHealth">
                         {"শারীরিক সুস্থতা / কোনো রোগ আছে কি?"}
                       </label>
-                      <textarea id="suHealth" name="healthNotes" placeholder="বর্তমান শারীরিক অবস্থা বা উল্লেখযোগ্য রোগের কথা লিখুন">
+                      <textarea id="suHealth" name="healthNotes">
                       </textarea>
                     </div>
                     {" "}
@@ -3036,7 +3291,7 @@ function StaticShell() {
         </i>
       </a>
       {" "}
-      {/* Shared live state: same donors, requests and moderation queue across all pages (Firestore) */}
+      {/* Shared live state: same donors, requests and moderation queue across all pages (Realtime Database) */}
       {" "}
     </>
   );
@@ -3052,7 +3307,8 @@ function initPage() {
      Firebase Login সফল হলে role অনুযায়ী পেজ: admin → অ্যাডমিন প্যানেল, moderator → মডারেটর প্যানেল
      ========================================================================== */
   
-      const LOGO_SRC = "./img/logo.png";  /* img/logo.png ফাইল থেকে লোগো — ফাইল বদলালেই সর্বত্র নতুন লোগো */
+      /* লোগো — একমাত্র কেন্দ্রীয় উৎস (src/config/logo.ts)। কোনো পেজে আলাদা path নেই। */
+      const LOGO_SRC = logoUrl();
   
       const BANGLA = "০১২৩৪৫৬৭৮৯";
       const GROUPS = SITE.bloodGroups.slice();
@@ -3116,8 +3372,9 @@ function initPage() {
       let fbReady=false;
 
       /* ===== Firebase init — shared instance (src/lib/firebase.ts) =====
-         ডেটা সোর্স এখন Firestore: donors / requests / queue / gallery / notices /
-         accounts সব src/lib/store.ts-এর মাধ্যমে Firestore থেকে লাইভ সিঙ্ক হয়। */
+         ডেটা সোর্স এখন **Firebase Realtime Database**: donors / requests / queue /
+         gallery / notices / accounts সব src/lib/store.ts-এর মাধ্যমে RTDB থেকে
+         লাইভ সিঙ্ক হয় — কোথাও কিছু বদলালে সব dashboard-এ সাথে সাথে দেখা যায়। */
       async function initFirebase(){
         try{
           const shared = initSharedFirebase();
@@ -3144,9 +3401,9 @@ function initPage() {
         const s=sharedState();
         return s&&s.gallery.length ? s.gallery.filter(g=>g.status!=="draft").map(g=>({...g,imageUrl:g.imageUrl||g.url})) : [];
       };
-      const setDonors = async (list) => { /* deprecated: direct Firestore writes via addDoc/updateDoc/deleteDoc */ };
+      const setDonors = async (list) => { /* deprecated: writes go straight to RTDB via src/lib/rtdb.ts */ };
       const setRequests = async (list) => { };
-      // Firestore is the single source of truth — no dummy data
+      // Realtime Database is the single source of truth — no demo/mock data anywhere
       const daysSince = date => { if(!date)return null; const d=new Date(date+"T00:00:00"); if(Number.isNaN(d.getTime()))return null; const n=new Date(); const a=new Date(n.getFullYear(),n.getMonth(),n.getDate()); const b=new Date(d.getFullYear(),d.getMonth(),d.getDate()); return Math.floor((a-b)/86400000); };
       const canDonate = donor => !donor.lastDonationDate || (daysSince(donor.lastDonationDate) !== null && daysSince(donor.lastDonationDate) >= 90);
       const statusText = status => ({pending:"অপেক্ষমাণ",approved:"অনুমোদিত",rejected:"বাতিল",resolved:"সমাধান হয়েছে"}[status] || status);
@@ -3164,7 +3421,7 @@ function initPage() {
       }
       /* প্যানেল লিংক — clean path URL ("/admin" ইত্যাদি; src/lib/router.ts) */
       function dashPage(role){ return role==="admin" ? pagePath("admin") : role==="moderator" ? pagePath("moderator") : appBase(); }
-      // Firestore `admins` ডকুমেন্টের role ফিল্ড বদলালেই ব্যবহারকারীর প্যানেল বদলে যায় (real-time)
+      // RTDB `admins/{uid}`-এর role ফিল্ড বদলালেই ব্যবহারকারীর প্যানেল বদলে যায় (real-time)
       // ইতিমধ্যে লগইন করা থাকলে লগইন ভিউতে "ড্যাশবোর্ডে যান" কার্ড দেখায়
       function renderLoginGate(){
         const role = sessionStorage.getItem("cbdcUserRole");
@@ -3186,7 +3443,7 @@ function initPage() {
   
   
       /* A donation count that is stable per donor: derived from the card id so
-         the same person always shows the same number, and a Firestore record
+         the same person always shows the same number, and a database record
          with a real `donations` field simply overrides it. */
       const donationCount = d => {
         if(Number.isFinite(+d.donations)) return +d.donations;
@@ -3195,7 +3452,7 @@ function initPage() {
       };
       const publicDonors = () => getDonors();
   
-      function setLogo(){ $$('[data-logo]').forEach(img => img.src=LOGO_SRC); }
+      function setLogo(){ applyLogo(document); }
       function setMenuBtn(open){
         const mb=$("#menuBtn");
         if(!mb) return;
@@ -3226,6 +3483,7 @@ function initPage() {
         if(target){ setTimeout(()=>$(target)?.scrollIntoView({behavior:"smooth",block:"start"}),40); } else window.scrollTo({top:0,behavior:"smooth"});
         if(name==="home"){ renderPublic(); }
         if(name==="login"){ if(typeof renderLoginGate==="function") renderLoginGate(); }
+        if(name==="reset-password"){ try{ initResetPage(); }catch(e){ console.warn("reset page:", e && e.message); } }
       }
       function routeClick(event){
         const route=event.currentTarget.dataset.route; event.preventDefault();
@@ -3234,6 +3492,7 @@ function initPage() {
         if(route==="homeAbout"){showView("home","#about");return}
         if(route==="homeGallery"){showView("home","#gallery");return}
         if(route==="dashboard"||route==="login"){showView("login");return}
+        if(route==="forgot-password"){ showView("forgot-password"); resetForgotPage($("#username")?.value||""); return}
         if(route==="signup"){ if(isLoggedIn()){ toast("আপনি ইতিমধ্যে লগইন করা আছেন"); showView("home"); } else showView("signup"); return}
         if(route==="logout"){ doLogout(); return}
         if(route==="donorPanel"){ navigateToPage("doner"); return}
@@ -3277,7 +3536,9 @@ function initPage() {
   
       function donorCard(d, index=0){
         const donorIdVal = formatDonorId(d, index);
-        const ageVal = d.age ? `বয়স ${bn(d.age)} বছর` : "বয়স ২৫ বছর";
+        /* বয়স জন্ম তারিখ (dob) থেকে হিসাব হয় — কোনো hardcoded ডিফল্ট নেই */
+        const ageStr = ageText(d);
+        const ageVal = ageStr === "—" ? "" : `বয়স ${ageStr}`;
         const lastDon = d.lastDonationDate ? dateText(d.lastDonationDate) : "নতুন দাতা";
         return `<div class="donor-card">
     <div class="card-content">
@@ -3572,7 +3833,7 @@ function initPage() {
         renderBoard();
       }, 15000);
       function renderPublic(){ renderStats();renderSearch();renderBoard();
-        /* keep the profile-page hand-off in sync with whatever is on screen (Firestore live data) */
+        /* keep the profile-page hand-off in sync with whatever is on screen (RTDB live data) */
         try{ publishDonors(); }catch(e){}
       }
   
@@ -3655,7 +3916,8 @@ function initPage() {
           gender: d.gender || "",
           group: d.bloodGroup || "",
           area: d.area || "",
-          age: d.age || "",
+          dob: d.dob || "",
+          age: ageText(d) === "—" ? "" : ageText(d),
           occupation: d.occupation || "",
           phone: d.phone || "",
           /* WhatsApp গোপন রাখা থাকলে সেটি অবজেক্টেই আসে না — DOM বা সোর্সে পৌঁছাতে পারে না */
@@ -3672,7 +3934,7 @@ function initPage() {
         const chips = [
           `<span class="pchip ${v.ready?"ok":"rest"}">${v.ready?"✓ রক্তদানে প্রস্তুত":`বিশ্রামে · আর ${bn(v.rest)} দিন`}</span>`,
           v.area ? `<span class="pchip">📍 ${esc(v.area)}</span>` : "",
-          v.age ? `<span class="pchip">${bn(v.age)} বছর</span>` : "",
+          v.age ? `<span class="pchip">${esc(v.age)}</span>` : "",
           v.occupation ? `<span class="pchip">${esc(v.occupation)}</span>` : ""
         ].join("");
         const row = (k, val, dim) =>
@@ -3778,104 +4040,110 @@ function initPage() {
   
       function formObj(form){ return Object.fromEntries(new FormData(form).entries()); }
       function normalizeFormPhones(obj){ if(obj.phone)obj.phone=digits(obj.phone);if(obj.whatsapp)obj.whatsapp=digits(obj.whatsapp);return obj; }
-      // Register: Bangla validation + duplicate check + Firestore (members pending)
+      /* Register — inline validation (কোনো popup নয়) + Realtime Database (`members`, pending) */
       $("#registerForm").addEventListener("submit", async e => {
         e.preventDefault();
         const form = e.currentTarget, message = $("#registerMessage");
-        if(!form.checkValidity()){
-          showMessage(message,"অনুগ্রহ করে চিহ্নিত আবশ্যিক ঘরগুলো পূরণ করুন।","error");
-          uiAlert("অনুগ্রহ করে চিহ্নিত আবশ্যিক ঘরগুলো সঠিকভাবে পূরণ করুন।",{type:"warn",title:"তথ্য অসম্পূর্ণ"});
-          return;
-        }
+        const v = validateForm(form, {
+          name:        {required:true, label:"নাম", minLength:2},
+          bloodGroup:  {required:true, label:"রক্তের গ্রুপ"},
+          gender:      {required:true, label:"লিঙ্গ"},
+          dob:         {required:true, dob:{min:SITE.rules.minAge, max:SITE.rules.maxAge}, label:"জন্ম তারিখ"},
+          area:        {required:true, label:"থানা / এলাকা"},
+          phone:       {required:true, phone:true, label:"মোবাইল নম্বর"},
+          whatsapp:    {phone:true, label:"WhatsApp নম্বর"},
+          donorAgree:  {checked:true}
+        });
+        if(!v.ok){ message.className="hidden"; message.textContent=""; return; }
+
         const o = normalizeFormPhones(formObj(form));
-        if(!phoneOK(o.phone) || (o.whatsapp && !phoneOK(o.whatsapp))){
-          showMessage(message,"মোবাইল নম্বর অবশ্যই ১১ সংখ্যার সঠিক বাংলাদেশি নম্বর হতে হবে।","error");
-          uiAlert("মোবাইল নম্বর অবশ্যই ১১ সংখ্যার সঠিক বাংলাদেশি নম্বর হতে হবে।",{type:"error",title:"ভুল নম্বর"});
-          return;
-        }
-        
         showAppLoading();
-        
-        const sharedNow=sharedState();
-        const donorSerial=(sharedNow?.donors?.length||0)+(sharedNow?.queue?.filter(x=>x.kind==="donor").length||0)+1;
-        const newDonorId = `CBDC-2026-${String(donorSerial).padStart(4, '0')}`;
+
         const newMember = {
-          id: id("D"),
           ...o,
+          dob: o.dob || "",
           district: "চট্টগ্রাম",
           status: "pending",
-          donorId: newDonorId,
-          createdAt: new Date().toISOString()
+          createdAt: nowIso()
         };
-        
-        if(window.CBDCShared)CBDCShared.update(st=>{
-          st.queue.unshift({kind:"donor",id:newMember.id,donorId:newDonorId,name:o.name,group:o.bloodGroup,
-            area:o.area,age:o.age||"",health:o.healthNotes||"",last:o.lastDonationDate||"",gender:o.gender,
-            phone:o.phone,whatsapp:o.whatsapp||"",address:o.address||"",at:newMember.createdAt});return st;
-        },"index:register");
-        renderPublic();
-  
-        if(fbReady && db){
-          (async () => {
-            try {
-              const {collection, addDoc, serverTimestamp} = await import("firebase/firestore");
-              const timeoutPromise = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2500));
-              await Promise.race([
-                addDoc(collection(db,'members'), {
-                  ...o,
-                  district: "চট্টগ্রাম",
-                  status: "pending",
-                  createdAt: serverTimestamp(),
-                  updatedAt: serverTimestamp(),
-                  donorId: newDonorId
-                }),
-                timeoutPromise
-              ]);
-            } catch(fbErr){
-              console.warn("Firestore member write:", fbErr && fbErr.message);
-            }
-          })();
-        }
-  
-        setTimeout(() => {
+
+        try{
+          if(!fbReady) throw new Error("ডাটাবেস সংযোগ নেই। ইন্টারনেট সংযোগ পরীক্ষা করুন।");
+          /* RTDB-তে লেখা হলে listener-এর কল্যাণে Admin/Moderator প্যানেলে
+             সাথে সাথেই আবেদনটি দেখা যায় — আলাদা করে কিছু push করতে হয় না। */
+          const memberId = await addRow(NODES.members, newMember);
+          await setRow(NODES.queue, memberId, {
+            kind:"donor", memberId, name:o.name, group:o.bloodGroup, area:o.area,
+            dob:o.dob||"", gender:o.gender, health:o.healthNotes||"", last:o.lastDonationDate||"",
+            phone:o.phone, whatsapp:o.whatsapp||"", address:o.address||"", at:newMember.createdAt
+          });
           form.reset();
+          clearFormErrors(form);
           $("#district").value = "চট্টগ্রাম";
           $("#donorAgree").checked = false;
-          message.className = "hidden";
-          message.textContent = "";
+          message.className = "hidden"; message.textContent = "";
           showAppMessage("আপনার নিবন্ধন সফলভাবে গ্রহণ করা হয়েছে। বর্তমানে আপনার আবেদনটি অ্যাডমিনের অনুমোদনের অপেক্ষায় (Pending) রয়েছে। তথ্য যাচাই শেষে অনুমোদিত হলে আপনার প্রোফাইল রক্তদাতার তালিকায় প্রকাশিত হবে।", false, "নিবন্ধন সফল!");
-        }, 300);
+        }catch(err){
+          hideAppModal();
+          console.warn("register write:", err && err.message);
+          showMessage(message, "নিবন্ধন সংরক্ষণ করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।", "error");
+        }
       });
+      attachLiveClear($("#registerForm"));
+
+      /* যোগ্যতা যাচাই — বয়স জন্ম তারিখ থেকে হিসাব হয়; কোনো popup নয়, ইনলাইন এরর */
+      $("#eligibilityForm").addEventListener("submit",e=>{
+        e.preventDefault();
+        const form=e.currentTarget;
+        const v=validateForm(form,{
+          lastRange:{required:true,label:"সর্বশেষ রক্তদানের সময়"},
+          dob:{required:true,dob:true,label:"জন্ম তারিখ"},
+          healthCheck:{checked:true}
+        });
+        if(!v.ok)return;
+        const range=$("#lastRange").value;
+        const age=ageFromDob($("#dob").value);
+        const reasons=[];
+        if(age===null||age<SITE.rules.minAge||age>SITE.rules.maxAge)
+          reasons.push(`বয়স ${toBanglaDigits(SITE.rules.minAge)} থেকে ${toBanglaDigits(SITE.rules.maxAge)} বছরের মধ্যে হতে হবে।`);
+        if(range==="under3")reasons.push("সর্বশেষ রক্তদানের পর ৯০ দিন পূর্ণ হয়নি।");
+        if(!$("#healthCheck").checked)reasons.push("বর্তমানে সম্পূর্ণ সুস্থ থাকার নিশ্চয়তা প্রয়োজন।");
+        const box=$("#eligibilityResult");
+        box.className="result "+(reasons.length?"fail":"ok");
+        const ageLine=age===null?"":`<p>আপনার বর্তমান বয়স: <strong>${esc(ageText($("#dob").value))}</strong></p>`;
+        box.innerHTML=reasons.length
+          ?`<h3>⚠️ দুঃখিত! আপনি বর্তমানে রক্তদানের জন্য যোগ্য নন।</h3>${ageLine}<p>সম্ভাব্য কারণগুলো:</p><ul>${reasons.map(r=>`<li>${esc(r)}</li>`).join("")}</ul>`
+          :`<h3>🎉 অভিনন্দন! আপনি প্রাথমিকভাবে রক্তদানের জন্য যোগ্য বলে বিবেচিত হচ্ছেন।</h3>${ageLine}<p>দ্রষ্টব্য: চূড়ান্ত যোগ্যতা চিকিৎসক বা রক্ত সংগ্রহ কেন্দ্রের স্বাস্থ্য পরীক্ষার ওপর নির্ভর করবে।</p>`;
+        box.classList.remove("hidden");
+        box.scrollIntoView({behavior:"smooth",block:"nearest"});
+      });
+      attachLiveClear($("#eligibilityForm"));
   
-      $("#eligibilityForm").addEventListener("submit",e=>{e.preventDefault();const form=e.currentTarget;if(!form.checkValidity()){uiAlert("অনুগ্রহ করে চিহ্নিত আবশ্যিক ঘরগুলো সঠিকভাবে পূরণ করুন।",{type:"warn",title:"তথ্য অসম্পূর্ণ"});return}const range=$("#lastRange").value,age=Number(digits($("#age").value)),reasons=[];if(age<18||age>60)reasons.push("বয়স ১৮ থেকে ৬০ বছরের মধ্যে হতে হবে।");if(range==="under3")reasons.push("সর্বশেষ রক্তদানের পর ৯০ দিন পূর্ণ হয়নি।");if(!$("#healthCheck").checked)reasons.push("বর্তমানে সম্পূর্ণ সুস্থ থাকার নিশ্চয়তা প্রয়োজন।");const box=$("#eligibilityResult");box.className="result "+(reasons.length?"fail":"ok");box.innerHTML=reasons.length?`<h3>⚠️ দুঃখিত! আপনি বর্তমানে রক্তদানের জন্য যোগ্য নন।</h3><p>সম্ভাব্য কারণগুলো:</p><ul>${reasons.map(r=>`<li>${esc(r)}</li>`).join("")}</ul>`:`<h3>🎉 অভিনন্দন! আপনি প্রাথমিকভাবে রক্তদানের জন্য যোগ্য বলে বিবেচিত হচ্ছেন।</h3><p>দ্রষ্টব্য: চূড়ান্ত যোগ্যতা চিকিৎসক বা রক্ত সংগ্রহ কেন্দ্রের স্বাস্থ্য পরীক্ষার ওপর নির্ভর করবে।`;box.classList.remove("hidden");box.scrollIntoView({behavior:"smooth",block:"nearest"});});
-  
-      // Emergency Auto-Approval Toggle System (Default: OFF / false - goes to pending approval list)
-      const isEmergencyAutoApproved = () => {
-        const setting = localStorage.getItem("cbdc_auto_approve_emergency");
-        return setting === "true" || setting === "1"; // Default: OFF (false)
-      };
-      window.setEmergencyAutoApprove = function(enable){
-        localStorage.setItem("cbdc_auto_approve_emergency", enable ? "true" : "false");
-        console.log("Emergency Auto-Approve:", enable ? "ON (Direct Live)" : "OFF (Pending Approval)");
-        return enable ? "Emergency Auto-Approve is now ON (Direct Live)" : "Emergency Auto-Approve is now OFF (Pending Approval)";
-      };
-  
+      /* জরুরি আবেদন স্বয়ংক্রিয় অনুমোদন — সেটিংসটি Realtime Database-এ
+         (`settings/app.autoApproveEmergency`) থাকে, অ্যাডমিন প্যানেল থেকে বদলানো যায়।
+         ডিফল্ট: বন্ধ (আবেদন আগে pending তালিকায় যায়)। */
+      let AUTO_APPROVE_EMERGENCY = false;
+      (async()=>{ try{ const st=await getRow(NODES.settings,"app"); AUTO_APPROVE_EMERGENCY = st?.autoApproveEmergency === true; }catch(e){} })();
+
       $("#emergencyForm").addEventListener("submit", async e => {
         e.preventDefault();
         const form = e.currentTarget, message = $("#emergencyMessage");
-        if(!form.checkValidity()){
-          showMessage(message, "অনুগ্রহ করে চিহ্নিত আবশ্যিক ঘরগুলো পূরণ করুন।", "error");
-          uiAlert("অনুগ্রহ করে চিহ্নিত আবশ্যিক ঘরগুলো সঠিকভাবে পূরণ করুন।", {type:"warn", title:"তথ্য অসম্পূর্ণ"});
-          return;
-        }
-        
+        const v = validateForm(form, {
+          patientName:     {required:true, label:"রোগীর নাম"},
+          patientDob:      {dob:true, label:"রোগীর জন্ম তারিখ"},
+          requestGroup:    {required:true, label:"রক্তের গ্রুপ"},
+          bags:            {required:true, label:"ব্যাগ সংখ্যা"},
+          urgency:         {required:true, label:"জরুরিতার সময়সীমা"},
+          hospital:        {required:true, label:"হাসপাতালের নাম"},
+          hospitalAddress: {required:true, label:"হাসপাতালের ঠিকানা"},
+          requester:       {required:true, label:"আপনার নাম"},
+          requestPhone:    {required:true, phone:true, label:"মোবাইল নম্বর"},
+          requestWhatsapp: {phone:true, label:"WhatsApp নম্বর"},
+          requestAgree:    {checked:true}
+        });
+        if(!v.ok){ message.className="hidden"; message.textContent=""; return; }
+
         const urgencyVal = $("#urgency").value;
-        if(!urgencyVal || urgencyVal === ""){
-          showMessage(message, "অনুগ্রহ করে জরুরিতার সময়সীমা নির্বাচন করুন।", "error");
-          uiAlert("অনুগ্রহ করে জরুরিতার সময়সীমা নির্বাচন করুন।", {type:"warn", title:"তথ্য অসম্পূর্ণ"});
-          $("#urgency").focus();
-          return;
-        }
         let hours = Number(urgencyVal);
         if(isNaN(hours) || hours <= 0){
           if(urgencyVal.includes("১ ঘণ্টা")) hours = 1;
@@ -3886,13 +4154,12 @@ function initPage() {
           else if(urgencyVal.includes("৭২ ঘণ্টা") || urgencyVal.includes("৩ দিন")) hours = 72;
           else hours = 24;
         }
-        
         const expiresAtDate = new Date(Date.now() + hours * 3600 * 1000);
         const urgencyText = $("#urgency").selectedOptions[0]?.textContent || (hours + " ঘণ্টা");
-  
+
         const o = normalizeFormPhones({
           patientName: $("#patientName").value.trim(),
-          patientAge: $("#patientAge").value.trim(),
+          patientDob: $("#patientDob").value.trim(),     // বয়স এখান থেকেই হিসাব হয়
           bloodGroup: $("#requestGroup").value,
           bags: Number(digits($("#bags").value)),
           hospitalName: $("#hospital").value.trim(),
@@ -3905,74 +4172,45 @@ function initPage() {
           description: $("#description").value.trim(),
           instructions: $("#instructions").value.trim()
         });
-        
-        if(!phoneOK(o.phone) || (o.whatsapp && !phoneOK(o.whatsapp))){
-          showMessage(message, "মোবাইল নম্বর অবশ্যই ১১ সংখ্যার সঠিক বাংলাদেশি নম্বর হতে হবে।", "error");
-          uiAlert("মোবাইল নম্বর অবশ্যই ১১ সংখ্যার সঠিক বাংলাদেশি নম্বর হতে হবে।", {type:"error", title:"ভুল নম্বর"});
-          return;
-        }
-        
+
         showAppLoading();
-        
-        const autoApproved = isEmergencyAutoApproved();
+        const autoApproved = AUTO_APPROVE_EMERGENCY;
         const newStatus = autoApproved ? "approved" : "pending";
-        
-        const newReq = {
-          id: id("E"),
-          ...o,
-          status: newStatus,
-          createdAt: new Date().toISOString(),
-          expiresAt: expiresAtDate.toISOString()
-        };
-  
-        // 1) Instant add to local cache & update board immediately
-        if(window.CBDCShared)CBDCShared.update(st=>{
-          if(newStatus==="approved")st.requests.unshift({...newReq});
-          else st.queue.unshift({kind:"request",id:newReq.id,patient:o.patientName,group:o.bloodGroup,bags:o.bags,
-            urgency:o.urgency,hospital:o.hospitalName,area:o.hospitalAddress,phone:o.phone,requester:o.requesterName,
-            whatsapp:o.whatsapp||"",description:o.description||"",at:newReq.createdAt,expiresAt:newReq.expiresAt});
-          return st;
-        },"index:emergency");
-        renderBoard();
-        
-        // 2) Background Firestore sync (with timeout so it never hangs)
-        if(fbReady && db){
-          (async () => {
-            try {
-              const {collection, addDoc, serverTimestamp, Timestamp} = await import("firebase/firestore");
-              const timeoutPromise = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2500));
-              await Promise.race([
-                addDoc(collection(db,'requests'), {
-                  ...o,
-                  status: newStatus,
-                  expiresAt: Timestamp.fromDate(expiresAtDate),
-                  createdAt: serverTimestamp(),
-                  updatedAt: serverTimestamp()
-                }),
-                timeoutPromise
-              ]);
-            } catch(fbErr){
-              console.warn("Firestore emergency write:", fbErr && fbErr.message);
-            }
-          })();
-        }
-        
-        // 3) Complete submission response immediately after 300ms
-        setTimeout(() => {
-          form.reset();
-          $("#requestAgree").checked = false;
-          message.className = "hidden";
-          message.textContent = "";
-          
-          if(autoApproved){
-            showAppMessage("আপনার জরুরি রক্তের আবেদনটি সরাসরি লাইভ সহায়তা বোর্ডে যুক্ত হয়েছে।", false, "আবেদন লাইভ হয়েছে!");
-          } else {
-            showAppMessage("আপনার জরুরি রক্তের আবেদনটি সফলভাবে জমা হয়েছে। বর্তমানে এটি অ্যাডমিনের অনুমোদনের অপেক্ষায় (Pending) রয়েছে। তথ্য যাচাই ও অনুমোদনের পর লাইভ সহায়তা বোর্ডে প্রকাশিত হবে।", false, "আবেদন গৃহীত হয়েছে");
+        const createdAt = nowIso();
+
+        try{
+          if(!fbReady) throw new Error("ডাটাবেস সংযোগ নেই।");
+          /* RTDB-তে লেখা — approved হলে সরাসরি লাইভ বোর্ডে, না হলে queue-তে।
+             দুই ক্ষেত্রেই listener-এর কল্যাণে সব জায়গায় সঙ্গে সঙ্গে দেখা যায়। */
+          const reqId = await addRow(NODES.requests, {
+            ...o, status:newStatus, createdAt, expiresAt: expiresAtDate.toISOString()
+          });
+          if(!autoApproved){
+            await setRow(NODES.queue, reqId, {
+              kind:"request", requestId:reqId, patient:o.patientName, group:o.bloodGroup, bags:o.bags,
+              urgency:o.urgency, hospital:o.hospitalName, area:o.hospitalAddress, phone:o.phone,
+              requester:o.requesterName, whatsapp:o.whatsapp||"", description:o.description||"",
+              at:createdAt, expiresAt:expiresAtDate.toISOString()
+            });
           }
-        }, 300);
+          form.reset();
+          clearFormErrors(form);
+          $("#requestAgree").checked = false;
+          message.className = "hidden"; message.textContent = "";
+          if(autoApproved){
+            showAppMessage("আপনার জরুরি রক্তের আবেদনটি সরাসরি লাইভ সহায়তা বোর্ডে যুক্ত হয়েছে।", false, "আবেদন লাইভ হয়েছে!");
+          } else {
+            showAppMessage("আপনার জরুরি রক্তের আবেদনটি সফলভাবে জমা হয়েছে। বর্তমানে এটি অ্যাডমিনের অনুমোদনের অপেক্ষায় (Pending) রয়েছে। তথ্য যাচাই ও অনুমোদনের পর লাইভ সহায়তা বোর্ডে প্রকাশিত হবে।", false, "আবেদন গৃহীত হয়েছে");
+          }
+        }catch(err){
+          hideAppModal();
+          console.warn("emergency write:", err && err.message);
+          showMessage(message, "আবেদনটি সংরক্ষণ করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।", "error");
+        }
       });
-  
-  
+      attachLiveClear($("#emergencyForm"));
+
+
       /* ==========================================================================
          AUTH: লগইন • অ্যাকাউন্ট তৈরি • Google Sign-In • বাংলা নাম প্রস্তাব
          ========================================================================== */
@@ -4095,57 +4333,48 @@ function initPage() {
          donor     → ডিফল্ট (সাধারণ ব্যবহারকারী, ওয়েবসাইটেই থাকে)
          moderator → মডারেটর প্যানেল (#/moderator)
          admin     → অ্যাডমিন প্যানেল (#/admin)
-         role বদলাতে হলে Firestore-এ `admins` ডকুমেন্টের `role` ফিল্ড পরিবর্তন করতে হবে।
+         role বদলাতে হলে Realtime Database-এ `admins/{uid}`-এর `role` ফিল্ড পরিবর্তন করতে হবে।
          ========================================================================== */
       const DEFAULT_ROLE = "donor";
       const ROLE_LABEL = {donor:"রক্তদাতা", moderator:"মডারেটর", admin:"অ্যাডমিন"};
       const roleLabel = r => ROLE_LABEL[r] || ROLE_LABEL[DEFAULT_ROLE];
   
-      // ইমেইল দিয়ে ডেটাবেস থেকে role বের করা — admins কালেকশনে থাকলে সেই role, না থাকলে donor
-      async function resolveRole(email, fallbackName){
-        const out = {role: DEFAULT_ROLE, name: fallbackName || "", permissions: {}};
-        if(!fbReady || !db || !email) return out;
-        const lower = String(email).toLowerCase();
+      /* ব্যবহারকারীর role শুধুমাত্র Realtime Database থেকে আসে —
+         `admins/{uid}` থাকলে admin/moderator, না থাকলে সবসময় donor।
+         যুক্তিটি এক জায়গায় (src/lib/authx.ts → resolveUserRole) রাখা,
+         তাই Home / Doner / Admin / Moderator — সবাই একই নিয়ম মানে। */
+      async function resolveRole(emailOrUser, fallbackName){
+        const u = typeof emailOrUser === "string"
+          ? {email: emailOrUser, name: fallbackName || ""}
+          : {...(emailOrUser||{}), name: (emailOrUser && emailOrUser.name) || fallbackName || ""};
+        if(!fbReady) return {role: DEFAULT_ROLE, name: u.name || "", permissions: {}};
         try{
-          const {collection, query, where, getDocs, limit} = await import("firebase/firestore");
-          const aSnap = await getDocs(query(collection(db,"admins"), where("email","==",lower), limit(1)));
-          if(!aSnap.empty){
-            const d = aSnap.docs[0].data();
-            const r = String(d.role||"admin").toLowerCase();
-            out.role = (r==="admin"||r==="moderator") ? r : DEFAULT_ROLE;
-            out.name = d.name || out.name;
-            out.permissions = d.permissions || {};
-            return out;
-          }
-        }catch(e){ console.warn("admins lookup:", e.message); }
-        try{
-          const uDoc = await findUserByEmail(lower);
-          if(uDoc){
-            out.name = uDoc.name || out.name;
-            const r = String(uDoc.role||DEFAULT_ROLE).toLowerCase();
-            // users কালেকশনে admin/moderator লেখা থাকলেও তা গ্রাহ্য নয় — নিরাপত্তার জন্য শুধু admins কালেকশনই কর্তৃপক্ষ
-            out.role = (r==="admin"||r==="moderator") ? DEFAULT_ROLE : (r || DEFAULT_ROLE);
-          }
-        }catch(e){ console.warn("users lookup:", e.message); }
-        return out;
+          const r = await resolveUserRole(u);
+          return {role: r.role, name: r.name || u.name || "", permissions: r.permissions || {}};
+        }catch(e){
+          console.warn("role lookup:", e && e.message);
+          return {role: DEFAULT_ROLE, name: u.name || "", permissions: {}};
+        }
       }
-  
+
       // role অনুযায়ী সঠিক জায়গায় পাঠানো
-      function finishLogin({email, name, role, permissions, photo}){
+      /* role অনুযায়ী নিজ নিজ dashboard-এ পাঠানো —
+         Doner → Doner Dashboard, Moderator → Moderator Panel, Admin → Admin Panel।
+         Admin/Moderator কখনোই সাধারণ Doner dashboard ব্যবহার করে না। */
+      function finishLogin({email, name, role, permissions, photo, uid}){
         const r = role || DEFAULT_ROLE;
+        const page = panelForRole(r);   // "doner" | "moderator" | "admin"
         if(r === "admin" || r === "moderator"){
           saveSession(email, name || email, r, permissions || {}, "firebase");
-          toast(roleLabel(r) + " প্যানেলে যাওয়া হচ্ছে…");
-          navigateToPage(r);
+          clearMemberSession();
+          navigateToPage(page);
           return;
         }
-        // donor (ডিফল্ট) — ওয়েবসাইটেই লগইন অবস্থায় থাকবে
-        saveMemberSession({email, name: name || email, photo: photo || "", role: r});
-        toast("স্বাগতম, " + (name || "রক্তদাতা") + "!");
-        toast("ডোনার প্যানেলে যাওয়া হচ্ছে…");
-        setTimeout(()=>{ navigateToPage("doner"); },350);
+        saveMemberSession({email, name: name || email, photo: photo || "", role: r, uid: uid || ""});
+        clearSession();
+        navigateToPage("doner");
       }
-  
+
       /* --- Google প্রোফাইল স্টেট --- */
       let googleProfile = null;  // {uid,email,name,photo}
       function setSignupGoogleMode(profile){
@@ -4193,15 +4422,17 @@ function initPage() {
         return {uid:u.uid, email:u.email || "", name:u.displayName || "", photo:u.photoURL || ""};
       }
   
-      // ওয়েবসাইট অ্যাকাউন্ট খোঁজা (users কালেকশন — ডোনার তালিকা থেকে সম্পূর্ণ আলাদা)
+      // ওয়েবসাইট অ্যাকাউন্ট খোঁজা (RTDB `users` নোড — ডোনার তালিকা থেকে সম্পূর্ণ আলাদা)
       async function findUserByEmail(email){
-        if(!fbReady || !db || !email) return null;
+        if(!fbReady || !email) return null;
         try{
-          const {collection, query, where, getDocs, limit} = await import("firebase/firestore");
-          const snap = await getDocs(query(collection(db,"users"), where("email","==",email), limit(1)));
-          if(snap.empty) return null;
-          return {id: snap.docs[0].id, ...snap.docs[0].data()};
-        }catch(e){ console.warn("user lookup:", e.message); return null; }
+          return await findBy(NODES.users, "email", String(email).toLowerCase());
+        }catch(e){ console.warn("user lookup:", e && e.message); return null; }
+      }
+      // uid দিয়ে সরাসরি প্রোফাইল (সবচেয়ে নির্ভরযোগ্য)
+      async function findUserByUid(uid){
+        if(!fbReady || !uid) return null;
+        try{ return await getRow(NODES.users, uid); }catch(e){ return null; }
       }
       function saveMemberSession(profile){
         localStorage.setItem("cbdcMember","1");
@@ -4209,18 +4440,20 @@ function initPage() {
         localStorage.setItem("cbdcMemberName", profile.name||"");
         localStorage.setItem("cbdcMemberPhoto", profile.photo||"");
         localStorage.setItem("cbdcMemberRole", profile.role||"donor");
+        if(profile.uid) localStorage.setItem("cbdcMemberUid", profile.uid);
         try{
           const app=JSON.parse(localStorage.getItem("cbdc.app")||"{}");
           app.account=Object.assign({uid:"",name:"",username:"",email:"",phone:"",photo:"",photoSource:"none",emailVerified:false,phoneVerified:false,dob:"",gender:"",area:"",address:"",joined:new Date().toISOString().slice(0,10)},app.account||{},
-            {name:profile.name||app.account?.name||"",email:profile.email||app.account?.email||"",photo:profile.photo||app.account?.photo||"",
-             phone:profile.phone||app.account?.phone||"",gender:profile.gender||app.account?.gender||"",area:profile.area||app.account?.area||""});
+            {uid:profile.uid||app.account?.uid||"",name:profile.name||app.account?.name||"",email:profile.email||app.account?.email||"",photo:profile.photo||app.account?.photo||"",
+             phone:profile.phone||app.account?.phone||"",gender:profile.gender||app.account?.gender||"",area:profile.area||app.account?.area||"",
+             dob:profile.dob||app.account?.dob||""});
           app.prefs=Object.assign({theme:"system",lang:"bn",dense:false,anim:true,badge:true},app.prefs||{});
           localStorage.setItem("cbdc.app",JSON.stringify(app));
         }catch(e){}
         renderAuthState();
       }
       function clearMemberSession(){
-        ["cbdcMember","cbdcMemberEmail","cbdcMemberName","cbdcMemberPhoto","cbdcMemberRole"].forEach(k=>localStorage.removeItem(k));
+        ["cbdcMember","cbdcMemberEmail","cbdcMemberName","cbdcMemberPhoto","cbdcMemberRole","cbdcMemberUid"].forEach(k=>localStorage.removeItem(k));
         renderAuthState();
       }
       const isLoggedIn = () => localStorage.getItem("cbdcMember")==="1";
@@ -4259,18 +4492,18 @@ function initPage() {
       /* --- Google flow সম্পন্ন করা (popup এবং redirect-resume — দুই পথেই একই যুক্তি) --- */
       async function continueGoogleLogin(p){
         showAppLoading();
-        const {role, name, permissions} = await resolveRole(p.email, p.name);
+        const {role, name, permissions} = await resolveRole({uid:p.uid, email:p.email, name:p.name});
         if(role === "admin" || role === "moderator"){
-          if(db && p.uid) ensureUserProfile(db, {uid:p.uid, email:p.email, name:p.name, photo:p.photo}, {provider:"google"}).catch(e=>console.warn("profile upsert:", e&&e.message));
+          if(p.uid) ensureUserProfile({uid:p.uid, email:p.email, name:p.name, photo:p.photo}, {provider:"google"}).catch(e=>console.warn("profile upsert:", e&&e.message));
           hideAppModal();
-          finishLogin({email:p.email, name: name || p.name, role, permissions, photo:p.photo});
+          finishLogin({email:p.email, name: name || p.name, role, permissions, photo:p.photo, uid:p.uid});
           return;
         }
-        const member = await findUserByEmail(p.email);
+        const member = (await findUserByUid(p.uid)) || (await findUserByEmail(p.email));
         if(member){
-          if(db && p.uid) ensureUserProfile(db, {uid:p.uid, email:p.email, name:member.name || p.name, photo:member.photoURL || p.photo}, {provider:"google"}).catch(e=>console.warn("profile upsert:", e&&e.message));
+          if(p.uid) ensureUserProfile({uid:p.uid, email:p.email, name:member.name || p.name, photo:member.photoURL || p.photo}, {provider:"google"}).catch(e=>console.warn("profile upsert:", e&&e.message));
           hideAppModal();
-          finishLogin({email:p.email, name: member.name || p.name, role: DEFAULT_ROLE, permissions:{}, photo: member.photoURL || p.photo});
+          finishLogin({email:p.email, name: member.name || p.name, role: DEFAULT_ROLE, permissions:{}, photo: member.photoURL || p.photo, uid:p.uid});
           return;
         }
         hideAppModal();
@@ -4280,12 +4513,12 @@ function initPage() {
         showMessage($("#signupMessage"), "এই Google অ্যাকাউন্টে কোনো CBDC অ্যাকাউন্ট নেই। নিচের তথ্যগুলো নিশ্চিত করে অ্যাকাউন্ট তৈরি সম্পন্ন করুন।", "error");
       }
       async function continueGoogleSignup(p){
-        const member = await findUserByEmail(p.email);
+        const member = (await findUserByUid(p.uid)) || (await findUserByEmail(p.email));
         if(member){
-          const rr = await resolveRole(p.email, member.name || p.name);
-          if(db && p.uid) ensureUserProfile(db, {uid:p.uid, email:p.email, name: rr.name || member.name || p.name, photo: member.photoURL || p.photo}, {provider:"google"}).catch(e=>console.warn("profile upsert:", e&&e.message));
-          showAppMessage("এই Google অ্যাকাউন্টে ইতিমধ্যে একটি CBDC অ্যাকাউন্ট রয়েছে, তাই আপনাকে সরাসরি লগইন করানো হয়েছে।", false, "লগইন সফল");
-          finishLogin({email:p.email, name: rr.name || member.name || p.name, role: rr.role, permissions: rr.permissions, photo: member.photoURL || p.photo});
+          const rr = await resolveRole({uid:p.uid, email:p.email, name: member.name || p.name});
+          if(p.uid) ensureUserProfile({uid:p.uid, email:p.email, name: rr.name || member.name || p.name, photo: member.photoURL || p.photo}, {provider:"google"}).catch(e=>console.warn("profile upsert:", e&&e.message));
+          // কোনো success popup নয় — সরাসরি নিজ নিজ dashboard-এ
+          finishLogin({email:p.email, name: rr.name || member.name || p.name, role: rr.role, permissions: rr.permissions, photo: member.photoURL || p.photo, uid:p.uid});
           return;
         }
         setSignupGoogleMode(p);
@@ -4335,202 +4568,241 @@ function initPage() {
         }finally{ btn.disabled = false; }
       });
   
-      /* --- OTP-ভিত্তিক পাসওয়ার্ড পুনরুদ্ধার --- */
-      /* --- পাসওয়ার্ড রিসেট — Firebase Authentication (sendPasswordResetEmail) --- */
-      const validRecoveryId=v=>/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)||phoneOK(v)||/^[a-z0-9._]{3,30}$/i.test(v);
+      /* ══════════════════════════════════════════════════════════════════
+         পাসওয়ার্ড রিসেট — সম্পূর্ণভাবে Firebase-এর built-in reset link
+         (কোনো custom OTP backend নেই)। UI: আলাদা full-page
+         `/forgot-password` ও `/reset-password`।
+         ══════════════════════════════════════════════════════════════════ */
       function maskRecovery(v){
         v=String(v||"");
         if(v.includes("@")){const [a,b]=v.split("@");return (a.slice(0,2)||"*")+"***@"+b}
-        const p=digits(v);return p.length===11?p.slice(0,3)+"****"+p.slice(-4):v;
+        return v;
       }
+      /* ইউজার নেইম বা মোবাইল দিয়ে লগইনের সময় ইমেইল বের করা (RTDB `users`) */
       async function resolveEmailByIdentifier(identifier){
-        if(!fbReady || !db) return null;
+        if(!fbReady) return null;
         const q=String(identifier).trim().toLowerCase();
         try{
-          const {collection, query, where, getDocs, limit} = await import("firebase/firestore");
-          const uname = await getDocs(query(collection(db,"users"), where("username","==",q), limit(1)));
-          if(!uname.empty) return String(uname.docs[0].data().email||"").toLowerCase();
-          const phone = await getDocs(query(collection(db,"users"), where("phone","==",digits(q)), limit(1)));
-          if(!phone.empty) return String(phone.docs[0].data().email||"").toLowerCase();
-        }catch(e){ console.warn("identifier lookup:", e.message); }
+          const byName = await findBy(NODES.users, "username", q);
+          if(byName && byName.email) return String(byName.email).toLowerCase();
+          const byPhone = await findBy(NODES.users, "phone", digits(q));
+          if(byPhone && byPhone.email) return String(byPhone.email).toLowerCase();
+        }catch(e){ console.warn("identifier lookup:", e && e.message); }
         return null;
       }
-      function openOtpRecovery(prefill=""){
-        document.getElementById("otpRecoveryBg")?.remove();
-        const bg=document.createElement("div");bg.id="otpRecoveryBg";bg.className="modal-bg";
-        bg.innerHTML=`<div class="modal otp-modal" role="dialog" aria-modal="true" aria-labelledby="otpTitle">
-          <button class="close" type="button" data-otp-close aria-label="বন্ধ করুন">✕</button>
-          <div id="otpRecoveryBody"></div></div>`;
-        document.body.appendChild(bg);document.body.classList.add("lock");
-        const body=bg.querySelector("#otpRecoveryBody"),close=()=>{bg.remove();document.body.classList.remove("lock")};
-        bg.querySelector("[data-otp-close]").onclick=close;bg.onclick=e=>{if(e.target===bg)close()};
-        const err=(msg)=>{const e=body.querySelector(".otp-error");if(e){e.textContent=msg;e.classList.add("show")}};
-        const start=()=>{
-          body.innerHTML=`<h2 id="otpTitle">পাসওয়ার্ড রিসেট</h2><p class="otp-sub">আপনার অ্যাকাউন্টের ইমেইল, মোবাইল নম্বর অথবা ইউজার নেইম দিন।</p>
-            <div class="otp-note">🔐 <span>Firebase Authentication থেকে একটি পাসওয়ার্ড রিসেট লিংক ইমেইলে পাঠানো হবে।</span></div>
-            <div class="field"><label for="otpRecipient">ইমেইল / মোবাইল / ইউজার নেইম</label>
-              <input id="otpRecipient" value="${esc(prefill)}" autoComplete="username" placeholder="example@gmail.com অথবা 01XXXXXXXXX"></div>
-            <div class="otp-error" role="alert"></div><div class="otp-actions">
-              <button class="btn btn-outline" type="button" data-otp-close2>বাতিল</button><button class="btn btn-green" type="button" id="otpSend">রিসেট লিংক পাঠান</button></div>`;
-          body.querySelector("[data-otp-close2]").onclick=close;
-          body.querySelector("#otpSend").onclick=send;
-          body.querySelector("#otpRecipient").addEventListener("keydown",e=>{if(e.key==="Enter")send()});
-          setTimeout(()=>body.querySelector("#otpRecipient")?.focus(),50);
-        };
-        const send=async()=>{
-          const input=body.querySelector("#otpRecipient"),raw=input.value.trim();
-          if(!validRecoveryId(raw)){err("সঠিক ইমেইল, মোবাইল নম্বর অথবা ইউজার নেইম দিন।");return}
-          const btn=body.querySelector("#otpSend");btn.disabled=true;btn.textContent="পাঠানো হচ্ছে…";
-          try{
-            if(!fbReady || !auth) throw new Error("Firebase সংযোগ নেই। ইন্টারনেট সংযোগ পরীক্ষা করুন।");
-            const {sendPasswordResetEmail} = await import("firebase/auth");
-            let recipient=raw.toLowerCase();
-            if(!recipient.includes("@")){
-              const found=await resolveEmailByIdentifier(recipient);
-              if(!found){throw new Error("এই আইডির সাথে যুক্ত ইমেইল পাওয়া যায়নি।");}
-              recipient=found;
-            }
-            await sendPasswordResetEmail(auth, recipient);
-            success(recipient);
-          }catch(e){btn.disabled=false;btn.textContent="রিসেট লিংক পাঠান";err(authErrorMessage(e, {fallback: "রিসেট লিংক পাঠানো যায়নি। আবার চেষ্টা করুন।"}))}
-        };
-        const success=(recipient)=>{
-          body.innerHTML=`<div class="otp-success"><span>✓</span><h3>রিসেট লিংক পাঠানো হয়েছে</h3><p>${esc(maskRecovery(recipient))} ঠিকানায় একটি পাসওয়ার্ড রিসেট লিংক পাঠানো হয়েছে। ইমেইল খুলে লিংকে ক্লিক করে নতুন পাসওয়ার্ড সেট করুন।</p></div><div class="otp-actions"><button class="btn btn-green" type="button" id="otpDone">লগইনে ফিরুন</button></div>`;
-          body.querySelector("#otpDone").onclick=()=>{close();$("#password")?.focus()};
-        };
-        start();
+
+      /* ── /forgot-password পেজ ── */
+      function resetForgotPage(prefill=""){
+        const form=$("#forgotForm");
+        if(!form) return;
+        clearFormErrors(form);
+        $("#forgotStart")?.classList.remove("hidden");
+        $("#forgotSent")?.classList.add("hidden");
+        const inp=$("#forgotEmail");
+        if(inp && prefill && prefill.includes("@")) inp.value=prefill;
+        const btn=$("#forgotSubmit");
+        if(btn){ btn.disabled=false; btn.innerHTML='রিসেট লিংক পাঠান <span>→</span>'; }
       }
-      $("#btnForgotPass")?.addEventListener("click",()=>openOtpRecovery($("#username")?.value||""));
-  
-      /* --- অ্যাকাউন্ট তৈরি (Email/Password অথবা Google) --- */
+      let lastResetEmail="";
+      async function sendResetLink(rawInput){
+        const form=$("#forgotForm"), inp=$("#forgotEmail"), btn=$("#forgotSubmit");
+        const v=validateForm(form,{ email:{required:true, email:true, label:"ইমেইল ঠিকানা"} });
+        if(!v.ok) return;
+        const address=String(rawInput ?? inp.value).trim().toLowerCase();
+        btn.disabled=true; btn.textContent="পাঠানো হচ্ছে…";
+        try{
+          if(!fbReady || !auth) throw new Error("Firebase সংযোগ নেই। ইন্টারনেট সংযোগ পরীক্ষা করুন।");
+          await requestPasswordReset(auth, address);
+          lastResetEmail=address;
+          $("#forgotSentText").textContent =
+            maskRecovery(address)+" ঠিকানায় একটি পাসওয়ার্ড রিসেট লিংক পাঠানো হয়েছে।";
+          $("#forgotStart").classList.add("hidden");
+          $("#forgotSent").classList.remove("hidden");
+          window.scrollTo({top:0,behavior:"smooth"});
+        }catch(e){
+          btn.disabled=false; btn.innerHTML='রিসেট লিংক পাঠান <span>→</span>';
+          setFieldError(inp, authErrorMessage(e,{fallback:"রিসেট লিংক পাঠানো যায়নি। আবার চেষ্টা করুন।"}));
+        }
+      }
+      $("#forgotForm")?.addEventListener("submit", e=>{ e.preventDefault(); sendResetLink(); });
+      attachLiveClear($("#forgotForm"));
+      $("#forgotResend")?.addEventListener("click", ()=>{ resetForgotPage(lastResetEmail); });
+      $("#btnForgotPass")?.addEventListener("click", ()=>{
+        const typed=$("#username")?.value||"";
+        try{ history.pushState(null,"",appBase()+"forgot-password"); }catch(e){}
+        showView("forgot-password");
+        resetForgotPage(typed);
+      });
+
+      /* ── /reset-password পেজ (Firebase লিংক থেকে আসা oobCode) ── */
+      async function initResetPage(){
+        const checking=$("#resetChecking"), invalid=$("#resetInvalid"),
+              formBox=$("#resetForm"), done=$("#resetDone");
+        if(!checking) return;
+        checking.classList.remove("hidden");
+        invalid.classList.add("hidden"); formBox.classList.add("hidden"); done.classList.add("hidden");
+        let code="";
+        try{ code = new URLSearchParams(location.search).get("oobCode") || ""; }catch(e){}
+        const showInvalid = (msg)=>{
+          checking.classList.add("hidden");
+          invalid.classList.remove("hidden");
+          if(msg) $("#resetInvalidText").textContent = msg;
+        };
+        if(!code){ showInvalid("এই পেজে আসতে হলে ইমেইলে পাঠানো রিসেট লিংকে ক্লিক করতে হবে।"); return; }
+        if(!fbReady || !auth){ showInvalid("Firebase সংযোগ নেই। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।"); return; }
+        let email="";
+        try{
+          email = await verifyResetCode(auth, code);
+        }catch(e){
+          showInvalid(authErrorMessage(e,{fallback:"রিসেট লিংকটির মেয়াদ শেষ হয়ে গেছে অথবা এটি ইতিমধ্যে ব্যবহার করা হয়েছে।"}));
+          return;
+        }
+        checking.classList.add("hidden");
+        formBox.classList.remove("hidden");
+        $("#resetForEmail").textContent = email + " — এই অ্যাকাউন্টের জন্য নতুন পাসওয়ার্ড দিন।";
+        const pform=$("#resetPassForm");
+        attachLiveClear(pform);
+        pform.onsubmit = async (ev)=>{
+          ev.preventDefault();
+          const v=validateForm(pform,{
+            resetPass1:{required:true, minLength:6, label:"নতুন পাসওয়ার্ড"},
+            resetPass2:{required:true, matches:"resetPass1", label:"পাসওয়ার্ড নিশ্চিতকরণ", message:"দুইবার লেখা পাসওয়ার্ড মিলছে না"}
+          });
+          if(!v.ok) return;
+          const btn=$("#resetSubmit"); btn.disabled=true; btn.textContent="সংরক্ষণ হচ্ছে…";
+          try{
+            await completePasswordReset(auth, code, $("#resetPass1").value);
+            formBox.classList.add("hidden");
+            done.classList.remove("hidden");
+            window.scrollTo({top:0,behavior:"smooth"});
+          }catch(e){
+            btn.disabled=false; btn.textContent="পাসওয়ার্ড সংরক্ষণ করুন";
+            setFieldError($("#resetPass1"), authErrorMessage(e,{fallback:"পাসওয়ার্ড বদলানো যায়নি। আবার চেষ্টা করুন।"}));
+          }
+        };
+      }
+
+      /* --- অ্যাকাউন্ট তৈরি (Email/Password অথবা Google) ---
+         • কোনো popup/alert নয় — ভুল থাকলে ঘরটি highlight হয়, নিচে বার্তা আসে।
+         • সফল হলে কোনো success popup নয় — সরাসরি নিজ role-এর dashboard-এ। */
       $("#signupForm")?.addEventListener("submit", async e => {
         e.preventDefault();
         const form = e.currentTarget, message = $("#signupMessage");
         const isGoogle = !!googleProfile;
-        if(!form.checkValidity()){
-          showMessage(message, "অনুগ্রহ করে চিহ্নিত আবশ্যিক ঘরগুলো পূরণ করুন।", "error");
-          uiAlert("অনুগ্রহ করে চিহ্নিত আবশ্যিক ঘরগুলো সঠিকভাবে পূরণ করুন।", {type:"warn", title:"তথ্য অসম্পূর্ণ"});
-          return;
+
+        const rules = {
+          name:       {required:true, minLength:2, label:"নাম"},
+          username:   {required:true, pattern:/^[a-z0-9._]{3,20}$/i, label:"ইউজার নেইম",
+                       message:"ইউজার নেইম ৩–২০ অক্ষরের হতে হবে (শুধু ইংরেজি ছোট হাতের অক্ষর, সংখ্যা, ডট বা আন্ডারস্কোর)"},
+          email:      {required:true, email:true, label:"ইমেইল"},
+          bloodGroup: {required:true, label:"রক্তের গ্রুপ"},
+          gender:     {required:true, label:"লিঙ্গ"},
+          dob:        {required:true, dob:{min:SITE.rules.minAge, max:SITE.rules.maxAge}, label:"জন্ম তারিখ"},
+          area:       {required:true, label:"এলাকা"},
+          phone:      {required:true, phone:true, label:"মোবাইল নম্বর"},
+          whatsapp:   {phone:true, label:"WhatsApp নম্বর"},
+          suAgree:    {checked:true}
+        };
+        if(!isGoogle){
+          rules.suPassword  = {required:true, minLength:6, label:"পাসওয়ার্ড"};
+          rules.suPassword2 = {required:true, matches:"suPassword", label:"পাসওয়ার্ড নিশ্চিতকরণ",
+                               message:"দুইবার লেখা পাসওয়ার্ড মিলছে না"};
         }
+        const valid = validateForm(form, rules);
+        if(!valid.ok){ message.className="hidden"; message.textContent=""; return; }
+
         const o = normalizeFormPhones(formObj(form));
         o.username = (o.username||"").trim().toLowerCase();
         o.email = (o.email||"").trim().toLowerCase();
-        if(!/^[a-z0-9._]{3,20}$/.test(o.username)){
-          uiAlert("ইউজার নেইম ৩-২০ অক্ষরের হতে হবে এবং শুধু ইংরেজি ছোট হাতের অক্ষর, সংখ্যা, ডট বা আন্ডারস্কোর ব্যবহার করা যাবে।", {type:"error", title:"ইউজার নেইম সঠিক নয়"});
-          return;
-        }
-        if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(o.email)){
-          uiAlert("সঠিক ইমেইল ঠিকানা লিখুন।", {type:"error", title:"ইমেইল সঠিক নয়"});
-          return;
-        }
-        if(!isGoogle){
-          if((o.password||"").length < 6){
-            uiAlert("পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।", {type:"error", title:"দুর্বল পাসওয়ার্ড"}); return;
-          }
-          if(o.password !== $("#suPassword2").value){
-            uiAlert("দুইবার লেখা পাসওয়ার্ড মিলছে না। আবার চেষ্টা করুন।", {type:"error", title:"পাসওয়ার্ড মিলছে না"}); return;
-          }
-        }
-        if(!phoneOK(o.phone) || (o.whatsapp && !phoneOK(o.whatsapp))){
-          showMessage(message, "মোবাইল নম্বর অবশ্যই ১১ সংখ্যার সঠিক বাংলাদেশি নম্বর হতে হবে।", "error");
-          uiAlert("মোবাইল নম্বর অবশ্যই ১১ সংখ্যার সঠিক বাংলাদেশি নম্বর হতে হবে।", {type:"error", title:"ভুল নম্বর"});
-          return;
-        }
-        if(!$("#suAgree").checked){
-          uiAlert("অ্যাকাউন্ট তৈরি করতে অঙ্গীকারে সম্মতি দিন।", {type:"warn", title:"সম্মতি প্রয়োজন"}); return;
-        }
-  
+
         showAppLoading();
         const password = o.password || "";
         delete o.password;
-  
+
         try{
+          if(!fbReady) throw new Error("ডাটাবেস সংযোগ নেই। ইন্টারনেট সংযোগ পরীক্ষা করুন।");
           let uid = googleProfile ? googleProfile.uid : null;
-  
-          if(fbReady && auth && !isGoogle){
+
+          if(auth && !isGoogle){
             const {createUserWithEmailAndPassword, updateProfile} = await import("firebase/auth");
             const cred = await createUserWithEmailAndPassword(auth, o.email, password);
             uid = cred.user.uid;
             try{ await updateProfile(cred.user, {displayName: o.name}); }catch(_){}
           }
-  
-          // ১) ওয়েবসাইট অ্যাকাউন্ট — `users` কালেকশন (সাথে সাথেই সক্রিয়, কোনো অনুমোদন লাগে না)
-          const userDoc = {
+          if(!uid) throw new Error("অ্যাকাউন্ট তৈরি করা যায়নি।");
+
+          const photoURL = googleProfile ? (googleProfile.photo||"") : "";
+          /* ১) ওয়েবসাইট অ্যাকাউন্ট — RTDB `users/{uid}` (সাথে সাথেই সক্রিয়)।
+                role এখানে সবসময় donor; admin/moderator শুধু `admins` নোড থেকে আসে। */
+          await setRow(NODES.users, uid, {
+            uid,
             name: o.name,
             username: o.username,
             email: o.email,
             phone: o.phone || "",
-            uid: uid || "",
-            photoURL: googleProfile ? (googleProfile.photo||"") : "",
-            provider: isGoogle ? "google" : "password",
-            role: DEFAULT_ROLE,        // ডিফল্ট role: donor — বদলাতে হলে Firestore `admins`-এ যুক্ত করতে হবে
-            status: "active",          // সরাসরি সক্রিয় — লগইনে কোনো বাধা নেই
-            createdAt: new Date().toISOString()
-          };
-  
-  
-          // ২) রক্তদাতা প্রোফাইল — `members` কালেকশন (অ্যাডমিন যাচাইয়ের পর পাবলিক তালিকায় যাবে)
-          const donorDoc = {
-            name: o.name,
-            email: o.email,
-            username: o.username,
-            bloodGroup: o.bloodGroup || "",
+            dob: o.dob || "",            // বয়স আলাদা করে রাখা হয় না — dob থেকেই হিসাব হয়
             gender: o.gender || "",
-            age: o.age || "",
             area: o.area || "",
-            phone: o.phone || "",
-            whatsapp: o.whatsapp || "",
-            address: o.address || "",
-            lastDonationDate: o.lastDonationDate || "",
-            healthNotes: o.healthNotes || "",
-            uid: uid || "",
-            photoURL: userDoc.photoURL,
-            district: "চট্টগ্রাম",
-            status: "pending",
-            createdAt: new Date().toISOString()
-          };
-  
-          if(fbReady && db){
-            const {collection, doc, setDoc, addDoc, serverTimestamp} = await import("firebase/firestore");
-            const race = (pr) => Promise.race([pr, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 5000))]);
-            // users/{uid} — auth uid দিয়ে কী করা, যাতে Security Rules-এ role যাচাই করা যায়
-            await race(setDoc(doc(db,"users", uid || o.email), {...userDoc, createdAt: serverTimestamp(), updatedAt: serverTimestamp()}))
-              .catch(err => console.warn("Firestore user write:", err && err.message));
-            await race(addDoc(collection(db,"members"), {...donorDoc, createdAt: serverTimestamp(), updatedAt: serverTimestamp()}))
-              .catch(err => console.warn("Firestore member write:", err && err.message));
-          }
-  
-          saveMemberSession({email:o.email, name:o.name, photo:userDoc.photoURL, role:DEFAULT_ROLE,
-            phone:o.phone,gender:o.gender,area:o.area});
+            photoURL,
+            provider: isGoogle ? "google" : "password",
+            role: DEFAULT_ROLE,
+            status: "active",
+            createdAt: nowIso()
+          });
+
+          /* ২) রক্তদাতা প্রোফাইল — RTDB `members` (অ্যাডমিন যাচাইয়ের পর পাবলিক তালিকায়) */
+          const memberId = await addRow(NODES.members, {
+            name: o.name, email: o.email, username: o.username,
+            bloodGroup: o.bloodGroup || "", gender: o.gender || "",
+            dob: o.dob || "", area: o.area || "", phone: o.phone || "",
+            whatsapp: o.whatsapp || "", address: o.address || "",
+            lastDonationDate: o.lastDonationDate || "", healthNotes: o.healthNotes || "",
+            uid, photoURL, district: "চট্টগ্রাম", status: "pending", createdAt: nowIso()
+          });
+          /* মডারেশন কিউ — Admin/Moderator প্যানেলে সঙ্গে সঙ্গে দেখা যাবে */
+          await setRow(NODES.queue, memberId, {
+            kind:"donor", memberId, uid, name:o.name, group:o.bloodGroup||"", area:o.area||"",
+            dob:o.dob||"", gender:o.gender||"", health:o.healthNotes||"",
+            last:o.lastDonationDate||"", phone:o.phone||"", whatsapp:o.whatsapp||"",
+            address:o.address||"", at:nowIso()
+          });
+
           form.reset();
+          clearFormErrors(form);
           $("#suAgree").checked = false;
           setSignupGoogleMode(null);
           message.className = "hidden"; message.textContent = "";
-          renderAuthState();
-          showAppMessage("আপনার অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে এবং আপনি এখন লগইন অবস্থায় আছেন ✅\n\nরক্তদাতা হিসেবে আপনার তথ্য অ্যাডমিন যাচাই করার পর পাবলিক রক্তদাতা তালিকায় প্রকাশিত হবে।", false, "স্বাগতম, " + (o.name || "সদস্য") + "!");
-          showView("home");
+          hideAppModal();
+          /* কোনো success popup নয় — role অনুযায়ী সরাসরি dashboard-এ */
+          const rr = await resolveRole({uid, email:o.email, name:o.name});
+          finishLogin({email:o.email, name:o.name, role:rr.role, permissions:rr.permissions, photo:photoURL, uid});
         }catch(err){
           hideAppModal();
           console.warn("signup error:", err);
           const msg = authErrorMessage(err, {fallback: "অ্যাকাউন্ট তৈরি করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।"});
-          showMessage(message, msg, "error");
-          uiAlert(msg, {type:"error", title:"অ্যাকাউন্ট তৈরি ব্যর্থ"});
+          const code = (err && err.code) || "";
+          if(code === "auth/email-already-in-use" || code === "auth/invalid-email") setFieldError($("#suEmail"), msg);
+          else if(code === "auth/weak-password") setFieldError($("#suPassword"), msg);
+          else showMessage(message, msg, "error");
         }
       });
-  
-      /* ===== Login: Firebase Auth ===== */
+      attachLiveClear($("#signupForm"));
+
+      /* ===== Login — Firebase Auth; role অনুযায়ী নিজ নিজ dashboard ===== */
       $("#loginForm").addEventListener("submit", async e=>{
         e.preventDefault();
-        const u=$("#username").value.trim(),password=$("#password").value;
-        if(!u||!password){
-          showMessage($("#loginMessage"),"ইমেইল/ইউজার নেইম এবং পাসওয়ার্ড দুটোই দিন।","error");
-          uiAlert("ইমেইল/ইউজার নেইম এবং পাসওয়ার্ড দুটোই পূরণ করুন।",{type:"warn",title:"তথ্য অসম্পূর্ণ"});return;
-        }
+        const form = e.currentTarget;
+        const valid = validateForm(form, {
+          username: {required:true, label:"ইমেইল / ইউজার নেইম"},
+          password: {required:true, label:"পাসওয়ার্ড"}
+        });
+        if(!valid.ok){ $("#loginMessage").className="hidden"; $("#loginMessage").textContent=""; return; }
+        const u=$("#username").value.trim(), password=$("#password").value;
         showAppLoading();
         try{
           if(!fbReady || !auth) throw Object.assign(new Error("network"),{code:"auth/network-request-failed"});
           const {signInWithEmailAndPassword}=await import("firebase/auth");
-          // ইমেইল না দিলে users কালেকশন থেকে username/phone দিয়ে ইমেইল বের করি
+          // ইমেইল না দিলে RTDB `users` থেকে username/phone দিয়ে ইমেইল বের করি
           let email=String(u).trim().toLowerCase();
           if(!email.includes("@")){
             const found=await resolveEmailByIdentifier(email);
@@ -4538,21 +4810,22 @@ function initPage() {
             email=found;
           }
           const cred=await signInWithEmailAndPassword(auth,email,password);
-          const resolved=await resolveRole(email, cred.user.displayName || email);
-          // login-এর পর Firestore-এ user profile আছে কিনা নিশ্চিত করি (self-heal)
-          if(db && cred.user && cred.user.uid){
-            ensureUserProfile(db, {uid:cred.user.uid, email:(cred.user.email||email), name: resolved.name || cred.user.displayName || email, photo: cred.user.photoURL || ""}, {provider:"password"})
+          const resolved=await resolveRole({uid:cred.user.uid, email, name:cred.user.displayName || email});
+          // login-এর পর RTDB-তে প্রোফাইল আছে কিনা নিশ্চিত করি (self-heal)
+          if(cred.user && cred.user.uid){
+            ensureUserProfile({uid:cred.user.uid, email:(cred.user.email||email), name: resolved.name || cred.user.displayName || email, photo: cred.user.photoURL || ""}, {provider:"password"})
               .catch(e=>console.warn("profile upsert:", e&&e.message));
           }
-          hideAppModal();$("#loginForm").reset();
-          finishLogin({email,name:resolved.name||email,role:resolved.role,permissions:resolved.permissions,photo:cred.user.photoURL||""});
+          hideAppModal(); form.reset(); clearFormErrors(form);
+          finishLogin({email,name:resolved.name||email,role:resolved.role,permissions:resolved.permissions,photo:cred.user.photoURL||"",uid:cred.user.uid});
         }catch(err){
           hideAppModal();console.warn("login failed:",err&&err.code,err&&err.message);
           const msg=authErrorMessage(err,{fallback:"লগইন করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।"});
-          showMessage($("#loginMessage"),msg,"error");uiAlert(msg,{type:"error",title:"লগইন ব্যর্থ"});
+          showMessage($("#loginMessage"),msg,"error");
         }
       });
-  
+      attachLiveClear($("#loginForm"));
+
       /* Draggable Support Button */
       (function(){
         const btn=document.querySelector(".support-btn"); if(!btn) return;
@@ -4599,13 +4872,22 @@ function initPage() {
          অনুযায়ী সঠিক flow শেষ করা হয় */
       async function resumeGoogleRedirect(){
         if(!fbReady || !auth) return;
+        /* ব্যবহারকারী সত্যিই Google redirect থেকে ফিরছেন কিনা — না হলে কিছুই করি না।
+           (আগে প্রতিটি page load-এ probe হতো, এবং কিছু পরিবেশে অকারণ popup আসত।) */
+        let pending = "";
+        try{ pending = sessionStorage.getItem("cbdc.pendingGoogleIntent") || ""; }catch(e){}
+        if(!pending) return;
         let red = null;
         try{
           red = await consumeGoogleRedirect(auth);
         }catch(err){
           console.warn("Google redirect resume:", err);
           setGoogleIntent(null);
-          uiAlert(authErrorMessage(err), {type:"error", title:"Google লগইন ব্যর্থ"});
+          /* এটি ব্যবহারকারীর নিজের শুরু করা flow — তাই কারণটি জানানো দরকার,
+             কিন্তু শুধু লগইন পেজে; হোমপেজে অকারণ popup নয়। */
+          const msg = authErrorMessage(err);
+          showView("login");
+          showMessage($("#loginMessage"), msg, "error");
           return;
         }
         if(!red) return;
@@ -4616,7 +4898,8 @@ function initPage() {
         }catch(err){
           hideAppModal();
           console.warn("Google redirect flow:", err);
-          uiAlert(authErrorMessage(err), {type:"error", title:"লগইন ব্যর্থ"});
+          showView("login");
+          showMessage($("#loginMessage"), authErrorMessage(err), "error");
         }
       }
       /* Firebase auth state-এর প্রতিবিম্ব — অন্য ট্যাবে বা সেশন শেষে লগআউট হলে
@@ -4632,6 +4915,30 @@ function initPage() {
           });
         }catch(e){ console.warn("auth mirror:", e && e.message); }
       }
+      /* ── জন্ম তারিখ → বয়স (লাইভ) ──
+         যেখানেই জন্ম তারিখের ঘর আছে, টাইপ/নির্বাচন করার সাথে সাথেই নিচে
+         হিসাব করা বয়স দেখা যায়। বয়স আলাদা করে কোথাও লিখতে হয় না। */
+      (function wireDobFields(){
+        const bounds = dobBounds(SITE.rules.minAge, SITE.rules.maxAge);
+        const pairs = [["#donorDob","#donorAgeNote"],["#suDob","#suAgeNote"],["#dob","#eligAgeNote"],["#patientDob","#patientAgeNote"]];
+        pairs.forEach(([inputSel, noteSel])=>{
+          const inp=$(inputSel), note=$(noteSel);
+          if(!inp) return;
+          if(inputSel!=="#patientDob" && inputSel!=="#dob"){ inp.min=bounds.min; inp.max=bounds.max; }
+          inp.max = inp.max || new Date().toISOString().slice(0,10);
+          const paint=()=>{
+            if(!note) return;
+            const val=inp.value;
+            if(!val){ note.textContent="জন্ম তারিখ দিলে বয়স স্বয়ংক্রিয়ভাবে হিসাব হবে।"; return; }
+            if(!isValidDob(val)){ note.textContent="সঠিক জন্ম তারিখ নির্বাচন করুন।"; return; }
+            note.textContent="হিসাবকৃত বয়স: "+ageText(val);
+          };
+          inp.addEventListener("input", paint);
+          inp.addEventListener("change", paint);
+          paint();
+        });
+      })();
+
       setLogo();
       if(window.CBDCShared)CBDCShared.subscribe(()=>{ renderPublic(); renderGallery(); });
       initFirebase().then(()=>{ renderPublic(); renderGallery(); renderLoginGate(); renderAuthState(); resumeGoogleRedirect(); watchAuthMirror(); });
@@ -4654,6 +4961,8 @@ function initPage() {
           const h = raw.toLowerCase();
           if(h.startsWith("#profile/")){ rel = "profile/" + raw.slice("#profile/".length); }
           else if(h==="#dashboard"||h==="#login") rel = "login";
+          else if(h==="#forgot-password"||h==="#forgot") rel = "forgot-password";
+          else if(h==="#reset-password") rel = "reset-password";
           else if(h==="#signup"||h==="#create-account") rel = "signup";
           else if(h==="#register") rel = "register";
           else if(h==="#emergency") rel = "emergency";
@@ -4672,6 +4981,8 @@ function initPage() {
           try{ renderProfile(decodeURIComponent(seg.slice(1).join("/"))); }catch(e){ renderProfile(seg.slice(1).join("/")); }
           return;
         }
+        if(v==="forgot-password"){ showView("forgot-password"); resetForgotPage(""); return; }
+        if(v==="reset-password"){ showView("reset-password"); return; }
         if(v==="dashboard"||v==="login") showView("login");
         else if(v==="signup"||v==="create-account") showView("signup");
         else if(v==="register") showView("register");

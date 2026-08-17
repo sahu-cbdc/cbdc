@@ -90,11 +90,16 @@ src/
 ├── main-moderator.tsx    # Moderator এন্ট্রি
 ├── global.d.ts           # global type declarations
 ├── config/
-│   └── site.ts           ★ সাইটের কেন্দ্রীয় Text (নাম, ফোন, ইমেইল, লিংক, নিয়ম…)
+│   ├── site.ts           ★ সাইটের কেন্দ্রীয় Text (নাম, ফোন, ইমেইল, লিংক, নিয়ম…)
+│   └── logo.ts           ★ পুরো সাইটের লোগোর একমাত্র উৎস
 ├── lib/
-│   ├── firebase.ts       # একক Firebase instance (App / Auth / Firestore)
+│   ├── firebase.ts       # একক Firebase instance (App / Auth / Realtime Database)
+│   ├── rtdb.ts           # Realtime Database helper — ডেটার একমাত্র দরজা
+│   ├── age.ts            # জন্ম তারিখ → বয়স (সব জায়গায় একই নিয়ম)
+│   ├── forms.ts          # ইনলাইন ফর্ম ভ্যালিডেশন (popup নয়)
+│   ├── authx.ts          # Auth, role resolve, password reset
 │   ├── imgbb.ts          # ImgBB image hosting helper (upload → link → DB)
-│   └── store.ts          # Firestore-backed shared store — মূল data source
+│   └── store.ts          # RTDB-backed shared store — মূল data source
 └── pages/
     ├── Home.tsx          # পাবলিক ওয়েবসাইট + লগইন/নিবন্ধন/লগআউট (Firebase Auth)
     ├── Doner.tsx         # ডোনার (রক্তদাতা) প্যানেল
@@ -105,11 +110,12 @@ public/
 scripts/
 └── smoke.mjs             # jsdom-ভিত্তিক smoke test (npm run smoke)
 
-firestore.rules          # Firestore Security Rules
-firestore.indexes.json   # Firestore indexes
+database.rules.json      # Realtime Database Security Rules
 firebase.json            # Firebase CLI config
-docs/FIREBASE.md         # Firebase ডেটাবেস স্ট্রাকচার, Auth, Role, deploy গাইড
+docs/FIREBASE.md         # ডেটাবেস স্ট্রাকচার, Auth, Role, deploy গাইড
 docs/EDITING.md          # ★ Text/Logo/Config বদলানোর সহজ গাইড
+docs/PASSWORD_RESET_EMAIL.md   # Firebase reset ইমেইল ব্র্যান্ডিং (template HTML)
+docs/GOOGLE_LOGIN_BRANDING.md  # Google "Choose an account" স্ক্রিনের নাম ও লোগো
 ```
 
 প্রতিটি `.tsx` ফাইলের ভিতরেই সেই পেজের নিজস্ব **UI (JSX), CSS, TypeScript, Functions ও
@@ -120,21 +126,26 @@ Logic** থাকে:
 - **Page logic** — মূল HTML-এর `<script type="module">` port (`initPage()` → `useEffect`)।
 
 > **নোট:** মূল HTML-এর JavaScript logic অপরিবর্তিত রাখার জন্য সেই অংশে `// @ts-nocheck`
-> ব্যবহার করা হয়েছে। React shell, shared store (`src/lib/store.ts`) ও Firebase layer
-> (`src/lib/firebase.ts`) TypeScript-typed।
+> ব্যবহার করা হয়েছে। React shell, shared store (`src/lib/store.ts`), data layer
+> (`src/lib/rtdb.ts`) ও Firebase layer (`src/lib/firebase.ts`) TypeScript-typed।
 
 ## Firebase Integration (সারাংশ)
 
-- **Data source:** Cloud Firestore (`donors`, `requests`, `members`, `users`, `admins`,
-  `queue`, `gallery`, `notices`, `accounts`, `settings`)। Realtime Database (RTDB) ব্যবহৃত
-  হয় না — Firestore `onSnapshot` দিয়েই realtime মেলে; সব dummy/static seed data রিমুভ।
+- **Data source:** **Firebase Realtime Database** (`donors`, `requests`, `members`, `users`,
+  `admins`, `queue`, `gallery`, `notices`, `accounts`, `settings`)। Cloud Firestore ব্যবহৃত
+  হয় **না**। প্রতিটি স্ক্রিন `onValue` listener-এ যুক্ত, তাই Add / Edit / Delete করলে সব
+  dashboard-এ সঙ্গে সঙ্গে live update হয়। কোনো demo/mock/seed data নেই।
 - **Auth:** Login / Register / Logout / Session — Firebase Authentication (email+password ও
-  Google)। Password reset — `sendPasswordResetEmail`, change password — re-auth +
+  Google)। Password reset — Firebase-এর built-in reset link, সাইটের নিজস্ব
+  `/forgot-password` ও `/reset-password` full-page UI দিয়ে; change password — re-auth +
   `updatePassword`।
-- **Role & Permission:** `admins/{uid}` থেকে role ও `permissions[]`; panel gate Firebase-নিয়ন্ত্রিত।
-- **Image hosting:** ImgBB API — ছবি upload → link + metadata Firestore-এ সেভ → UI-তে সরাসরি
+- **Role & Permission:** RTDB `admins/{uid}` থেকে role ও `permissions[]`।
+  Doner → `/doner`, Moderator → `/moderator`, Admin → `/admin` — প্রতিটি প্যানেল নিজেই
+  gate করে, তাই Admin/Moderator কখনো সাধারণ Doner dashboard ব্যবহার করে না।
+- **বয়স:** কোথাও সংরক্ষিত নয় — শুধু জন্ম তারিখ (`dob`) রাখা হয়, বয়স প্রতিবার হিসাব হয়।
+- **Image hosting:** ImgBB API — ছবি upload → link + metadata RTDB-তে সেভ → UI-তে সরাসরি
   ছবি (Firebase Storage ব্যবহৃত হয় না)।
-- **Sync:** Admin ↔ Moderator ↔ Donor ↔ Home — একই Firestore collection-এ live sync।
+- **Sync:** Admin ↔ Moderator ↔ Donor ↔ Home — একই Realtime Database node-এ live sync।
 
 বিস্তারিত: **[docs/FIREBASE.md](docs/FIREBASE.md)**।
 

@@ -8,16 +8,20 @@
  */
 import { useEffect } from "react";
 import "../lib/store";
-import { initFirebase as initSharedFirebase } from "../lib/firebase";
+import { initFirebase as initSharedFirebase, NODES } from "../lib/firebase";
 import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
-import { authErrorMessage } from "../lib/authx";
+import { authErrorMessage, resolveUserRole, panelForRole } from "../lib/authx";
+import { getRow, setRow, updateRow, watchRow, addRow, nowIso } from "../lib/rtdb";
+import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
+import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
+import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage } from "../lib/imgbb";
 
 /* ═══════════════════════════════════════════════════════════════════
    CSS — মূল doner.html-এর <style> ব্লক হুবহু কপি
    ═══════════════════════════════════════════════════════════════════ */
-const pageCss = `/* ═══════════ TOKENS ═══════════ */
+const pageCss = FORM_ERROR_CSS + `/* ═══════════ TOKENS ═══════════ */
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 :root{
   --grn:#087a4b; --grn-d:#065c39; --grn-s:#e8f6ef;
@@ -633,7 +637,7 @@ function StaticShell() {
       <div className="toasts" id="toasts">
       </div>
       {" "}
-      {/* Shared live state: same donors, requests and moderation queue across all pages (Firestore) */}
+      {/* Shared live state: same donors, requests and moderation queue across all pages (Realtime Database) */}
       {" "}
     </>
   );
@@ -1453,7 +1457,9 @@ function initPage() {
   }
   
   /* ---------- club logo (official, embedded) ---------- */
-  const LOGO = "./img/logo.png";  /* img/logo.png ফাইল থেকে লোগো — ফাইল বদলালেই সর্বত্র নতুন লোগো */
+  /* লোগো — কেন্দ্রীয় উৎস (src/config/logo.ts)। যেকোনো sub-path (/doner/find/…)
+     থেকেও সঠিক absolute URL আসে, তাই Doner Dashboard-এ লোগো আর ভাঙে না। */
+  const LOGO = logoUrl();
   
   /* ══════════════════════════════════════════════════
      CBDC Application
@@ -3884,7 +3890,7 @@ function initPage() {
       health:"",
       available:true, appliedAt:"", cardTheme:"green",
       /* ডোনার তালিকার জন্য আলাদা মান — null মানে অ্যাকাউন্টের তথ্যই ব্যবহার হবে */
-      ov:{name:null,gender:null,age:null,area:null,phone:null}
+      ov:{name:null,gender:null,dob:null,area:null,phone:null}
     },
     privacy:{ profile:"all", showPhone:"responders", showWhatsapp:true, showGroup:true, showArea:true, searchable:true },
     notif:{ emergency:true, onlyGroup:true, onlyArea:false, donor:true, account:true, security:true, quiet:false },
@@ -3900,6 +3906,8 @@ function initPage() {
     privacy:STORE.privacy, notif:STORE.notif, prefs:STORE.prefs,
     security:STORE.security, saved:STORE.saved}))}catch(e){}
     if(!SHARED_PULLING)queueMicrotask(publishPersonalShared);
+    /* একই তথ্য আলাদা করে দ্বিতীয়বার লিখতে হয় না — এখান থেকেই RTDB-তে যায় */
+    if(typeof pushAccountToRtdb==="function")queueMicrotask(()=>pushAccountToRtdb());
   }
   function load(){try{const d=JSON.parse(localStorage.getItem(LS)||"{}");
     if(d.account)Object.assign(STORE.account,d.account);
@@ -3915,12 +3923,14 @@ function initPage() {
   }catch(e){}}
   load();
   
-  /* ══════════ DATA ══════════ */
-  /* ══════════ DATA (real, persisted in this browser) ══════════
-     Nothing here is fake: every list starts empty and only grows from what the
-     user actually does. Saved under localStorage["cbdc.data"] alongside the
-     account in localStorage["cbdc.app"]. Swapping this object for Firestore
-     later touches only load/saveData — no screen has to change. */
+  /* ══════════ DATA (real — Realtime Database is the source of truth) ══════════
+     এখানে কিছুই বানানো নয়: প্রতিটি তালিকা খালি থেকে শুরু হয় এবং শুধু ব্যবহারকারীর
+     বাস্তব কাজ থেকেই বাড়ে।
+
+       • donors / incoming  → RTDB থেকে লাইভ আসে (src/lib/store.ts এর মাধ্যমে)
+       • donations / mine   → ব্যবহারকারীর নিজের রেকর্ড; RTDB `users/{uid}/data`-তে
+                              সংরক্ষিত হয়, তাই যেকোনো ডিভাইসে লগইন করলেই পাওয়া যায়
+       • localStorage       → শুধু দ্রুত লোডের জন্য cache, উৎস নয় */
   const LS_DATA="cbdc.data";
   const RAW={ donations:[], incoming:[], mine:[], notifs:[], activity:[], sessions:[], donors:[] };
   function loadData(){
@@ -3936,6 +3946,8 @@ function initPage() {
   }
   function saveData(){try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
     if(!SHARED_PULLING)queueMicrotask(publishPersonalShared);
+    /* একই তথ্য দ্বিতীয়বার হাতে লিখতে হয় না — এখান থেকেই RTDB-তে চলে যায় */
+    if(typeof pushMyDataToRtdb==="function")queueMicrotask(()=>pushMyDataToRtdb());
   }
   function thisDevice(){
     const u=navigator.userAgent;
@@ -3999,13 +4011,13 @@ function initPage() {
       const oldQ=st.queue.findIndex(q=>q.kind==="donor"&&(q.ownerUid===owner||a.phone&&q.phone===a.phone));
       if(d.is&&d.status==="pending"){
         const q={kind:"donor",id:qid,donorId:d.donorId,name:a.name,group:d.bloodGroup,area:a.area,
-          age:ageFromDob(a.dob)||d.ov.age||"",health:d.health||"",last:d.lastDonation||"",gender:a.gender,
+          dob:d.ov.dob||a.dob||"",health:d.health||"",last:d.lastDonation||"",gender:a.gender,
           phone:a.phone,whatsapp:d.whatsapp||"",ownerUid:owner,at:new Date().toISOString()};
         oldQ<0?st.queue.unshift(q):st.queue[oldQ]={...st.queue[oldQ],...q};
       }else if(oldQ>=0)st.queue.splice(oldQ,1);
       if(d.is&&d.status==="approved"){
         const me={uid:owner,donorId:d.donorId,id:d.donorId,name:dv("name"),group:d.bloodGroup,gender:dv("gender"),
-          age:dv("age"),phone:dv("phone"),area:dv("area"),whatsapp:d.whatsapp||dv("phone"),lastDonation:d.lastDonation,
+          dob:dv("dob"),phone:dv("phone"),area:dv("area"),whatsapp:d.whatsapp||dv("phone"),lastDonation:d.lastDonation,
           totalDonations:RAW.donations.filter(x=>x.ok).length,joined:a.joined,verified:true,ownerUid:owner};
         const di=st.donors.findIndex(x=>x.id===d.donorId||x.ownerUid===owner);const c=CBDCShared.fromDonerDonor(me);
         di<0?st.donors.unshift(c):st.donors[di]={...st.donors[di],...c};
@@ -4036,15 +4048,22 @@ function initPage() {
   /* ---------- derived ---------- */
   /* ডোনার প্রোফাইলে দেখানো তথ্য:
      override থাকলে সেটি, নইলে অ্যাকাউন্টের তথ্য (single source of truth) */
-  const ageFromDob=v=>v?Math.floor(dayDiff(v)/365.25):"";
+  /* বয়স সবসময় জন্ম তারিখ থেকে হিসাব হয় (src/lib/age.ts) — কোথাও আলাদা করে
+     বয়স লেখা বা সংরক্ষণ করা হয় না। */
+  const ageFromDob=v=>{const a=calcAgeFromDob(v);return a===null?"":a};
+  const DOB_BOUNDS=dobBounds(SITE.rules.minAge,SITE.rules.maxAge);
   const DFIELDS=[
-    {k:"name",  label:"নাম",     type:"text"},
-    {k:"gender",label:"লিঙ্গ",   type:"select",options:["পুরুষ","মহিলা","অন্যান্য"]},
-    {k:"age",   label:"বয়স",     type:"number",min:18,max:60},
-    {k:"area",  label:"এলাকা",   type:"select",options:AREAS},
-    {k:"phone", label:"মোবাইল",  type:"tel",max:11}
+    {k:"name",  label:"নাম",         type:"text"},
+    {k:"gender",label:"লিঙ্গ",       type:"select",options:["পুরুষ","মহিলা","অন্যান্য"]},
+    /* বয়সের বদলে জন্ম তারিখ — বয়স এখান থেকেই স্বয়ংক্রিয়ভাবে দেখানো হয় */
+    {k:"dob",   label:"জন্ম তারিখ",  type:"date",min:DOB_BOUNDS.min,max:DOB_BOUNDS.max},
+    {k:"area",  label:"এলাকা",       type:"select",options:AREAS},
+    {k:"phone", label:"মোবাইল",      type:"tel",max:11}
   ];
   const acctVal=k=>k==="age"?ageFromDob(STORE.account.dob):STORE.account[k];
+  /* কোনো subject-এর (আমি বা অন্য ডোনার) বয়স — সবসময় জন্ম তারিখ থেকে */
+  const subjectAge=()=>{const S=cardSubject();const d=(S.mine?STORE.account.dob:(S.a&&S.a.dob))||(S.d&&S.d.ov&&S.d.ov.dob)||"";return ageFromDob(d)};
+  const subjectAgeText=()=>{const a=subjectAge();return a===""?"—":ageText(String(a))};
   /* ── who is the card being drawn for? ──────────────────────────────
      Every card renderer used to read STORE directly, so it could only ever
      draw the logged-in user. CARD_FOR lets the same renderers draw ANY donor:
@@ -4055,12 +4074,15 @@ function initPage() {
     const x=CARD_FOR;
     return {
       mine:false,
-      a:{name:x.name,gender:x.gender,area:x.area,phone:x.phone,photo:x.photo||"",dob:""},
+      a:{name:x.name,gender:x.gender,area:x.area,phone:x.phone,photo:x.photo||"",dob:x.dob||""},
       d:{donorId:x.donorId,bloodGroup:x.group,lastDonation:x.lastDonation||"",
          available:true,cardTheme:"green",whatsapp:!!x.phone,
-         ov:{name:x.name,gender:x.gender,age:x.age,area:x.area,phone:x.phone}}
+         ov:{name:x.name,gender:x.gender,dob:x.dob||"",area:x.area,phone:x.phone}}
     };
   }
+  /* বয়স কখনো সরাসরি সংরক্ষিত নয় — dv("dob") থেকে হিসাব করে দেখানো হয় */
+  const dvAge=()=>ageFromDob(dv("dob"));
+  const dvAgeText=()=>{const a=dvAge();return a===""?"":ageText(String(dv("dob")))};
   const dv=k=>{
     const S=cardSubject();
     if(!S.mine){const o=S.d.ov[k];return (o===null||o===undefined||o==="")?"":o}
@@ -4283,7 +4305,9 @@ function initPage() {
   /* donor card — same design as public website */
   function donorCardHTML(d,i){
     const id=d.donorId||("CBDC-2026-"+String(i+1).padStart(4,"0"));
-    const age=d.age?`বয়স ${bn(d.age)} বছর`:"বয়স ২৫ বছর";
+    /* বয়স জন্ম তারিখ থেকে হিসাব হয়; না জানা থাকলে কিছুই দেখানো হয় না */
+    const ageStr=ageText(d);
+    const age=ageStr==="—"?"":`বয়স ${ageStr}`;
     const last=d.lastDonation?dL(d.lastDonation):"নতুন দাতা";
     /* readiness is derived from the rest period, never stored — and the list
        honours the same privacy rules as the profile screen, so a hidden
@@ -4353,7 +4377,7 @@ function initPage() {
     return {
       uid:"me", donorId:d.donorId||"—",
       name:ov.name||a.name||"আপনি", gender:ov.gender||a.gender, photo:a.photo,
-      group:d.bloodGroup, area:ov.area||a.area, age:ov.age||ageFromDob(a.dob),
+      group:d.bloodGroup, area:ov.area||a.area, dob:ov.dob||a.dob||"", age:ageFromDob(ov.dob||a.dob),
       occupation:a.occupation||"", phone:ov.phone||a.phone, whatsapp:!!d.whatsapp,
       lastDonation:d.lastDonation, totalDonations:DB().donations.length,
       joined:a.joined||"", verified:d.status==="approved", bio:a.bio||"",
@@ -4396,7 +4420,7 @@ function initPage() {
      without duplicating a second profile page. */
   /* Public directory: Firebase is the single source of truth. The shared
      store (src/lib/store.ts) carries the live `donors` collection from
-     Firestore, so a shared profile link resolves against real data — no
+     Realtime Database, so a shared profile link resolves against real data — no
      bundled fallback list. */
   function pubDirectory(){
     try{
@@ -4628,7 +4652,8 @@ function initPage() {
   }
   const donorRows=()=>{const d=STORE.donor;return `
     ${rowLine("নাম",dv("name"))}${rowLine("রক্তের গ্রুপ",d.bloodGroup)}${rowLine("লিঙ্গ",dv("gender"))}
-    ${rowLine("বয়স",dv("age")?bn(dv("age"))+" বছর":"—")}
+    ${rowLine("জন্ম তারিখ",dv("dob")?dL(dv("dob")):"—")}
+    ${rowLine("বয়স",dvAgeText()||"—")}
     ${rowLine("এলাকা",dv("area"))}${rowLine("মোবাইল",dv("phone"))}
     ${rowLine("WhatsApp",d.whatsapp||"—")}${rowLine("সর্বশেষ রক্তদান",d.lastDonation?dL(d.lastDonation):"মনে নেই")}`};
   const rowLine=(k,v)=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:9px 0;
@@ -4859,14 +4884,14 @@ function initPage() {
               <span class="hint">সাধারণত ১ ব্যাগ</span></div>
           </div>
           <div class="f"><label>স্থান / হাসপাতাল <i>*</i></label>
-            <input id="ad_place" list="ad_places" placeholder="যেমন: চমেক ব্লাড ব্যাংক">
+            <input id="ad_place" list="ad_places">
             <datalist id="ad_places">${HOSPITALS.map(h=>`<option value="${esc(h)}">`).join("")}</datalist>
             <span class="hint">যে হাসপাতাল বা ব্লাড ব্যাংকে দিয়েছেন</span></div>
           <div class="f"><label>রোগীর নাম</label>
-            <input id="ad_pat" placeholder="ঐচ্ছিক — না জানলে খালি রাখুন">
+            <input id="ad_pat">
             <span class="hint">রোগীর অনুমতি ছাড়া পুরো নাম না লেখাই ভালো</span></div>
           <div class="f"><label>মন্তব্য</label>
-            <input id="ad_note" placeholder="ঐচ্ছিক — যেমন: ক্লাবের ক্যাম্পে দিয়েছি"></div>
+            <input id="ad_note"></div>
           <div class="f"><label>প্রমাণ (ছবি)</label>
             <input id="ad_file" type="file" accept="image/*">
             <span class="hint">রসিদ / ব্যাগের ছবি · সর্বোচ্চ ৪ MB · ঐচ্ছিক</span></div>
@@ -5074,7 +5099,7 @@ function initPage() {
           <div class="kv">
             <div><span>এলাকা</span><b>${esc(dv("area"))}</b></div>
             <div><span>মোবাইল</span><b>${esc(dv("phone"))}</b></div>
-            ${dv("age")||dv("gender")?`<div><span>বয়স</span><b>${dv("age")?bn(dv("age"))+" বছর":""}${dv("age")&&dv("gender")?" · ":""}${dv("gender")?esc(dv("gender")):""}</b></div>`:""}
+            ${dvAgeText()||dv("gender")?`<div><span>বয়স</span><b>${esc(dvAgeText())}${dvAgeText()&&dv("gender")?" · ":""}${dv("gender")?esc(dv("gender")):""}</b></div>`:""}
           </div>
         </div>
         <div class="qrbox"><span class="q">${qrSVG(vcardText(),72,{ecl:"L",quiet:2})}</span>
@@ -5229,7 +5254,7 @@ function initPage() {
     ty+=blockGap;
     const kw=W*.088;
     [["এলাকা",dv("area")],["মোবাইল",dv("phone")],
-     ...(dv("age")||dv("gender")?[["বয়স",(dv("age")?bn(dv("age"))+" বছর":"")+(dv("age")&&dv("gender")?" · ":"")+(dv("gender")||"")]]:[])
+     ...(dvAgeText()||dv("gender")?[["বয়স",dvAgeText()+(dvAgeText()&&dv("gender")?" · ":"")+(dv("gender")||"")]]:[])
     ].filter(([,v])=>v).forEach(([k,v])=>{
       x.font=`600 ${H*.031}px `+CF;x.fillStyle="rgba(255,255,255,.6)";x.fillText(k,tx,ty);
       x.fillStyle="#fff";
@@ -5584,7 +5609,7 @@ function initPage() {
     const f=DFIELDS.find(x=>x.k===k);
     const acct=acctVal(k), ov=STORE.donor.ov[k];
     let mode = isOv(k)?"custom":"account";
-    const fmt=v=>k==="age"?(v?bn(v)+" বছর":"—"):(v||"—");
+    const fmt=v=>k==="dob"?(v?dL(v)+" ("+ageText(v)+")":"—"):(v||"—");
   
     const s=sheet(f.label,`
       <div class="note i">${ICON.info(17)}<span>এই তথ্যটি ডোনার তালিকা ও কার্ডে দেখানো হবে।</span></div>
@@ -5601,8 +5626,8 @@ function initPage() {
         <div class="f" style="margin-bottom:0"><label>${esc(f.label)}</label>${
           f.type==="select"
             ? `<select id="fv">${f.options.map(o=>`<option ${String(ov||acct)===o?"selected":""}>${esc(o)}</option>`).join("")}</select>`
-            : `<input id="fv" type="${f.type==="number"?"number":"text"}"
-                 ${f.min?`min="${f.min}"`:""} ${f.max&&f.type==="number"?`max="${f.max}"`:""}
+            : `<input id="fv" type="${f.type==="date"?"date":f.type==="number"?"number":"text"}"
+                 ${f.min?`min="${f.min}"`:""} ${f.max&&(f.type==="number"||f.type==="date")?`max="${f.max}"`:""}
                  ${f.max&&f.type==="tel"?`maxlength="${f.max}" inputmode="numeric"`:""}
                  value="${esc(ov??acct??"")}">`}
           <span class="hint er hide" id="fe"></span></div></div>`,
@@ -5625,9 +5650,14 @@ function initPage() {
       const bad=m=>{er.textContent=m;er.classList.remove("hide")};
       if(!v)return bad("মান দিন");
       if(k==="name"&&v.length<2)return bad("নাম কমপক্ষে ২ অক্ষরের হতে হবে");
-      if(k==="age"&&(+v<18||+v>60))return bad("বয়স ১৮ থেকে ৬০ বছরের মধ্যে হতে হবে");
+      if(k==="dob"){
+        if(!isValidDob(v))return bad("সঠিক জন্ম তারিখ নির্বাচন করুন");
+        const a=calcAgeFromDob(v);
+        if(a===null||a<SITE.rules.minAge||a>SITE.rules.maxAge)
+          return bad(`জন্ম তারিখ অনুযায়ী বয়স ${SITE.rules.minAge} থেকে ${SITE.rules.maxAge} বছরের মধ্যে হতে হবে`);
+      }
       if(k==="phone"&&!phoneOK(v))return bad("সঠিক ১১ সংখ্যার নম্বর দিন");
-      STORE.donor.ov[k]=k==="age"?+v:v;save();
+      STORE.donor.ov[k]=v;save();
       logAct("ডোনার তথ্য পরিবর্তন",f.label+": "+v,"donor");
       s.close();renderSub("donor");toast(f.label+" সংরক্ষণ হয়েছে","ok");
     };
@@ -5700,7 +5730,7 @@ function initPage() {
     const draw=()=>{
       if(step===1)s.q(".bd").innerHTML=`
         <div class="f"><label>বর্তমান ইমেইল</label><input value="${esc(a.email)}" readonly></div>
-        <div class="f"><label>নতুন ইমেইল <i>*</i></label><input id="ne" type="email" placeholder="new@email.com">
+        <div class="f"><label>নতুন ইমেইল <i>*</i></label><input id="ne" type="email">
           <span class="hint er hide" id="ee"></span></div>
         <div class="f"><label>পাসওয়ার্ড দিয়ে নিশ্চিত করুন <i>*</i></label><input id="pw" type="password"></div>`;
       if(step===2)s.q(".bd").innerHTML=`
@@ -5734,7 +5764,7 @@ function initPage() {
     const s=sheet("মোবাইল নম্বর",`
       <div class="f"><label>বর্তমান নম্বর</label><input value="${esc(a.phone)}" readonly></div>
       <div class="f"><label>নতুন নম্বর <i>*</i></label>
-        <input id="np" maxlength="11" inputmode="numeric" placeholder="01XXXXXXXXX">
+        <input id="np" maxlength="11" inputmode="numeric">
         <span class="hint" id="ph">১১ সংখ্যার বাংলাদেশি নম্বর</span></div>
       <div class="note i">${ICON.info(17)}<span>এই নম্বরটি <b>OTP যাচাই</b> ও অ্যাকাউন্ট পুনরুদ্ধারে ব্যবহার হবে।
         এখন শুধু ফরম্যাট পরীক্ষা করা হচ্ছে।</span></div>`,
@@ -5752,7 +5782,7 @@ function initPage() {
   function sheetPassword(){
     const s=sheet("পাসওয়ার্ড পরিবর্তন",`
       <div class="f"><label>বর্তমান পাসওয়ার্ড <i>*</i></label><input id="p0" type="password"></div>
-      <div class="f"><label>নতুন পাসওয়ার্ড <i>*</i></label><input id="p1" type="password" minlength="6" placeholder="কমপক্ষে ৬ অক্ষর">
+      <div class="f"><label>নতুন পাসওয়ার্ড <i>*</i></label><input id="p1" type="password" minlength="6">
         <div style="display:flex;gap:4px;margin-top:7px">${[0,1,2,3].map(i=>`<div id="b${i}"
           style="flex:1;height:4px;border-radius:9px;background:var(--line);transition:.2s"></div>`).join("")}</div>
         <span class="hint" id="ps">শক্তি: —</span></div>
@@ -5876,26 +5906,12 @@ function initPage() {
     await reauthenticateWithCredential(user,cred);
     await updatePassword(user,newPassword);
   }
+  /* পাসওয়ার্ড ভুলে গেলে — সাইটের আলাদা full-page UI (/forgot-password)।
+     সেখান থেকেই Firebase-এর built-in reset link পাঠানো হয়; কোনো custom OTP নেই। */
   function sheetForgot(){
-    const s=sheet("পাসওয়ার্ড ভুলে গেছেন?","","");
-    const bd=s.q(".bd"),ft=s.q(".ft")||(()=>{const x=document.createElement("div");x.className="ft";s.append(x);return x})();
-    const error=msg=>toast(msg,"er");
-    bd.innerHTML=`<div class="note i">${ICON.info(17)}<span>Firebase Authentication থেকে একটি <b>পাসওয়ার্ড রিসেট লিংক</b> ইমেইলে পাঠানো হবে।</span></div>
-      <div class="f"><label>ইমেইল <i>*</i></label><input id="fo_rec" value="${esc(STORE.account.email||"")}" placeholder="example@gmail.com"></div>`;
-    ft.innerHTML=`<button class="btn gh" data-close>বাতিল</button><button class="btn" id="fo_send">রিসেট লিংক পাঠান</button>`;
-    s.q("#fo_send").onclick=async()=>{
-      const recipient=s.q("#fo_rec").value.trim();
-      if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(recipient)){error("সঠিক ইমেইল দিন");return}
-      const btn=s.q("#fo_send");btn.disabled=true;btn.textContent="পাঠানো হচ্ছে…";
-      try{
-        const shared=initSharedFirebase();
-        const {sendPasswordResetEmail}=await import("firebase/auth");
-        await sendPasswordResetEmail(shared.auth, recipient);
-        bd.innerHTML=`<div class="note g">${ICON.checkC(17)}<span>${esc(recipient)} ঠিকানায় রিসেট লিংক পাঠানো হয়েছে। ইমেইল খুলে নতুন পাসওয়ার্ড সেট করুন।</span></div>`;
-        ft.innerHTML=`<button class="btn" data-close>বন্ধ করুন</button>`;
-      }catch(e){btn.disabled=false;btn.textContent="রিসেট লিংক পাঠান";error(authErrorMessage(e,{fallback:"রিসেট লিংক পাঠানো যায়নি"}))}
-    };
+    try{ window.location.assign(appBase()+"forgot-password"); }catch(e){ navigateToPage("home"); }
   }
+
   /* ---------- delete account (4 steps) ---------- */
   function sheetDelete(){
     let step=1;
@@ -5924,7 +5940,7 @@ function initPage() {
       if(step===3){bd.innerHTML=bar+`
         <div class="f"><label>পাসওয়ার্ড দিয়ে নিশ্চিত করুন <i>*</i></label><input id="dp" type="password"></div>
         <div class="f"><label>নিশ্চিত করতে <b style="color:var(--red)">মুছে ফেলুন</b> লিখুন <i>*</i></label>
-          <input id="dt" placeholder="মুছে ফেলুন" autocapitalize="off"></div>`;
+          <input id="dt" autocapitalize="off"></div>`;
         ft.innerHTML=`<button class="btn gh" id="bk">পেছনে</button><button class="btn red" id="nx">অ্যাকাউন্ট মুছুন</button>`;}
       if(step===4){bd.innerHTML=`<div style="text-align:center;padding:8px 0">
         <div style="width:58px;height:58px;margin:0 auto 12px;border-radius:50%;background:var(--card2);
@@ -5957,7 +5973,7 @@ function initPage() {
     const s=sheet("সমস্যা জানান",`
       <div class="f"><label>ধরন</label><select><option>বাগ বা ত্রুটি</option><option>ভুল তথ্য</option>
         <option>অন্য ব্যবহারকারীর অভিযোগ</option><option>পরামর্শ</option></select></div>
-      <div class="f"><label>বিস্তারিত <i>*</i></label><textarea id="rd" placeholder="কী সমস্যা হচ্ছে লিখুন"></textarea></div>
+      <div class="f"><label>বিস্তারিত <i>*</i></label><textarea id="rd"></textarea></div>
       <div class="f"><label>স্ক্রিনশট</label><input type="file" accept="image/*"></div>`,
       `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="ok">পাঠান</button>`);
     s.q("#ok").onclick=()=>{
@@ -5988,34 +6004,118 @@ function initPage() {
     for(let i=0;i<src.length;i++)n=(n*31+src.charCodeAt(i))>>>0;
     return `CBDC-${y}-${String(n%9999+1).padStart(4,"0")}`;
   }
-  function needsSetup(){return !STORE.account.name.trim()||!phoneOK(STORE.account.phone)}
+  function needsSetup(){return !STORE.account.name.trim()||!phoneOK(STORE.account.phone)||!isValidDob(STORE.account.dob)}
   function sheetSetup(){
+    const b=dobBounds(SITE.rules.minAge,SITE.rules.maxAge);
     const s=sheet("স্বাগতম",`
-      <div class="note i">${ICON.info(17)}<span>শুরু করতে শুধু আপনার নাম ও মোবাইল নম্বর দিন।
+      <div class="note i">${ICON.info(17)}<span>শুরু করতে আপনার নাম, মোবাইল নম্বর ও জন্ম তারিখ দিন।
         বাকি তথ্য পরে সেটিংস থেকে যোগ করতে পারবেন।</span></div>
+      <form id="setupForm" novalidate>
       <div class="f"><label>আপনার পূর্ণ নাম <i>*</i></label>
-        <input id="su_name" placeholder="যেমন: শাহাদাত আহমেদ" autocomplete="name"></div>
+        <input id="su_name" name="su_name" autocomplete="name" value="${esc(STORE.account.name||"")}"></div>
       <div class="f"><label>মোবাইল নম্বর <i>*</i></label>
-        <input id="su_phone" inputmode="numeric" maxlength="11" placeholder="01XXXXXXXXX" autocomplete="tel">
+        <input id="su_phone" name="su_phone" inputmode="numeric" maxlength="11" autocomplete="tel" value="${esc(STORE.account.phone||"")}">
         <span class="hint">১১ সংখ্যার বাংলাদেশি নম্বর</span></div>
+      <div class="f"><label>জন্ম তারিখ <i>*</i></label>
+        <input id="su_dob" name="su_dob" type="date" min="${b.min}" max="${b.max}" value="${esc(STORE.account.dob||"")}">
+        <span class="hint" id="su_age_hint">জন্ম তারিখ থেকে বয়স স্বয়ংক্রিয়ভাবে হিসাব হবে।</span></div>
       <div class="f"><label>এলাকা</label>
-        <select id="su_area"><option value="">নির্বাচন করুন</option>
-          ${AREAS.map(a=>`<option>${esc(a)}</option>`).join("")}</select></div>`,
+        <select id="su_area" name="su_area"><option value="">নির্বাচন করুন</option>
+          ${AREAS.map(a=>`<option ${a===STORE.account.area?"selected":""}>${esc(a)}</option>`).join("")}</select></div>
+      </form>`,
       `<button class="btn w" id="ok">শুরু করুন</button>`,{lock:true});
-    s.q("#ok").onclick=()=>{
-      const n=s.q("#su_name").value.trim(), ph=s.q("#su_phone").value.trim();
-      if(n.length<2){toast("নাম কমপক্ষে ২ অক্ষরের হতে হবে","er");s.q("#su_name").focus();return}
-      if(!phoneOK(ph)){toast("সঠিক ১১ সংখ্যার নম্বর দিন","er");s.q("#su_phone").focus();return}
+    const form=s.q("#setupForm");
+    attachLiveClear(form);
+    const dobInp=s.q("#su_dob"), hint=s.q("#su_age_hint");
+    const paintAge=()=>{ hint.textContent = dobInp.value && isValidDob(dobInp.value)
+      ? "হিসাবকৃত বয়স: "+ageText(dobInp.value)
+      : "জন্ম তারিখ থেকে বয়স স্বয়ংক্রিয়ভাবে হিসাব হবে।"; };
+    dobInp.addEventListener("input",paintAge); dobInp.addEventListener("change",paintAge); paintAge();
+    s.q("#ok").onclick=async()=>{
+      /* কোনো popup/alert নয় — ফাঁকা ঘর highlight হয়, নিচে বার্তা আসে */
+      const v=validateForm(form,{
+        su_name: {required:true,minLength:2,label:"নাম"},
+        su_phone:{required:true,phone:true,label:"মোবাইল নম্বর"},
+        su_dob:  {required:true,dob:{min:SITE.rules.minAge,max:SITE.rules.maxAge},label:"জন্ম তারিখ"}
+      });
+      if(!v.ok)return;
       const a=STORE.account;
-      a.name=n; a.phone=ph; a.area=s.q("#su_area").value||"";
-      a.uid=a.uid||("u"+Date.now().toString(36));
+      a.name=s.q("#su_name").value.trim();
+      a.phone=s.q("#su_phone").value.trim();
+      a.dob=dobInp.value;
+      a.area=s.q("#su_area").value||"";
       a.username=a.username||("user"+String(Date.now()).slice(-6));
       a.joined=a.joined||iso(now());
-      save();logAct("অ্যাকাউন্ট তৈরি হয়েছে",n,"account");
-      s.close();go(CUR,SUB);toast("স্বাগতম, "+n.split(" ")[0]+"!","ok");
+      save();
+      /* Realtime Database-এ লেখা — Admin/Moderator প্যানেলে সাথে সাথে দেখা যাবে */
+      await pushAccountToRtdb();
+      logAct("অ্যাকাউন্ট তথ্য সংরক্ষণ",a.name,"account");
+      s.close();go(CUR,SUB);toast("স্বাগতম, "+a.name.split(" ")[0]+"!","ok");
     };
   }
-  
+
+  /* ══════════ Realtime Database ↔ এই প্যানেল ══════════
+     ডোনারের নিজের প্রোফাইল RTDB `users/{uid}`-এ থাকে। এখানে বদলালে সঙ্গে সঙ্গে
+     ডাটাবেসে যায়, আর ডাটাবেসে (যেমন অ্যাডমিন প্যানেল থেকে) বদলালে watchRow()
+     দিয়ে সঙ্গে সঙ্গে এই স্ক্রিনে চলে আসে — দুই দিকেই লাইভ। */
+  let RTDB_UID="";
+  let RTDB_PULLING=false;
+  async function pushAccountToRtdb(){
+    if(!RTDB_UID||RTDB_PULLING)return;
+    const a=STORE.account,d=STORE.donor;
+    try{
+      await updateRow(NODES.users, RTDB_UID, {
+        uid:RTDB_UID, name:a.name||"", username:a.username||"", email:(a.email||"").toLowerCase(),
+        phone:a.phone||"", dob:a.dob||"", gender:a.gender||"", area:a.area||"",
+        address:a.address||"", photoURL:a.photo||"", joined:a.joined||"",
+        donorStatus:d.status||"none", bloodGroup:d.bloodGroup||"", donorId:d.donorId||""
+      });
+    }catch(e){ console.warn("profile push:", e && e.message); }
+  }
+  /* ডোনারের নিজস্ব রেকর্ড (রক্তদান, নিজের আবেদন, বিজ্ঞপ্তি, কার্যক্রম) RTDB-তে —
+     ডিভাইস বদলালেও একই তথ্য, এবং অ্যাডমিন প্যানেলও একই উৎস পড়ে। */
+  async function pushMyDataToRtdb(){
+    if(!RTDB_UID||RTDB_PULLING)return;
+    try{
+      await updateRow(NODES.users, RTDB_UID, {
+        data:{
+          donations:RAW.donations||[],
+          mine:RAW.mine||[],
+          notifs:(RAW.notifs||[]).slice(0,100),
+          activity:(RAW.activity||[]).slice(0,100)
+        }
+      });
+    }catch(e){ console.warn("data push:", e && e.message); }
+  }
+  function watchMyProfile(uid){
+    if(!uid)return;
+    RTDB_UID=uid;
+    watchRow(NODES.users, uid, (row)=>{
+      if(!row)return;
+      RTDB_PULLING=true;
+      const a=STORE.account;
+      a.uid=uid;
+      a.name=row.name||a.name; a.username=row.username||a.username;
+      a.email=row.email||a.email; a.phone=row.phone||a.phone;
+      a.dob=row.dob||a.dob; a.gender=row.gender||a.gender;
+      a.area=row.area||a.area; a.address=row.address||a.address;
+      if(row.photoURL)a.photo=row.photoURL;
+      if(row.joined)a.joined=row.joined;
+      if(row.bloodGroup)STORE.donor.bloodGroup=row.bloodGroup;
+      if(row.donorId)STORE.donor.donorId=row.donorId;
+      if(row.donorStatus&&row.donorStatus!=="none"){STORE.donor.is=true;STORE.donor.status=row.donorStatus}
+      /* ডাটাবেসে থাকা নিজস্ব রেকর্ড — অন্য ডিভাইসে করা কাজও এখানে চলে আসে */
+      if(row.data&&typeof row.data==="object"){
+        ["donations","mine","notifs","activity"].forEach(k=>{ if(Array.isArray(row.data[k]))RAW[k]=row.data[k]; });
+        try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
+      }
+      try{localStorage.setItem(LS,JSON.stringify({account:STORE.account,donor:STORE.donor,
+        privacy:STORE.privacy,notif:STORE.notif,prefs:STORE.prefs,security:STORE.security,saved:STORE.saved}))}catch(e){}
+      RTDB_PULLING=false;
+      if(!document.querySelector(".sheet")&&!PUBLIC_MODE){ try{ paintTop(); go(CUR,SUB,false); }catch(e){} }
+    });
+  }
+
   /* ══════════ BOOT ══════════ */
   const RENDER={home:rHome,find:rFind,req:rReq,set:rSet};
   /* If login happened on index.html, use the same account here. */
@@ -6026,18 +6126,28 @@ function initPage() {
     try{
       const shared = initSharedFirebase();
       const {onAuthStateChanged} = await import("firebase/auth");
-      onAuthStateChanged(shared.auth, (user)=>{
+      onAuthStateChanged(shared.auth, async (user)=>{
         if(PUBLIC_MODE)return;
         if(!user){
           setTimeout(()=>{navigateToPage("home")},400);
           return;
         }
+        /* Role gate — Admin/Moderator কখনোই Doner Dashboard ব্যবহার করে না;
+           তাদের নিজ নিজ প্যানেলে পাঠিয়ে দেওয়া হয় (role আসে RTDB থেকে)। */
+        try{
+          const r = await resolveUserRole({uid:user.uid, email:user.email||"", name:user.displayName||""});
+          const page = panelForRole(r.role);
+          if(page!=="doner"){ navigateToPage(page); return; }
+        }catch(e){ console.warn("doner role gate:", e && e.message); }
+
         if(user.email)STORE.account.email=STORE.account.email||user.email;
         if(user.displayName)STORE.account.name=STORE.account.name||user.displayName;
         if(user.photoURL)STORE.account.photo=STORE.account.photo||user.photoURL;
-        STORE.account.uid=STORE.account.uid||("u"+user.uid);
+        STORE.account.uid=user.uid;
         STORE.account.emailVerified=user.emailVerified!==false;
         try{save()}catch(e){}
+        /* RTDB প্রোফাইলে live subscribe — সব dashboard একই data source ব্যবহার করে */
+        watchMyProfile(user.uid);
         if(needsSetup()&&!document.querySelector(".sheet"))setTimeout(sheetSetup,260);
       });
     }catch(e){ console.warn("doner auth sync:", e && e.message); }
@@ -6053,6 +6163,7 @@ function initPage() {
     }
   }catch(e){}
   applyPrefs();
+  applyLogo(document);
   watchI18n();
   document.documentElement.lang=STORE.prefs.lang==="en"?"en":"bn";
   document.body.dataset.lang=STORE.prefs.lang;

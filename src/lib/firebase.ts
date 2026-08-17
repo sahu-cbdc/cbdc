@@ -4,18 +4,19 @@
  * Single, shared Firebase instance for the whole app:
  *   - Firebase Authentication (email/password + Google) for login / register /
  *     logout / session,
- *   - Cloud Firestore as the primary data source for all app data.
+ *   - **Firebase Realtime Database** as the primary data source for all app
+ *     data (Cloud Firestore is no longer used anywhere).
  *
  * ছবি Firebase Storage-এ সংরক্ষণ করা হয় না — image hosting-এর জন্য ImgBB API
  * ব্যবহার করা হয় (দেখুন src/lib/imgbb.ts)। তাই Storage এখানে initialized হয় না।
  *
- * The page logic uses dynamic `import("firebase/...")`; this module
- * centralises that into one typed singleton so every page shares the same app
- * instance and the same configuration.
+ * Realtime Database-এর সব read/write helper আছে src/lib/rtdb.ts-এ; পেজগুলো
+ * সরাসরি `firebase/database` আমদানি না করে ওই helper গুলো ব্যবহার করে, তাই
+ * পুরো অ্যাপে একটাই data access layer থাকে।
  */
 
 import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
-import { getFirestore, type Firestore } from "firebase/firestore";
+import { getDatabase, type Database } from "firebase/database";
 import { getAuth, type Auth } from "firebase/auth";
 
 /**
@@ -23,9 +24,9 @@ import { getAuth, type Auth } from "firebase/auth";
  * (project number 826987875853).
  *
  * These values are public client-side identifiers (web API key) — access
- * control is enforced by Firestore Security Rules (see firestore.rules) and by
- * Firebase Auth itself, not by hiding this config. No server credential / service
- * account / admin key may ever be added here.
+ * control is enforced by Realtime Database Security Rules (see database.rules.json)
+ * and by Firebase Auth itself, not by hiding this config. No server credential /
+ * service account / admin key may ever be added here.
  */
 const DEFAULT_FIREBASE_CONFIG = {
   apiKey: "AIzaSyBxUlGig2NtQLf6tZMRwK6xxzjScNIqbrM",
@@ -48,17 +49,19 @@ const DEFAULT_FIREBASE_CONFIG = {
  *     getFirebaseInitError() কারণ ফেরত দেয়)।
  *   - কোনো VITE_FIREBASE_* না থাকলে উপরের DEFAULT config ব্যবহার হয়, যা
  *     Firebase Console এর config-এর সঙ্গে হুবহু মিলিয়ে যাচাই করা।
+ *
+ * Realtime Database ব্যবহার হয় বলে `databaseURL` এখন **required**।
  */
 const REQUIRED_ENV_KEYS = [
   ["apiKey", "VITE_FIREBASE_API_KEY"],
   ["authDomain", "VITE_FIREBASE_AUTH_DOMAIN"],
   ["projectId", "VITE_FIREBASE_PROJECT_ID"],
   ["appId", "VITE_FIREBASE_APP_ID"],
+  ["databaseURL", "VITE_FIREBASE_DATABASE_URL"],
 ] as const;
 const OPTIONAL_ENV_KEYS = [
   ["storageBucket", "VITE_FIREBASE_STORAGE_BUCKET"],
   ["messagingSenderId", "VITE_FIREBASE_MESSAGING_SENDER_ID"],
-  ["databaseURL", "VITE_FIREBASE_DATABASE_URL"],
   ["measurementId", "VITE_FIREBASE_MEASUREMENT_ID"],
 ] as const;
 
@@ -102,15 +105,16 @@ const resolved = resolveFirebaseConfig();
 export const firebaseConfig = resolved.config;
 
 /**
- * Firestore collection names. This is the database structure — see
- * docs/FIREBASE.md for the full schema of each collection.
+ * Realtime Database-এর top-level node গুলো। এটাই database structure —
+ * প্রতিটি node-এর নিচে `{ id: {...} }` আকারে রেকর্ড থাকে।
+ * পূর্ণ schema-র জন্য দেখুন docs/FIREBASE.md।
  */
-export const COLLECTIONS = {
+export const NODES = {
   donors: "donors", // approved public donor profiles
   requests: "requests", // emergency blood requests
   members: "members", // donor sign-up applications (pending review)
-  users: "users", // website user accounts
-  admins: "admins", // admin / moderator role documents (email -> role)
+  users: "users", // website user accounts (key = auth uid)
+  admins: "admins", // admin / moderator role records (key = auth uid)
   queue: "queue", // moderation queue (approvals, proofs, reports)
   gallery: "gallery", // gallery images (ImgBB URL + metadata)
   notices: "notices", // published notices
@@ -118,28 +122,34 @@ export const COLLECTIONS = {
   settings: "settings", // app settings (e.g. settings/imgbb — ImgBB API key)
 } as const;
 
+/**
+ * পুরোনো নাম `COLLECTIONS` — Firestore যুগের কোড যেন হঠাৎ না ভাঙে সেজন্য
+ * alias রাখা হয়েছে। নতুন কোডে `NODES` ব্যবহার করুন।
+ */
+export const COLLECTIONS = NODES;
+
 let app: FirebaseApp | null = null;
-let db: Firestore | null = null;
+let rtdb: Database | null = null;
 let auth: Auth | null = null;
 let initError: Error | null = resolved.error;
 
 /** Initialise Firebase exactly once and return the shared services. */
-export function initFirebase(): { app: FirebaseApp; db: Firestore; auth: Auth } {
-  if (app && db && auth) {
-    return { app, db, auth };
+export function initFirebase(): { app: FirebaseApp; db: Database; auth: Auth } {
+  if (app && rtdb && auth) {
+    return { app, db: rtdb, auth };
   }
   if (initError) {
     // Config resolve করতে গিয়ে error — চুপচাপ ভুল config চালু না করে থামিয়ে দিই।
     console.error("Firebase config error:", initError.message);
     return {
       app: app as FirebaseApp,
-      db: db as Firestore,
+      db: rtdb as Database,
       auth: auth as Auth,
     };
   }
   try {
     app = getApps().length ? getApp() : initializeApp(firebaseConfig);
-    db = getFirestore(app);
+    rtdb = getDatabase(app);
     auth = getAuth(app);
     initError = null;
   } catch (e) {
@@ -148,15 +158,20 @@ export function initFirebase(): { app: FirebaseApp; db: Firestore; auth: Auth } 
   }
   return {
     app: app as FirebaseApp,
-    db: db as Firestore,
+    db: rtdb as Database,
     auth: auth as Auth,
   };
 }
 
-/** Firestore instance (lazily initialised). */
-export function getDb(): Firestore | null {
-  if (!db) initFirebase();
-  return db;
+/** Realtime Database instance (lazily initialised). */
+export function getRtdb(): Database | null {
+  if (!rtdb) initFirebase();
+  return rtdb;
+}
+
+/** পুরোনো নাম — এখন Realtime Database instance ফেরত দেয়। */
+export function getDb(): Database | null {
+  return getRtdb();
 }
 
 /** Auth instance (lazily initialised). */
@@ -167,8 +182,8 @@ export function getAuthInstance(): Auth | null {
 
 /** Whether Firebase initialised successfully. */
 export function isFirebaseReady(): boolean {
-  if (!db) initFirebase();
-  return !!db && !initError;
+  if (!rtdb) initFirebase();
+  return !!rtdb && !initError;
 }
 
 /** যদি init/config কোনো কারণে ব্যর্থ হয়, নির্ভুল কারণ ফেরত দেয় (না হলে null)। */
