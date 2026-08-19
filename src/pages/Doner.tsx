@@ -66,7 +66,7 @@ svg{display:block;flex:none}
 .brand{display:flex;align-items:center;gap:9px;min-width:0}
 .brand .lg{width:36px;height:36px;border-radius:50%;background:#fff;display:grid;place-items:center;flex:none;
   overflow:hidden;box-shadow:0 1px 4px rgba(8,60,42,.16)}
-.brand .lg img{width:34px;height:34px;object-fit:contain;display:block}
+.brand .lg img{width:34px;height:34px;object-fit:cover;border-radius:50%;display:block}
 .brand b{font-size:.94rem;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.2px}
 .back{width:38px;height:38px;display:grid;place-items:center;border-radius:50%;color:var(--ink);flex:none}
 .back:hover{background:var(--card2)}
@@ -1487,7 +1487,7 @@ function initPage() {
   const I=(p,sz=22)=>`<svg width="${sz}" height="${sz}" viewBox="0 0 24 24" fill="none" stroke="currentColor"
     stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
   const ICON={
-    logo:`<img src="${LOGO}" alt="CBDC" width="20" height="20" style="display:block;object-fit:contain">`,
+    logo:`<img src="${LOGO}" alt="CBDC" width="20" height="20" style="display:block;object-fit:cover;border-radius:50%">`,
     home:s=>I(`<path d="M3 10.2 12 3l9 7.2"/><path d="M5.5 9.4V20a1 1 0 0 0 1 1H10v-5.5h4V21h3.5a1 1 0 0 0 1-1V9.4"/>`,s),
     drop:s=>I(`<path d="M12 3s6 6.7 6 10.7A6 6 0 0 1 6 13.7C6 9.7 12 3 12 3z"/><path d="M12 17.2a3.2 3.2 0 0 1-3.2-3.2"/>`,s),
     plus:s=>I(`<circle cx="12" cy="12" r="9"/><path d="M12 8.2v7.6M8.2 12h7.6"/>`,s),
@@ -3959,6 +3959,33 @@ function initPage() {
   }
   loadData();
   const DB=()=>RAW;
+
+  /* এক অ্যাকাউন্ট থেকে আরেক অ্যাকাউন্টে যাওয়ার সময় পুরোনো user-এর cached data
+     (নাম, ছবি, কার্যক্রম, আবেদন…) যেন নতুন user-এ চলে না আসে — এই cache সম্পূর্ণ
+     fresh অবস্থায় ফিরিয়ে নেওয়া হয়। */
+  function resetUserCache(){
+    Object.assign(STORE.account,{uid:"",name:"",username:"",email:"",phone:"",photo:"",photoSource:"none",
+      emailVerified:false,phoneVerified:false,dob:"",gender:"",area:"",address:"",joined:iso(now())});
+    Object.assign(STORE.donor,{is:false,status:"none",donorId:"",bloodGroup:"",whatsapp:"",lastDonation:"",
+      health:"",available:true,appliedAt:"",cardTheme:"green",
+      ov:{name:null,gender:null,dob:null,area:null,phone:null}});
+    Object.assign(STORE.privacy,{profile:"all",showPhone:"responders",showWhatsapp:true,showGroup:true,showArea:true,searchable:true});
+    Object.assign(STORE.notif,{emergency:true,onlyGroup:true,onlyArea:false,donor:true,account:true,security:true,quiet:false});
+    Object.assign(STORE.security,{loginAlert:true,passwordChangedAt:""});
+    STORE.saved=[];
+    RAW.donations=[];RAW.incoming=[];RAW.mine=[];RAW.notifs=[];RAW.activity=[];RAW.donors=[];
+    RAW.sessions=[{id:"s1",name:thisDevice(),place:"এই ডিভাইস",last:"বর্তমানে সক্রিয়",cur:true}];
+    try{localStorage.removeItem(LS);localStorage.removeItem(LS_DATA);}catch(e){}
+  }
+  /* বুটের সময়ই stale cache ধরে ফেলি: বর্তমান member uid-এর সাথে cache-এর uid না মিললে
+     cache ফেলে দিই (auth callback-এ পরে সঠিক ডেটা আবার load হবে)। */
+  (function guardStaleCache(){
+    try{
+      const memberUid=localStorage.getItem("cbdcMemberUid")||"";
+      const cachedUid=STORE.account.uid||"";
+      if(memberUid && cachedUid!==memberUid) resetUserCache();
+    }catch(e){}
+  })();
   
   /* a donor is "ready" when the 90-day rest period has passed */
   const donorReady=d=>!d.lastDonation||dayDiff(d.lastDonation)>=90;
@@ -4144,7 +4171,7 @@ function initPage() {
         <button class="bell" id="tbell" aria-label="বিজ্ঞপ্তি">${ICON.bell(21)}${badge()}</button>`;
     }else{
       t.className="top";
-      t.innerHTML=`<a class="brand" href="${screenPath("doner","home")}" data-nav="home">
+      t.innerHTML=`<a class="brand" href="${appBase()}" data-home="1">
           <span class="lg"><img src="${LOGO}" alt="CBDC লোগো"></span><b>চকবাজার ব্লাড ডোনার'স ক্লাব</b></a>
         <nav class="dnav">${NAV.map(n=>`<button data-nav="${n.id}" class="${CUR===n.id?"on":""}"
           title="${n.label}">${n.icon(22)}<span>${n.label}</span></button>`).join("")}</nav>
@@ -4155,6 +4182,7 @@ function initPage() {
   const badge=()=>{const u=unread();return u&&STORE.prefs.badge?`<span class="bd">${bn(u)}</span>`:""};
   
   document.addEventListener("click",e=>{
+    if(e.target.closest("[data-home]")){e.preventDefault();navigateToPage("home");return}
     const n=e.target.closest("[data-nav]");
     if(n){e.preventDefault();go(n.dataset.nav);return}
     if(e.target.closest("#tback")){go(CUR);return}
@@ -5472,7 +5500,234 @@ function initPage() {
     if(RAW.activity.length>200)RAW.activity.length=200;
     saveData();
   }
-  
+
+  /* ── id generator (local request id) ── */
+  function genId(prefix){
+    return prefix+"-"+Date.now().toString(36).toUpperCase()+"-"+Math.random().toString(36).slice(2,7).toUpperCase();
+  }
+
+  /* ── রক্তদাতা হিসেবে যুক্ত হন ── */
+  function sheetBecome(){
+    if(isDonor()&&dStatus()==="pending"){ toast("আপনার আবেদন ইতিমধ্যে যাচাইয়ের অপেক্ষায় আছে","er"); reqTab="become"; go("req"); return; }
+    if(isDonor()&&dStatus()==="approved"){ go("set","donor"); return; }
+    const s=sheet("রক্তদাতা হিসেবে যুক্ত হন",`
+      <div class="note i">${ICON.info(17)}<span>আপনার অ্যাকাউন্টের নাম, লিঙ্গ, এলাকা ও মোবাইল স্বয়ংক্রিয়ভাবে ব্যবহার হবে — আবার লিখতে হবে না।</span></div>
+      <form id="becomeForm" novalidate>
+      <div class="f"><label>রক্তের গ্রুপ <i>*</i></label>
+        <select id="bc_group" name="bc_group">
+          <option value="">রক্তের গ্রুপ নির্বাচন করুন</option>
+          ${GROUPS.map(g=>`<option>${esc(g)}</option>`).join("")}
+        </select></div>
+      <div class="f"><label>সর্বশেষ রক্তদান <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
+        <input id="bc_last" name="bc_last" type="date" max="${iso(now())}">
+        <span class="hint">মনে না থাকলে খালি রাখুন।</span></div>
+      <div class="f"><label>স্বাস্থ্য তথ্য <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
+        <textarea id="bc_health" name="bc_health" placeholder="সম্পূর্ণ সুস্থ, কোনো দীর্ঘমেয়াদি রোগ নেই।"></textarea></div>
+      <div class="f"><label>WhatsApp নম্বর <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
+        <input id="bc_wa" name="bc_wa" inputmode="numeric" maxlength="11"></div>
+      <label class="chk"><input type="checkbox" id="bc_ok" name="bc_ok">
+        <span>আমি নিশ্চিত করছি প্রদত্ত তথ্য সঠিক এবং স্বেচ্ছায় রক্তদানে সম্মত।</span></label>
+      </form>`,
+      `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="bc_save">${ICON.check(16)} জমা দিন</button>`,{lock:true});
+    attachLiveClear(s.q("#becomeForm"));
+    s.q("#bc_save").onclick=async()=>{
+      const form=s.q("#becomeForm");
+      const v=validateForm(form,{
+        bc_group:{required:true,label:"রক্তের গ্রুপ"},
+        bc_last:{custom:v=>!v||dayDiff(v)>=0||"ভবিষ্যতের তারিখ দেওয়া যাবে না"},
+        bc_wa:{custom:v=>!v||phoneOK(v)||"সঠিক ১১ সংখ্যার নম্বর দিন"},
+        bc_ok:{checked:true}
+      });
+      if(!v.ok)return;
+      const btn=s.q("#bc_save");btn.disabled=true;btn.textContent="সংরক্ষণ হচ্ছে…";
+      const d=STORE.donor;
+      d.is=true; d.status="pending";
+      d.bloodGroup=s.q("#bc_group").value;
+      d.lastDonation=s.q("#bc_last").value||"";
+      d.health=s.q("#bc_health").value.trim()||"";
+      d.whatsapp=s.q("#bc_wa").value.trim()||"";
+      d.appliedAt=iso(now());
+      d.available=true;
+      d.donorId=d.donorId||newDonorId();       /* uid থেকে স্থির — duplicate হয় না */
+      save();                                   /* localStorage + queue (shared/RTDB) + users/{uid} */
+      logAct("রক্তদাতা হিসেবে যুক্ত হন",d.bloodGroup+" · যাচাইয়ের অপেক্ষায়","donor");
+      s.close();
+      reqTab="become";
+      go("req");
+      toast("আপনার তথ্য যাচাইয়ের জন্য পাঠানো হয়েছে","ok");
+    };
+  }
+
+  /* ── জরুরি রক্তের আবেদন ── */
+  function sheetNewReq(){
+    const s=sheet("জরুরি রক্তের আবেদন",`
+      <div class="note i">${ICON.info(17)}<span>জমা দিলে অ্যাডমিন যাচাই করবেন; অনুমোদনের পর তা রক্তদাতাদের কাছে প্রকাশিত হবে।</span></div>
+      <form id="newreqForm" novalidate>
+      <div class="f"><label>রোগীর নাম <i>*</i></label>
+        <input id="nr_patient" name="nr_patient">
+        <span class="hint">রোগীর অনুমতি ছাড়া পুরো নাম না লেখাই ভালো</span></div>
+      <div class="f"><label>রক্তের গ্রুপ <i>*</i></label>
+        <select id="nr_group" name="nr_group">
+          <option value="">গ্রুপ নির্বাচন করুন</option>
+          ${GROUPS.map(g=>`<option>${esc(g)}</option>`).join("")}
+        </select></div>
+      <div class="f2">
+        <div class="f"><label>কত ব্যাগ <i>*</i></label>
+          <input id="nr_bags" name="nr_bags" type="number" min="1" max="99" inputmode="numeric"></div>
+        <div class="f"><label>জরুরিতা <i>*</i></label>
+          <select id="nr_urgency" name="nr_urgency">
+            <option value="">নির্বাচন করুন</option>
+            <option>অতিজরুরি (২ ঘণ্টা)</option>
+            <option>জরুরি (আজকের মধ্যে)</option>
+            <option>আগামীকালের মধ্যে</option>
+          </select></div>
+      </div>
+      <div class="f"><label>হাসপাতালের নাম <i>*</i></label>
+        <input id="nr_hospital" name="nr_hospital"></div>
+      <div class="f"><label>হাসপাতালের ঠিকানা <i>*</i></label>
+        <input id="nr_address" name="nr_address"></div>
+      <div class="f"><label>বিবরণ <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
+        <textarea id="nr_desc" name="nr_desc"></textarea></div>
+      <label class="chk"><input type="checkbox" id="nr_ok" name="nr_ok">
+        <span>আমি নিশ্চিত করছি উপরের তথ্য সঠিক এবং রক্তের প্রয়োজনটি বাস্তব।</span></label>
+      </form>`,
+      `<button class="btn gh" data-close>বাতিল</button><button class="btn red" id="nr_save">${ICON.plus(16)} আবেদন জমা দিন</button>`,{lock:true});
+    attachLiveClear(s.q("#newreqForm"));
+    s.q("#nr_save").onclick=async()=>{
+      const form=s.q("#newreqForm");
+      const v=validateForm(form,{
+        nr_patient:{required:true,label:"রোগীর নাম"},
+        nr_group:{required:true,label:"রক্তের গ্রুপ"},
+        nr_bags:{required:true,custom:v=>{const n=Number(v);return n>=1&&n<=99?"":"১–৯৯ ব্যাগ দিন"},label:"কত ব্যাগ"},
+        nr_urgency:{required:true,label:"জরুরিতা"},
+        nr_hospital:{required:true,label:"হাসপাতালের নাম"},
+        nr_address:{required:true,label:"হাসপাতালের ঠিকানা"},
+        nr_ok:{checked:true}
+      });
+      if(!v.ok)return;
+      const btn=s.q("#nr_save");btn.disabled=true;btn.textContent="জমা হচ্ছে…";
+      const m={
+        id:genId("REQ"),
+        patient:s.q("#nr_patient").value.trim(),
+        group:s.q("#nr_group").value,
+        bags:Number(s.q("#nr_bags").value),
+        urgency:s.q("#nr_urgency").value,
+        hospital:s.q("#nr_hospital").value.trim(),
+        address:s.q("#nr_address").value.trim(),
+        description:s.q("#nr_desc").value.trim()||"",
+        neededBy:addD(iso(now()),1),
+        createdAt:new Date().toISOString(),
+        status:"pending",
+        responders:[]
+      };
+      RAW.mine.unshift(m);
+      saveData();                            /* localStorage + users/{uid}/data + queue (shared/RTDB) */
+      logAct("জরুরি রক্তের আবেদন",m.group+" · "+m.bags+" ব্যাগ","donor");
+      s.close();
+      reqTab="mine";
+      go("req");
+      toast("আবেদন জমা হয়েছে — যাচাইয়ের অপেক্ষায়","ok");
+    };
+  }
+
+  /* ── রক্তদান যোগ (adddonation sub-screen) ── */
+  function bindAddDonation(){
+    const aClear=$("#ad_clear"), aSave=$("#ad_save");
+    if(aClear)aClear.onclick=()=>{
+      ["#ad_date","#ad_place","#ad_pat","#ad_note"].forEach(sel=>{const el=$(sel);if(el)el.value=""});
+      const d=$("#ad_date");if(d)d.value=iso(now());
+      const f=$("#ad_file");if(f)f.value="";
+      const ok=$("#ad_ok");if(ok)ok.checked=false;
+      toast("ফর্ম খালি করা হয়েছে");
+    };
+    if(aSave)aSave.onclick=async()=>{
+      const date=$("#ad_date").value, place=$("#ad_place").value.trim();
+      const er=m=>toast(m,"er");
+      if(!date)return er("রক্তদানের তারিখ দিন");
+      if(!place)return er("স্থান / হাসপাতাল লিখুন");
+      const ok=$("#ad_ok");if(!ok||!ok.checked)return er("সম্মতিতে টিক দিন");
+      if(RAW.donations.some(x=>x.date===date&&x.place===place))return er("একই তারিখ ও স্থানের রেকর্ড আগেই আছে");
+      let proof="";
+      const fin=$("#ad_file");
+      const f=fin&&fin.files&&fin.files[0];
+      if(f){
+        if(f.size>4*1024*1024)return er("ছবি ৪ MB-এর কম হতে হবে");
+        try{ const up=await imgbbUploadImage(f); proof=up.url; }
+        catch(e){ return er(e&&e.message?e.message:"ছবি আপলোড করা যায়নি"); }
+      }
+      RAW.donations.unshift({date,place,bags:Number($("#ad_bags").value)||1,
+        pat:$("#ad_pat").value.trim()||"",note:$("#ad_note").value.trim()||"",proof,ok:false});
+      saveData();
+      logAct("রক্তদান যোগ",date+" · "+place,"donor");
+      renderSub("adddonation");
+      toast("যোগ হয়েছে — যাচাইয়ের অপেক্ষায়","ok");
+    };
+    $$("[data-delrec]").forEach(b=>b.onclick=async()=>{
+      const i=Number(b.dataset.delrec);
+      if(!await confirmS({title:"রেকর্ডটি মুছবেন?",desc:"রক্তদানের রেকর্ড মুছে যাবে।",ok:"মুছুন",danger:true}))return;
+      RAW.donations.splice(i,1);saveData();
+      logAct("রক্তদানের রেকর্ড মুছে ফেলা হয়েছে","","donor");
+      renderSub("adddonation");toast("মুছে ফেলা হয়েছে");
+    });
+  }
+
+  /* ── রক্তের গ্রুপ পরিবর্তনের অনুরোধ ── */
+  function sheetGroupChange(){
+    const d=STORE.donor;
+    const s=sheet("রক্তের গ্রুপ পরিবর্তন",`
+      <div class="note w">${ICON.warn(17)}<span>রক্তের গ্রুপ বদলালে অ্যাডমিনের অনুমোদন লাগবে — এটি অনুরোধ হিসেবে যাবে।</span></div>
+      <div class="f"><label>বর্তমান গ্রুপ</label><input value="${esc(d.bloodGroup||"")}" readonly></div>
+      <div class="f"><label>নতুন গ্রুপ <i>*</i></label>
+        <select id="gch"><option value="">নতুন গ্রুপ নির্বাচন করুন</option>
+        ${GROUPS.map(g=>`<option ${g===d.bloodGroup?"selected":""}>${esc(g)}</option>`).join("")}</select>
+        <span class="hint er hide" id="gche"></span></div>`,
+      `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="ok">অনুরোধ পাঠান</button>`);
+    s.q("#ok").onclick=()=>{
+      const v=s.q("#gch").value;
+      if(!v){const e=s.q("#gche");e.textContent="নতুন গ্রুপ নির্বাচন করুন";e.classList.remove("hide");return}
+      if(v===d.bloodGroup){toast("এটি আপনার বর্তমান গ্রুপ","er");return}
+      if(window.CBDCShared){
+        CBDCShared.update(st=>{
+          const owner=STORE.account.uid||STORE.account.phone||STORE.account.email;
+          const gid="GR-"+String(owner).replace(/[^A-Za-z0-9]/g,"").slice(-8);
+          if(!st.queue.some(q=>q.kind==="group"&&q.ownerUid===owner))
+            st.queue.unshift({kind:"group",id:gid,name:STORE.account.name,from:d.bloodGroup,to:v,group:v,ownerUid:owner,at:new Date().toISOString()});
+          return st;
+        },"doner:personal");
+      }
+      logAct("রক্তের গ্রুপ পরিবর্তনের অনুরোধ",d.bloodGroup+" → "+v,"donor");
+      s.close();renderSub("donor");toast("অনুরোধ পাঠানো হয়েছে — অ্যাডমিন যাচাই করবেন","ok");
+    };
+  }
+
+  /* ── আমার সব তথ্য নামান ── */
+  function sheetExport(){
+    const data={account:{...STORE.account},donor:{...STORE.donor},
+      donations:RAW.donations,mine:RAW.mine,notifs:RAW.notifs,activity:RAW.activity};
+    const s=sheet("আমার সব তথ্য নামান",`
+      <div class="note i">${ICON.info(17)}<span>আপনার অ্যাকাউন্ট, ডোনার তথ্য, রক্তদান, আবেদন ও কার্যক্রম JSON/CSV ফাইলে নামাতে পারবেন।</span></div>
+      <button class="opt on" data-k="json" style="width:100%;text-align:left"><i class="dot"></i>
+        <span><b>JSON</b><small>সব তথ্য এক ফাইলে</small></span></button>
+      <button class="opt" data-k="csv" style="width:100%;text-align:left"><i class="dot"></i>
+        <span><b>CSV</b><small>কার্যক্রম ও আবেদন তালিকা</small></span></button>`,
+      `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="ok">${ICON.down(15)} নামান</button>`);
+    let kind="json";
+    s.querySelectorAll(".opt").forEach(o=>o.onclick=()=>{
+      s.querySelectorAll(".opt").forEach(z=>z.classList.remove("on"));o.classList.add("on");kind=o.dataset.k});
+    s.q("#ok").onclick=()=>{
+      if(kind==="json"){
+        dl(new Blob([JSON.stringify(data,null,2)],{type:"application/json"}),"cbdc-export.json");
+      }else{
+        const rows=[["ধরন","শিরোনাম","বিস্তারিত","সময়"],
+          ...RAW.activity.map(x=>[x.type,x.title,x.detail,x.at]),
+          ...RAW.mine.map(m=>["আবেদন",m.id,m.patient+" · "+m.group+" · "+m.bags+" ব্যাগ",m.createdAt||""])];
+        const csv=rows.map(r=>r.map(c=>`"${String(c??"").replace(/"/g,'""')}"`).join(",")).join("\n");
+        dl(new Blob(["\ufeff"+csv],{type:"text/csv"}),"cbdc-export.csv");
+      }
+      s.close();toast("তথ্য নামানো হচ্ছে","ok");
+    };
+  }
+
   /* ---------- notifications panel ---------- */
   let npOpen=false;
   function openNotifs(){
@@ -5518,11 +5773,14 @@ function initPage() {
     if(D_.resp){b.disabled=true;b.innerHTML=ICON.checkC(14)+" সাড়া দিয়েছেন";
       logAct("জরুরি আবেদনে সাড়া",D_.resp,"donor");toast("সাড়া জানানো হয়েছে","ok");return}
     if(D_.mute){if(!await confirmS({title:"এই আবেদন লুকাবেন?",desc:"আপনার তালিকা থেকে সরে যাবে।",ok:"লুকান"}))return;
-      const i=RAW.incoming.findIndex(x=>x.id===D_.mute);if(i>-1)RAW.incoming.splice(i,1);saveData();rReq();toast("লুকানো হয়েছে");return}
+      const i=RAW.incoming.findIndex(x=>x.id===D_.mute);if(i>-1)RAW.incoming.splice(i,1);saveData();rReq();
+      logAct("আবেদন লুকানো হয়েছে",D_.mute,"donor");toast("লুকানো হয়েছে");return}
     if(D_.done){if(!await confirmS({title:"সম্পন্ন হিসেবে চিহ্নিত করবেন?",desc:"রক্ত পাওয়া গেছে নিশ্চিত করছেন।",ok:"সম্পন্ন"}))return;
-      RAW.mine.find(x=>x.id===D_.done).status="done";saveData();rReq();toast("আবেদন সম্পন্ন হয়েছে","ok");return}
+      RAW.mine.find(x=>x.id===D_.done).status="done";saveData();rReq();
+      logAct("আবেদন সম্পন্ন",D_.done,"donor");toast("আবেদন সম্পন্ন হয়েছে","ok");return}
     if(D_.cancel){if(!await confirmS({title:"আবেদন বাতিল করবেন?",desc:"রক্তদাতারা আর দেখতে পাবেন না।",ok:"বাতিল করুন",danger:true}))return;
-      RAW.mine.find(x=>x.id===D_.cancel).status="cancelled";saveData();rReq();toast("আবেদন বাতিল হয়েছে");return}
+      RAW.mine.find(x=>x.id===D_.cancel).status="cancelled";saveData();rReq();
+      logAct("আবেদন বাতিল",D_.cancel,"donor");toast("আবেদন বাতিল হয়েছে");return}
     if(D_.resps){const r=RAW.mine.find(x=>x.id===D_.resps);
       sheet("সাড়াদাতারা",r.responders.map(p=>`<div class="card" style="padding:11px;margin-bottom:8px">
         <div class="per"><img src="${AV("পুরুষ")}" alt=""><div class="i"><b>${esc(p.name)}</b>
@@ -5828,6 +6086,13 @@ function initPage() {
       localStorage.removeItem("cbdc.session");
       localStorage.removeItem("cbdc.auth");
       localStorage.removeItem("cbdcMember");
+      localStorage.removeItem("cbdcMemberEmail");
+      localStorage.removeItem("cbdcMemberName");
+      localStorage.removeItem("cbdcMemberPhoto");
+      localStorage.removeItem("cbdcMemberRole");
+      localStorage.removeItem("cbdcMemberUid");
+      localStorage.removeItem("cbdc.app");
+      localStorage.removeItem("cbdc.data");
     }catch(e){}
     toast("লগআউট হয়েছে","ok");
     setTimeout(()=>{navigateToPage("home")},700);
@@ -6099,7 +6364,7 @@ function initPage() {
       a.email=row.email||a.email; a.phone=row.phone||a.phone;
       a.dob=row.dob||a.dob; a.gender=row.gender||a.gender;
       a.area=row.area||a.area; a.address=row.address||a.address;
-      if(row.photoURL)a.photo=row.photoURL;
+      a.photo=row.photoURL||"";   /* বর্তমান uid-এর RTDB ছবি; না থাকলে খালি */
       if(row.joined)a.joined=row.joined;
       if(row.bloodGroup)STORE.donor.bloodGroup=row.bloodGroup;
       if(row.donorId)STORE.donor.donorId=row.donorId;
@@ -6126,11 +6391,20 @@ function initPage() {
     try{
       const shared = initSharedFirebase();
       const {onAuthStateChanged} = await import("firebase/auth");
+      let authUid="";
       onAuthStateChanged(shared.auth, async (user)=>{
         if(PUBLIC_MODE)return;
         if(!user){
+          authUid="";
           setTimeout(()=>{navigateToPage("home")},400);
           return;
+        }
+        /* নতুন uid → আগের user-এর cached state (ছবিসহ) পরিষ্কার —
+           এক user-এর profile picture কখনোই আরেক user-এ দেখা যায় না। */
+        if(user.uid!==authUid){
+          authUid=user.uid;
+          resetUserCache();
+          if(!PUBLIC_MODE){ try{ paintTop(); go(CUR,SUB,false); }catch(e){} }
         }
         /* Role gate — Admin/Moderator কখনোই Doner Dashboard ব্যবহার করে না;
            তাদের নিজ নিজ প্যানেলে পাঠিয়ে দেওয়া হয় (role আসে RTDB থেকে)। */
@@ -6142,7 +6416,7 @@ function initPage() {
 
         if(user.email)STORE.account.email=STORE.account.email||user.email;
         if(user.displayName)STORE.account.name=STORE.account.name||user.displayName;
-        if(user.photoURL)STORE.account.photo=STORE.account.photo||user.photoURL;
+        if(user.photoURL)STORE.account.photo=user.photoURL;
         STORE.account.uid=user.uid;
         STORE.account.emailVerified=user.emailVerified!==false;
         try{save()}catch(e){}

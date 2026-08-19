@@ -66,7 +66,7 @@ svg{display:block;flex:none}
 .brand{display:flex;align-items:center;gap:9px;min-width:0}
 .brand .lg{width:36px;height:36px;border-radius:50%;background:#fff;display:grid;place-items:center;flex:none;
   overflow:hidden;box-shadow:0 1px 4px rgba(8,60,42,.16)}
-.brand .lg img{width:34px;height:34px;object-fit:contain;display:block}
+.brand .lg img{width:34px;height:34px;object-fit:cover;border-radius:50%;display:block}
 .brand b{font-size:.94rem;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.2px}
 .back{width:38px;height:38px;display:grid;place-items:center;border-radius:50%;color:var(--ink);flex:none}
 .back:hover{background:var(--card2)}
@@ -748,7 +748,7 @@ function initPage() {
   const I=(p,sz=22)=>`<svg width="${sz}" height="${sz}" viewBox="0 0 24 24" fill="none" stroke="currentColor"
     stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
   const ICON={
-    logo:`<img src="${LOGO}" alt="CBDC" width="20" height="20" style="display:block;object-fit:contain">`,
+    logo:`<img src="${LOGO}" alt="CBDC" width="20" height="20" style="display:block;object-fit:cover;border-radius:50%">`,
     home:s=>I(`<path d="M3 10.2 12 3l9 7.2"/><path d="M5.5 9.4V20a1 1 0 0 0 1 1H10v-5.5h4V21h3.5a1 1 0 0 0 1-1V9.4"/>`,s),
     drop:s=>I(`<path d="M12 3s6 6.7 6 10.7A6 6 0 0 1 6 13.7C6 9.7 12 3 12 3z"/><path d="M12 17.2a3.2 3.2 0 0 1-3.2-3.2"/>`,s),
     plus:s=>I(`<circle cx="12" cy="12" r="9"/><path d="M12 8.2v7.6M8.2 12h7.6"/>`,s),
@@ -2481,7 +2481,7 @@ function initPage() {
         <button class="bell" id="tbell" aria-label="বিজ্ঞপ্তি">${SI.bell(21)}${badge()}</button>`;
     }else{
       t.className="top";
-      t.innerHTML=`<a class="brand" href="${screenPath("admin","home")}" data-nav="home">
+      t.innerHTML=`<a class="brand" href="${appBase()}" data-home="1">
           <span class="lg"><img src="${LOGO}" alt="CBDC লোগো"></span>
           <span class="btx"><b>চকবাজার ব্লাড ডোনার'স ক্লাব</b><small>${esc(PANEL.label)}</small></span></a>
         <nav class="dnav">${NAV().map(n=>{const c=(!ME.prefs||ME.prefs.badge!==false)&&n.count?n.count():0;
@@ -2495,6 +2495,7 @@ function initPage() {
     return u&&(!ME.prefs||ME.prefs.badge!==false)?`<span class="bd">${bn(u)}</span>`:""};
   
   document.addEventListener("click",e=>{
+    if(e.target.closest("[data-home]")){e.preventDefault();navigateToPage("home");return}
     const n=e.target.closest("[data-nav]");
     if(n){e.preventDefault();go(n.dataset.nav);return}
     if(e.target.closest("#tback")){go(CUR);return}

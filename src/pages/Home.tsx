@@ -2001,7 +2001,10 @@ function StaticShell() {
                     </div>
                     <div className="field">
                       <label htmlFor="healthNotes">
-                        {"শারীরিক সুস্থতা / কোনো রোগ আছে কি?"}
+                        {"শারীরিক সুস্থতা / কোনো রোগ আছে কি? "}
+                        <span className="muted">
+                          {"(ঐচ্ছিক)"}
+                        </span>
                       </label>
                       <textarea id="healthNotes" name="healthNotes">
                       </textarea>
@@ -2093,7 +2096,7 @@ function StaticShell() {
                 </p>
                 <ul className="info-list">
                   <li>
-                    {`আপনার বয়স ${SITE.rules.minAge} থেকে ${SITE.rules.maxAge} বছরের মধ্যে হতে হবে (জন্ম তারিখ থেকে হিসাব হবে)।`}
+                    {`আপনার বয়স ${SITE.rules.minAge} থেকে ${SITE.rules.maxAge} বছরের মধ্যে হতে হবে।`}
                   </li>
                   <li>
                     {"সর্বশেষ রক্তদানের পর কমপক্ষে ৯০ দিন অতিক্রম হতে হবে।"}
@@ -2133,12 +2136,12 @@ function StaticShell() {
                     </select>
                   </div>
                   <div className="field" style={{ marginTop: "16px" }}>
-                    <label className="required" htmlFor="dob">
-                      {"আপনার জন্ম তারিখ"}
+                    <label className="required" htmlFor="age">
+                      {"আপনার বয়স"}
                     </label>
-                    <input id="dob" name="dob" type="date" required={true} />
-                    <span className="note" id="eligAgeNote">
-                      {"জন্ম তারিখ থেকে বয়স স্বয়ংক্রিয়ভাবে হিসাব হবে।"}
+                    <input id="age" name="age" type="number" min="1" max="120" inputMode="numeric" required={true} />
+                    <span className="note">
+                      {"সরাসরি বছর হিসেবে আপনার বর্তমান বয়স লিখুন (যেমন: ১৮, ৪৫)।"}
                     </span>
                   </div>
                   <label className="check">
@@ -2218,12 +2221,15 @@ function StaticShell() {
                       <input id="patientName" required={true} />
                     </div>
                     <div className="field">
-                      <label htmlFor="patientDob">
-                        {"রোগীর জন্ম তারিখ"}
+                      <label htmlFor="patientAge">
+                        {"রোগীর বয়স "}
+                        <span className="muted">
+                          {"(ঐচ্ছিক)"}
+                        </span>
                       </label>
-                      <input id="patientDob" name="patientDob" type="date" />
-                      <span className="note" id="patientAgeNote">
-                        {"বয়স জন্ম তারিখ থেকে হিসাব হবে।"}
+                      <input id="patientAge" name="patientAge" type="number" min="1" max="120" inputMode="numeric" />
+                      <span className="note">
+                        {"সরাসরি বছর হিসেবে রোগীর বয়স লিখুন (যেমন: ৫, ১৮, ৪৫)।"}
                       </span>
                     </div>
                     <div className="field">
@@ -3025,20 +3031,16 @@ function StaticShell() {
                     {" "}
                     <div className="field">
                       <label htmlFor="suHealth">
-                        {"শারীরিক সুস্থতা / কোনো রোগ আছে কি?"}
+                        {"শারীরিক সুস্থতা / কোনো রোগ আছে কি? "}
+                        <span className="muted">
+                          {"(ঐচ্ছিক)"}
+                        </span>
                       </label>
                       <textarea id="suHealth" name="healthNotes">
                       </textarea>
                     </div>
                     {" "}
                   </div>
-                  {" "}
-                  <h2 className="form-title">
-                    <span>
-                      {"৫"}
-                    </span>
-                    {" অঙ্গীকার"}
-                  </h2>
                   {" "}
                   <label className="check">
                     <input id="suAgree" type="checkbox" required={true} />
@@ -4097,20 +4099,20 @@ function initPage() {
         const form=e.currentTarget;
         const v=validateForm(form,{
           lastRange:{required:true,label:"সর্বশেষ রক্তদানের সময়"},
-          dob:{required:true,dob:true,label:"জন্ম তারিখ"},
+          age:{required:true,custom:val=>{const n=Number(digits(val));return Number.isFinite(n)&&n>=1&&n<=120?"":"সঠিক বয়স লিখুন (১ থেকে ১২০ বছর)"},label:"আপনার বয়স"},
           healthCheck:{checked:true}
         });
         if(!v.ok)return;
         const range=$("#lastRange").value;
-        const age=ageFromDob($("#dob").value);
+        const age=Number(digits($("#age").value));
         const reasons=[];
-        if(age===null||age<SITE.rules.minAge||age>SITE.rules.maxAge)
+        if(age<SITE.rules.minAge||age>SITE.rules.maxAge)
           reasons.push(`বয়স ${toBanglaDigits(SITE.rules.minAge)} থেকে ${toBanglaDigits(SITE.rules.maxAge)} বছরের মধ্যে হতে হবে।`);
         if(range==="under3")reasons.push("সর্বশেষ রক্তদানের পর ৯০ দিন পূর্ণ হয়নি।");
         if(!$("#healthCheck").checked)reasons.push("বর্তমানে সম্পূর্ণ সুস্থ থাকার নিশ্চয়তা প্রয়োজন।");
         const box=$("#eligibilityResult");
         box.className="result "+(reasons.length?"fail":"ok");
-        const ageLine=age===null?"":`<p>আপনার বর্তমান বয়স: <strong>${esc(ageText($("#dob").value))}</strong></p>`;
+        const ageLine=`<p>আপনার বর্তমান বয়স: <strong>${bn(age)} বছর</strong></p>`;
         box.innerHTML=reasons.length
           ?`<h3>⚠️ দুঃখিত! আপনি বর্তমানে রক্তদানের জন্য যোগ্য নন।</h3>${ageLine}<p>সম্ভাব্য কারণগুলো:</p><ul>${reasons.map(r=>`<li>${esc(r)}</li>`).join("")}</ul>`
           :`<h3>🎉 অভিনন্দন! আপনি প্রাথমিকভাবে রক্তদানের জন্য যোগ্য বলে বিবেচিত হচ্ছেন।</h3>${ageLine}<p>দ্রষ্টব্য: চূড়ান্ত যোগ্যতা চিকিৎসক বা রক্ত সংগ্রহ কেন্দ্রের স্বাস্থ্য পরীক্ষার ওপর নির্ভর করবে।</p>`;
@@ -4130,7 +4132,7 @@ function initPage() {
         const form = e.currentTarget, message = $("#emergencyMessage");
         const v = validateForm(form, {
           patientName:     {required:true, label:"রোগীর নাম"},
-          patientDob:      {dob:true, label:"রোগীর জন্ম তারিখ"},
+          patientAge:      {custom:v=>{const n=Number(digits(v));return !v||(Number.isFinite(n)&&n>=1&&n<=120)?"":"সঠিক বয়স লিখুন (১ থেকে ১২০ বছর)"}, label:"রোগীর বয়স"},
           requestGroup:    {required:true, label:"রক্তের গ্রুপ"},
           bags:            {required:true, label:"ব্যাগ সংখ্যা"},
           urgency:         {required:true, label:"জরুরিতার সময়সীমা"},
@@ -4159,7 +4161,7 @@ function initPage() {
 
         const o = normalizeFormPhones({
           patientName: $("#patientName").value.trim(),
-          patientDob: $("#patientDob").value.trim(),     // বয়স এখান থেকেই হিসাব হয়
+          patientAge: Number(digits($("#patientAge").value.trim())) || null,   // সরাসরি বছর হিসেবে রোগীর বয়স
           bloodGroup: $("#requestGroup").value,
           bags: Number(digits($("#bags").value)),
           hospitalName: $("#hospital").value.trim(),
@@ -4443,17 +4445,18 @@ function initPage() {
         if(profile.uid) localStorage.setItem("cbdcMemberUid", profile.uid);
         try{
           const app=JSON.parse(localStorage.getItem("cbdc.app")||"{}");
-          app.account=Object.assign({uid:"",name:"",username:"",email:"",phone:"",photo:"",photoSource:"none",emailVerified:false,phoneVerified:false,dob:"",gender:"",area:"",address:"",joined:new Date().toISOString().slice(0,10)},app.account||{},
-            {uid:profile.uid||app.account?.uid||"",name:profile.name||app.account?.name||"",email:profile.email||app.account?.email||"",photo:profile.photo||app.account?.photo||"",
-             phone:profile.phone||app.account?.phone||"",gender:profile.gender||app.account?.gender||"",area:profile.area||app.account?.area||"",
-             dob:profile.dob||app.account?.dob||""});
+          /* নতুন login-এর জন্য একদম fresh account — পুরোনো user-এর ছবি/তথ্য inherit হয় না */
+          app.account=Object.assign({uid:"",name:"",username:"",email:"",phone:"",photo:"",photoSource:"none",emailVerified:false,phoneVerified:false,dob:"",gender:"",area:"",address:"",joined:new Date().toISOString().slice(0,10)},
+            {uid:profile.uid||"",name:profile.name||"",email:profile.email||"",photo:profile.photo||"",
+             phone:profile.phone||"",gender:profile.gender||"",area:profile.area||"",
+             dob:profile.dob||""});
           app.prefs=Object.assign({theme:"system",lang:"bn",dense:false,anim:true,badge:true},app.prefs||{});
           localStorage.setItem("cbdc.app",JSON.stringify(app));
         }catch(e){}
         renderAuthState();
       }
       function clearMemberSession(){
-        ["cbdcMember","cbdcMemberEmail","cbdcMemberName","cbdcMemberPhoto","cbdcMemberRole","cbdcMemberUid"].forEach(k=>localStorage.removeItem(k));
+        ["cbdcMember","cbdcMemberEmail","cbdcMemberName","cbdcMemberPhoto","cbdcMemberRole","cbdcMemberUid","cbdc.app","cbdc.data"].forEach(k=>localStorage.removeItem(k));
         renderAuthState();
       }
       const isLoggedIn = () => localStorage.getItem("cbdcMember")==="1";
@@ -4920,12 +4923,11 @@ function initPage() {
          হিসাব করা বয়স দেখা যায়। বয়স আলাদা করে কোথাও লিখতে হয় না। */
       (function wireDobFields(){
         const bounds = dobBounds(SITE.rules.minAge, SITE.rules.maxAge);
-        const pairs = [["#donorDob","#donorAgeNote"],["#suDob","#suAgeNote"],["#dob","#eligAgeNote"],["#patientDob","#patientAgeNote"]];
+        const pairs = [["#donorDob","#donorAgeNote"],["#suDob","#suAgeNote"]];
         pairs.forEach(([inputSel, noteSel])=>{
           const inp=$(inputSel), note=$(noteSel);
           if(!inp) return;
-          if(inputSel!=="#patientDob" && inputSel!=="#dob"){ inp.min=bounds.min; inp.max=bounds.max; }
-          inp.max = inp.max || new Date().toISOString().slice(0,10);
+          inp.min=bounds.min; inp.max=bounds.max;
           const paint=()=>{
             if(!note) return;
             const val=inp.value;
