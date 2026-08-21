@@ -708,7 +708,7 @@ function initPage() {
   "শেষ রক্তদানের পর অন্তত ৯০ দিন বিরতি দিতে হবে। এর মধ্যে নতুন তারিখ দিলে সতর্কবার্তা দেখাবে।":"You must wait at least 90 days after your last donation. Adding a closer date shows a warning.",
   "ভুল তথ্য দিলে রেকর্ড বাতিল হবে এবং বারবার হলে ডোনার তালিকা থেকে সরিয়ে দেওয়া হতে পারে।":"False entries will be rejected, and repeated cases may get you removed from the donor list.",
   "আপনি অতীতে বা সম্প্রতি যে রক্তদান করেছেন তার তারিখ ও স্থান। একবারে একটি রক্তদান।":"The date and place of a donation you made, past or recent. One donation at a time.",
-  "অ্যাকাউন্ট থাকবে, শুধু ডোনার তথ্য ও কার্ড সরে যাবে। চাইলে আবার যুক্ত হতে পারবেন।":"Your account stays; only donor details and the card go away. You can rejoin any time.",
+  "অ্যাকাউন্ট থাকবে, শুধু ডোনার তথ্য ও কার্ড সরে যাবে। চাইলে আবার যুক্ধ�। চাইলে আবার যুক্ত হতে পারবেন।":"Your account stays; only donor details and the card go away. You can rejoin any time.",
   "ব্লাড ব্যাগের রসিদ বা ছবি থাকলে যাচাই দ্রুত হয়। না থাকলেও যোগ করা যাবে।":"A receipt or photo of the blood bag speeds up verification. You can still add it without one.",
   "এই সেটিংস শুধু দেখানোর নিয়ম নয় — পাবলিক তালিকা ও সার্চেও প্রয়োগ হবে।":"These settings are enforced in the public list and search too, not just on screen.",
   "যেকোনো ফোনের ক্যামেরা দিয়ে QR স্ক্যান করলে উপরের সব তথ্য দেখা যাবে এবং":"Scanning the QR with any phone camera shows all of the above and offers to",
@@ -6269,7 +6269,7 @@ function initPage() {
     for(let i=0;i<src.length;i++)n=(n*31+src.charCodeAt(i))>>>0;
     return `CBDC-${y}-${String(n%9999+1).padStart(4,"0")}`;
   }
-  function needsSetup(){return !STORE.account.name.trim()||!phoneOK(STORE.account.phone)||!isValidDob(STORE.account.dob)}
+  function needsSetup(){return !isProfileComplete(STORE.account)}
   function sheetSetup(){
     const b=dobBounds(SITE.rules.minAge,SITE.rules.maxAge);
     const s=sheet("স্বাগতম",`
@@ -6352,30 +6352,54 @@ function initPage() {
       });
     }catch(e){ console.warn("data push:", e && e.message); }
   }
-  function watchMyProfile(uid){
+  function applyRtdbRow(uid, row, authUser){
+    const a=STORE.account;
+    a.uid=uid;
+    if(!row){
+      /* RTDB-তে প্রোফাইল নেই — শুধু এই uid-এর Auth email + (খালি হলে) Google ছবি */
+      if(authUser && authUser.email) a.email = a.email || authUser.email;
+      if(!a.photo && authUser && authUser.photoURL){
+        a.photo = authUser.photoURL;
+        a.photoSource = "google";
+      }
+      return;
+    }
+    a.name=row.name||a.name; a.username=row.username||a.username;
+    a.email=row.email||a.email; a.phone=row.phone||a.phone;
+    a.dob=row.dob||a.dob; a.gender=row.gender||a.gender;
+    a.area=row.area||a.area; a.address=row.address||a.address;
+    /* ছবি শুধু এই uid-এর RTDB থেকে; না থাকলে এই Auth user-এর Google ছবি; নাহলে খালি */
+    a.photo = photoForUid(row, (authUser && authUser.photoURL) || "");
+    if(a.photo && row.photoURL) a.photoSource = row.photoSource || a.photoSource || "upload";
+    else if(a.photo && !row.photoURL) a.photoSource = "google";
+    else a.photoSource = "none";
+    if(row.joined)a.joined=row.joined;
+    if(row.bloodGroup)STORE.donor.bloodGroup=row.bloodGroup;
+    if(row.donorId)STORE.donor.donorId=row.donorId;
+    if(row.donorStatus&&row.donorStatus!=="none"){STORE.donor.is=true;STORE.donor.status=row.donorStatus}
+    if(row.data&&typeof row.data==="object"){
+      ["donations","mine","notifs","activity"].forEach(k=>{ if(Array.isArray(row.data[k]))RAW[k]=row.data[k]; });
+      try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
+    }
+  }
+  function persistLocalAccount(){
+    try{localStorage.setItem(LS,JSON.stringify({account:STORE.account,donor:STORE.donor,
+      privacy:STORE.privacy,notif:STORE.notif,prefs:STORE.prefs,security:STORE.security,saved:STORE.saved}))}catch(e){}
+  }
+  function maybeShowSetup(){
+    if(PUBLIC_MODE) return;
+    if(!needsSetup()) return;
+    if(document.querySelector(".sheet")) return;
+    setTimeout(sheetSetup, 200);
+  }
+  function watchMyProfile(uid, authUser){
     if(!uid)return;
     RTDB_UID=uid;
     watchRow(NODES.users, uid, (row)=>{
-      if(!row)return;
+      if(!row && STORE.account.uid === uid && isProfileComplete(STORE.account)) return;
       RTDB_PULLING=true;
-      const a=STORE.account;
-      a.uid=uid;
-      a.name=row.name||a.name; a.username=row.username||a.username;
-      a.email=row.email||a.email; a.phone=row.phone||a.phone;
-      a.dob=row.dob||a.dob; a.gender=row.gender||a.gender;
-      a.area=row.area||a.area; a.address=row.address||a.address;
-      a.photo=row.photoURL||"";   /* বর্তমান uid-এর RTDB ছবি; না থাকলে খালি */
-      if(row.joined)a.joined=row.joined;
-      if(row.bloodGroup)STORE.donor.bloodGroup=row.bloodGroup;
-      if(row.donorId)STORE.donor.donorId=row.donorId;
-      if(row.donorStatus&&row.donorStatus!=="none"){STORE.donor.is=true;STORE.donor.status=row.donorStatus}
-      /* ডাটাবেসে থাকা নিজস্ব রেকর্ড — অন্য ডিভাইসে করা কাজও এখানে চলে আসে */
-      if(row.data&&typeof row.data==="object"){
-        ["donations","mine","notifs","activity"].forEach(k=>{ if(Array.isArray(row.data[k]))RAW[k]=row.data[k]; });
-        try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
-      }
-      try{localStorage.setItem(LS,JSON.stringify({account:STORE.account,donor:STORE.donor,
-        privacy:STORE.privacy,notif:STORE.notif,prefs:STORE.prefs,security:STORE.security,saved:STORE.saved}))}catch(e){}
+      applyRtdbRow(uid, row, authUser);
+      persistLocalAccount();
       RTDB_PULLING=false;
       if(!document.querySelector(".sheet")&&!PUBLIC_MODE){ try{ paintTop(); go(CUR,SUB,false); }catch(e){} }
     });
@@ -6391,7 +6415,7 @@ function initPage() {
     try{
       const shared = initSharedFirebase();
       const {onAuthStateChanged} = await import("firebase/auth");
-      let authUid="";
+      let authUid = STORE.account.uid || "";
       onAuthStateChanged(shared.auth, async (user)=>{
         if(PUBLIC_MODE)return;
         if(!user){
@@ -6399,13 +6423,13 @@ function initPage() {
           setTimeout(()=>{navigateToPage("home")},400);
           return;
         }
-        /* নতুন uid → আগের user-এর cached state (ছবিসহ) পরিষ্কার —
-           এক user-এর profile picture কখনোই আরেক user-এ দেখা যায় না। */
-        if(user.uid!==authUid){
-          authUid=user.uid;
+        /* শুধু অন্য uid-তে স্যুইচ করলেই cache পরিষ্কার —
+           প্রথম লোডে (authUid খালি বা একই uid) আগের সংরক্ষিত তথ্য রাখি। */
+        if(authUid && authUid !== user.uid){
           resetUserCache();
           if(!PUBLIC_MODE){ try{ paintTop(); go(CUR,SUB,false); }catch(e){} }
         }
+        authUid = user.uid;
         /* Role gate — Admin/Moderator কখনোই Doner Dashboard ব্যবহার করে না;
            তাদের নিজ নিজ প্যানেলে পাঠিয়ে দেওয়া হয় (role আসে RTDB থেকে)। */
         try{
@@ -6414,26 +6438,34 @@ function initPage() {
           if(page!=="doner"){ navigateToPage(page); return; }
         }catch(e){ console.warn("doner role gate:", e && e.message); }
 
-        if(user.email)STORE.account.email=STORE.account.email||user.email;
-        if(user.displayName)STORE.account.name=STORE.account.name||user.displayName;
-        if(user.photoURL)STORE.account.photo=user.photoURL;
-        STORE.account.uid=user.uid;
-        STORE.account.emailVerified=user.emailVerified!==false;
+        STORE.account.uid = user.uid;
+        if(user.email) STORE.account.email = STORE.account.email || user.email;
+        STORE.account.emailVerified = user.emailVerified !== false;
+        /* displayName/photo Auth থেকে ব্ল্যাঙ্কেট কপি করি না — RTDB এই uid-এর তথ্যই সত্য */
+
+        let row = null;
+        try{ row = await loadUserProfile(user.uid); }catch(e){}
+        applyRtdbRow(user.uid, row, user);
         try{save()}catch(e){}
-        /* RTDB প্রোফাইলে live subscribe — সব dashboard একই data source ব্যবহার করে */
-        watchMyProfile(user.uid);
-        if(needsSetup()&&!document.querySelector(".sheet"))setTimeout(sheetSetup,260);
+        watchMyProfile(user.uid, user);
+        /* প্রোফাইল RTDB-তে সম্পূর্ণ থাকলে onboarding দেখাব না */
+        maybeShowSetup();
       });
     }catch(e){ console.warn("doner auth sync:", e && e.message); }
   })();
   try{
     if(localStorage.getItem("cbdcMember")==="1"){
-      STORE.account.name=STORE.account.name||localStorage.getItem("cbdcMemberName")||"";
-      STORE.account.email=STORE.account.email||localStorage.getItem("cbdcMemberEmail")||"";
-      STORE.account.photo=STORE.account.photo||localStorage.getItem("cbdcMemberPhoto")||"";
-      STORE.account.uid=STORE.account.uid||("u"+(STORE.account.email||STORE.account.phone||Date.now()).replace(/\W/g,""));
-      try{localStorage.setItem(LS,JSON.stringify({account:STORE.account,donor:STORE.donor,privacy:STORE.privacy,
-        notif:STORE.notif,prefs:STORE.prefs,security:STORE.security,saved:STORE.saved}))}catch(e){}
+      const memberUid = localStorage.getItem("cbdcMemberUid") || "";
+      /* fake uid তৈরি করি না — শুধু Firebase Auth UID */
+      if(memberUid && (!STORE.account.uid || STORE.account.uid === memberUid)){
+        STORE.account.uid = STORE.account.uid || memberUid;
+        STORE.account.name = STORE.account.name || localStorage.getItem("cbdcMemberName") || "";
+        STORE.account.email = STORE.account.email || localStorage.getItem("cbdcMemberEmail") || "";
+        if(STORE.account.uid === memberUid){
+          STORE.account.photo = STORE.account.photo || localStorage.getItem("cbdcMemberPhoto") || "";
+        }
+        persistLocalAccount();
+      }
     }
   }catch(e){}
   applyPrefs();
@@ -6456,7 +6488,8 @@ function initPage() {
     pullSharedPublic();
     if(!document.querySelector(".sheet")&&!PUBLIC_MODE)go(CUR,SUB,false);
   });
-  if(!PUBLIC_MODE && needsSetup())setTimeout(sheetSetup,260);
+  /* onboarding শুধু auth + RTDB প্রোফাইল লোডের পর (maybeShowSetup) —
+     বুটে খালি cache দেখে বারবার স্বাগতম ফর্ম দেখানো বন্ধ। */
   document.addEventListener("keydown",e=>{if(e.key==="Escape"){
     document.querySelector(".ov")?.click();}});
   

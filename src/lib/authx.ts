@@ -37,6 +37,7 @@ import {
 } from "firebase/auth";
 import { NODES } from "./firebase";
 import { getRow, updateRow, setRow, findBy, nowIso } from "./rtdb";
+import { isValidDob, toEnglishDigits } from "./age";
 
 /* ═══════════════════════════════════════════════════════════════════
    ১. বাংলা error message
@@ -194,6 +195,73 @@ export function setGoogleIntent(intent: "login" | "signup" | null): void {
   }
 }
 
+const GOOGLE_PROFILE_KEY = "cbdc.pendingGoogleProfile";
+
+/** Google সাইন-ইন সফল হলে প্রোফাইল (uid/email/photo) মনে রাখা — signup ফর্ম রিলোডেও থাকে। */
+export function setPendingGoogleProfile(profile: GoogleProfile | null): void {
+  try {
+    if (profile && profile.uid) sessionStorage.setItem(GOOGLE_PROFILE_KEY, JSON.stringify(profile));
+    else sessionStorage.removeItem(GOOGLE_PROFILE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function getPendingGoogleProfile(): GoogleProfile | null {
+  try {
+    const raw = sessionStorage.getItem(GOOGLE_PROFILE_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    if (p && typeof p.uid === "string" && p.uid) {
+      return {
+        uid: p.uid,
+        email: p.email || "",
+        name: p.name || "",
+        photo: p.photo || "",
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+/** ১১ সংখ্যার বাংলাদেশি মোবাইল (বাংলা অঙ্ক সহ)। */
+export function isPhoneOk(value: unknown): boolean {
+  return /^01[3-9]\d{8}$/.test(toEnglishDigits(value).replace(/\s/g, ""));
+}
+
+/**
+ * Dashboard-এ ঢোকার জন্য ন্যূনতম প্রোফাইল: নাম + মোবাইল + জন্ম তারিখ।
+ * এগুলো RTDB-তে থাকলে onboarding আর দেখানো হয় না।
+ */
+export function isProfileComplete(profile: Record<string, unknown> | null | undefined): boolean {
+  if (!profile) return false;
+  const name = String(profile.name || "").trim();
+  return name.length >= 2 && isPhoneOk(profile.phone) && isValidDob(profile.dob);
+}
+
+/** এই uid-এর সংরক্ষিত ছবি; না থাকলে (ঐচ্ছিক) Google ছবি। অন্য user-এর ছবি কখনোই ফেরত দেয় না। */
+export function photoForUid(
+  profile: Record<string, unknown> | null | undefined,
+  googlePhoto?: string
+): string {
+  const existing = String(profile?.photoURL || profile?.photo || "").trim();
+  if (existing) return existing;
+  return String(googlePhoto || "").trim();
+}
+
+/** `users/{uid}` থেকে প্রোফাইল পড়া। */
+export async function loadUserProfile(uid: string): Promise<Record<string, any> | null> {
+  if (!uid) return null;
+  try {
+    return await getRow(NODES.users, uid);
+  } catch (e) {
+    console.warn("loadUserProfile:", (e as Error)?.message);
+    return null;
+  }
+}
+
 /**
  * মোবাইল ব্রাউজার ও ওয়েবভিউতে popup অবিশ্বাসী — সরাসরি redirect নিরাপদ।
  * (ইন-অ্যাপ ব্রাউজার যেমন Facebook/Instagram/Messenger webview-এ popup প্রায়ই ব্লক হয়।)
@@ -318,20 +386,49 @@ export function onAuthUserChanged(auth: Auth, cb: (user: User | null) => void): 
  *  - এখানে লেখা হলে RTDB listener-এর কল্যাণে সব dashboard-এ সাথে সাথে দেখা যায়।
  */
 export async function ensureUserProfile(
-  user: { uid: string; email?: string; name?: string; photo?: string; dob?: string; phone?: string },
+  user: {
+    uid: string;
+    email?: string;
+    name?: string;
+    photo?: string;
+    dob?: string;
+    phone?: string;
+    gender?: string;
+    area?: string;
+    username?: string;
+    address?: string;
+  },
   extra: { provider?: string } = {}
 ): Promise<void> {
   if (!user || !user.uid) return;
   const existing = await getRow(NODES.users, user.uid);
+  /* ছবি: আগে থেকে RTDB-তে থাকলে সেটাই রাখি — অন্য user বা খালি Google ছবি দিয়ে মুছে ফেলি না */
+  const photoURL = String(existing?.photoURL || user.photo || "").trim();
   const base: Record<string, unknown> = {
     uid: user.uid,
-    email: (user.email || "").toLowerCase(),
+    email: String(user.email || existing?.email || "").toLowerCase(),
     name: user.name || existing?.name || "",
-    photoURL: user.photo || existing?.photoURL || "",
+    photoURL,
     updatedAt: nowIso(),
   };
-  if (user.dob) base.dob = user.dob;
-  if (user.phone) base.phone = user.phone;
+  const keep = (incoming: unknown, prev: unknown) => {
+    const v = String(incoming || "").trim();
+    if (v) return v;
+    const p = String(prev || "").trim();
+    return p || undefined;
+  };
+  const dob = keep(user.dob, existing?.dob);
+  const phone = keep(user.phone, existing?.phone);
+  const gender = keep(user.gender, existing?.gender);
+  const area = keep(user.area, existing?.area);
+  const username = keep(user.username, existing?.username);
+  const address = keep(user.address, existing?.address);
+  if (dob) base.dob = dob;
+  if (phone) base.phone = phone;
+  if (gender) base.gender = gender;
+  if (area) base.area = area;
+  if (username) base.username = username;
+  if (address) base.address = address;
   if (extra.provider) base.provider = extra.provider;
   if (!existing) {
     base.role = "donor";

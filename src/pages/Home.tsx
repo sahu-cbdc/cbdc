@@ -17,6 +17,11 @@ import {
   ensureUserProfile,
   onAuthUserChanged,
   setGoogleIntent,
+  setPendingGoogleProfile,
+  getPendingGoogleProfile,
+  isProfileComplete,
+  photoForUid,
+  loadUserProfile,
   resolveUserRole,
   panelForRole,
   requestPasswordReset,
@@ -1969,9 +1974,6 @@ function StaticShell() {
                         {"মোবাইল নম্বর (১১ ডিজিট)"}
                       </label>
                       <input id="donorPhone" name="phone" required={true} inputMode="numeric" maxLength="11" />
-                      <span className="note">
-                        {`উদাহরণ: ${SITE.phone}`}
-                      </span>
                     </div>
                     <div className="field">
                       <label htmlFor="donorWhatsapp">
@@ -2222,15 +2224,9 @@ function StaticShell() {
                     </div>
                     <div className="field">
                       <label htmlFor="patientAge">
-                        {"রোগীর বয়স "}
-                        <span className="muted">
-                          {"(ঐচ্ছিক)"}
-                        </span>
+                        {"রোগীর বয়স"}
                       </label>
                       <input id="patientAge" name="patientAge" type="number" min="1" max="120" inputMode="numeric" />
-                      <span className="note">
-                        {"সরাসরি বছর হিসেবে রোগীর বয়স লিখুন (যেমন: ৫, ১৮, ৪৫)।"}
-                      </span>
                     </div>
                     <div className="field">
                       <label className="required" htmlFor="requestGroup">
@@ -2985,9 +2981,6 @@ function StaticShell() {
                         {"মোবাইল নম্বর (১১ ডিজিট)"}
                       </label>
                       <input id="suPhone" name="phone" required={true} inputMode="numeric" maxLength="11" />
-                      <span className="note">
-                        {`উদাহরণ: ${SITE.phone}`}
-                      </span>
                     </div>
                     {" "}
                     <div className="field">
@@ -4363,7 +4356,7 @@ function initPage() {
       /* role অনুযায়ী নিজ নিজ dashboard-এ পাঠানো —
          Doner → Doner Dashboard, Moderator → Moderator Panel, Admin → Admin Panel।
          Admin/Moderator কখনোই সাধারণ Doner dashboard ব্যবহার করে না। */
-      function finishLogin({email, name, role, permissions, photo, uid}){
+      function finishLogin({email, name, role, permissions, photo, uid, phone, dob, gender, area, username, address, photoSource}){
         const r = role || DEFAULT_ROLE;
         const page = panelForRole(r);   // "doner" | "moderator" | "admin"
         if(r === "admin" || r === "moderator"){
@@ -4372,34 +4365,37 @@ function initPage() {
           navigateToPage(page);
           return;
         }
-        saveMemberSession({email, name: name || email, photo: photo || "", role: r, uid: uid || ""});
+        saveMemberSession({
+          email, name: name || email, photo: photo || "", role: r, uid: uid || "",
+          phone: phone || "", dob: dob || "", gender: gender || "", area: area || "",
+          username: username || "", address: address || "",
+          photoSource: photoSource || (photo ? "google" : "none")
+        });
         clearSession();
         navigateToPage("doner");
       }
 
-      /* --- Google প্রোফাইল স্টেট --- */
+      /* --- Google প্রোফাইল স্টেট ---
+         Google থেকে শুধু email + profile picture নেওয়া হয় (এই uid-এর)।
+         নাম/মোবাইল/জন্ম তারিখ ওয়েবসাইটের ফর্ম থেকেই আসে। */
       let googleProfile = null;  // {uid,email,name,photo}
       function setSignupGoogleMode(profile){
         googleProfile = profile || null;
+        setPendingGoogleProfile(profile || null);
         const chip = $("#signupGoogleChip"), emailInp = $("#suEmail"), emailNote = $("#suEmailNote");
         const p1 = $("#suPassField"), p2 = $("#suPass2Field");
         if(profile){
           chip?.classList.remove("hidden");
           $("#sgAvatar").src = profile.photo || avatarData("পুরুষ");
-          $("#sgName").textContent = profile.name || "Google ব্যবহারকারী";
+          $("#sgName").textContent = profile.email || "Google ব্যবহারকারী";
           $("#sgEmail").textContent = profile.email || "";
-          // Google থেকে পাওয়া তথ্য প্রি-ফিল
-          const bnName = suggestBanglaName(profile.name);
-          $("#suName").value = profile.name || "";
+          /* শুধু ইমেইল অটো-ফিল (readonly)। নাম Google displayName থেকে বসানো হয় না। */
           emailInp.value = profile.email || "";
-          emailInp.setAttribute("readonly", "readonly");   // verified email — পরিবর্তন করা যাবে না
+          emailInp.setAttribute("readonly", "readonly");
           emailNote?.classList.remove("hidden");
-          $("#suUsername").value = suggestUsername(profile.name, profile.email);  // editable
-          // পাসওয়ার্ড দরকার নেই (Google অ্যাকাউন্ট)
+          if(!$("#suUsername")?.value) $("#suUsername").value = suggestUsername("", profile.email);
           [p1, p2].forEach(f => f && f.classList.add("hidden"));
           $("#suPassword").required = false; $("#suPassword2").required = false;
-          refreshNameSuggest();
-          if(bnName) toast("Google তথ্য বসানো হয়েছে — বাংলা নাম প্রস্তাব: " + bnName);
         } else {
           chip?.classList.add("hidden");
           emailInp?.removeAttribute("readonly");
@@ -4421,7 +4417,9 @@ function initPage() {
         const res = await googleSignInWithFallback(auth, intent === "signup" ? "signup" : "login");
         if(!res) return null;
         const u = res.user;
-        return {uid:u.uid, email:u.email || "", name:u.displayName || "", photo:u.photoURL || ""};
+        const profile = {uid:u.uid, email:u.email || "", name:u.displayName || "", photo:u.photoURL || ""};
+        setPendingGoogleProfile(profile);
+        return profile;
       }
   
       // ওয়েবসাইট অ্যাকাউন্ট খোঁজা (RTDB `users` নোড — ডোনার তালিকা থেকে সম্পূর্ণ আলাদা)
@@ -4492,42 +4490,91 @@ function initPage() {
         showView("home");
       }
   
+      function finishFromRtdb(p, member, roleInfo){
+        const photo = photoForUid(member, p.photo);
+        finishLogin({
+          email: (member && member.email) || p.email,
+          name: (member && member.name) || (roleInfo && roleInfo.name) || p.email,
+          role: (roleInfo && roleInfo.role) || DEFAULT_ROLE,
+          permissions: (roleInfo && roleInfo.permissions) || {},
+          photo,
+          uid: p.uid,
+          phone: member && member.phone,
+          dob: member && member.dob,
+          gender: member && member.gender,
+          area: member && member.area,
+          username: member && member.username,
+          address: member && member.address,
+          photoSource: (member && member.photoURL) ? (member.photoSource || "upload") : (p.photo ? "google" : "none")
+        });
+      }
+      function prefillSignupFromProfile(member){
+        if(!member) return;
+        if(member.name) $("#suName").value = member.name;
+        if(member.username) $("#suUsername").value = member.username;
+        if(member.phone) $("#suPhone").value = member.phone;
+        if(member.dob) $("#suDob").value = member.dob;
+        if(member.gender) $("#suGender").value = member.gender;
+        if(member.area) $("#suArea").value = member.area;
+        if(member.address) $("#suAddress").value = member.address;
+        if(member.whatsapp) $("#suWhatsapp").value = member.whatsapp;
+      }
       /* --- Google flow সম্পন্ন করা (popup এবং redirect-resume — দুই পথেই একই যুক্তি) --- */
       async function continueGoogleLogin(p){
         showAppLoading();
         const {role, name, permissions} = await resolveRole({uid:p.uid, email:p.email, name:p.name});
         if(role === "admin" || role === "moderator"){
-          if(p.uid) ensureUserProfile({uid:p.uid, email:p.email, name:p.name, photo:p.photo}, {provider:"google"}).catch(e=>console.warn("profile upsert:", e&&e.message));
+          if(p.uid){
+            try{ await ensureUserProfile({uid:p.uid, email:p.email, name:name || p.name, photo:p.photo}, {provider:"google"}); }
+            catch(e){ console.warn("profile upsert:", e&&e.message); }
+          }
           hideAppModal();
           finishLogin({email:p.email, name: name || p.name, role, permissions, photo:p.photo, uid:p.uid});
           return;
         }
         const member = (await findUserByUid(p.uid)) || (await findUserByEmail(p.email));
-        if(member){
-          if(p.uid) ensureUserProfile({uid:p.uid, email:p.email, name:member.name || p.name, photo:member.photoURL || p.photo}, {provider:"google"}).catch(e=>console.warn("profile upsert:", e&&e.message));
+        if(member && isProfileComplete(member)){
+          const photo = photoForUid(member, p.photo);
+          try{
+            await ensureUserProfile({
+              uid:p.uid, email:p.email, name:member.name, photo,
+              phone:member.phone, dob:member.dob, gender:member.gender, area:member.area, username:member.username
+            }, {provider:"google"});
+          }catch(e){ console.warn("profile upsert:", e&&e.message); }
           hideAppModal();
-          finishLogin({email:p.email, name: member.name || p.name, role: DEFAULT_ROLE, permissions:{}, photo: member.photoURL || p.photo, uid:p.uid});
+          finishFromRtdb(p, member, {role: DEFAULT_ROLE, name: member.name, permissions:{}});
           return;
         }
         hideAppModal();
-        // অ্যাকাউন্ট নেই → Google তথ্যসহ অ্যাকাউন্ট তৈরির পেজ
+        /* নতুন বা অসম্পূর্ণ প্রোফাইল → Google email+photo সহ ফর্ম; বাকি তথ্য ইউজার দেবে */
         setSignupGoogleMode(p);
+        prefillSignupFromProfile(member);
         showView("signup");
-        showMessage($("#signupMessage"), "এই Google অ্যাকাউন্টে কোনো CBDC অ্যাকাউন্ট নেই। নিচের তথ্যগুলো নিশ্চিত করে অ্যাকাউন্ট তৈরি সম্পন্ন করুন।", "error");
+        showMessage($("#signupMessage"),
+          member
+            ? "আপনার প্রোফাইল অসম্পূর্ণ। বাকি তথ্য পূরণ করে সংরক্ষণ করুন।"
+            : "এই Google অ্যাকাউন্টে কোনো CBDC অ্যাকাউন্ট নেই। নিচের তথ্যগুলো নিশ্চিত করে অ্যাকাউন্ট তৈরি সম্পন্ন করুন।",
+          "error");
       }
       async function continueGoogleSignup(p){
         const member = (await findUserByUid(p.uid)) || (await findUserByEmail(p.email));
-        if(member){
+        if(member && isProfileComplete(member)){
           const rr = await resolveRole({uid:p.uid, email:p.email, name: member.name || p.name});
-          if(p.uid) ensureUserProfile({uid:p.uid, email:p.email, name: rr.name || member.name || p.name, photo: member.photoURL || p.photo}, {provider:"google"}).catch(e=>console.warn("profile upsert:", e&&e.message));
-          // কোনো success popup নয় — সরাসরি নিজ নিজ dashboard-এ
-          finishLogin({email:p.email, name: rr.name || member.name || p.name, role: rr.role, permissions: rr.permissions, photo: member.photoURL || p.photo, uid:p.uid});
+          const photo = photoForUid(member, p.photo);
+          try{
+            await ensureUserProfile({
+              uid:p.uid, email:p.email, name: rr.name || member.name, photo,
+              phone:member.phone, dob:member.dob, gender:member.gender, area:member.area, username:member.username
+            }, {provider:"google"});
+          }catch(e){ console.warn("profile upsert:", e&&e.message); }
+          finishFromRtdb(p, member, rr);
           return;
         }
         setSignupGoogleMode(p);
+        prefillSignupFromProfile(member);
         showView("signup");
-        toast("Google তথ্য নেওয়া হয়েছে — বাকি তথ্য পূরণ করুন");
-        setTimeout(()=>$("#suUsername")?.focus(), 300);
+        toast("Google ইমেইল ও প্রোফাইল ছবি নেওয়া হয়েছে — বাকি তথ্য পূরণ করুন");
+        setTimeout(()=>$("#suName")?.focus(), 300);
       }
 
       /* --- Google দিয়ে লগইন --- */
@@ -4691,6 +4738,10 @@ function initPage() {
       $("#signupForm")?.addEventListener("submit", async e => {
         e.preventDefault();
         const form = e.currentTarget, message = $("#signupMessage");
+        if(!googleProfile){
+          const pending = getPendingGoogleProfile();
+          if(pending && auth && auth.currentUser && auth.currentUser.uid === pending.uid) googleProfile = pending;
+        }
         const isGoogle = !!googleProfile;
 
         const rules = {
@@ -4725,6 +4776,7 @@ function initPage() {
         try{
           if(!fbReady) throw new Error("ডাটাবেস সংযোগ নেই। ইন্টারনেট সংযোগ পরীক্ষা করুন।");
           let uid = googleProfile ? googleProfile.uid : null;
+          if(!uid && isGoogle && auth && auth.currentUser) uid = auth.currentUser.uid;
 
           if(auth && !isGoogle){
             const {createUserWithEmailAndPassword, updateProfile} = await import("firebase/auth");
@@ -4734,24 +4786,37 @@ function initPage() {
           }
           if(!uid) throw new Error("অ্যাকাউন্ট তৈরি করা যায়নি।");
 
-          const photoURL = googleProfile ? (googleProfile.photo||"") : "";
+          const existingProfile = await getRow(NODES.users, uid);
+          const photoURL = photoForUid(existingProfile, googleProfile ? (googleProfile.photo||"") : "");
           /* ১) ওয়েবসাইট অ্যাকাউন্ট — RTDB `users/{uid}` (সাথে সাথেই সক্রিয়)।
-                role এখানে সবসময় donor; admin/moderator শুধু `admins` নোড থেকে আসে। */
-          await setRow(NODES.users, uid, {
+                role এখানে সবসময় donor; admin/moderator শুধু `admins` নোড থেকে আসে।
+                আগে থেকে প্রোফাইল থাকলে merge — পুরোনো ছবি/role মুছে যায় না। */
+          const profilePayload = {
             uid,
             name: o.name,
             username: o.username,
             email: o.email,
             phone: o.phone || "",
-            dob: o.dob || "",            // বয়স আলাদা করে রাখা হয় না — dob থেকেই হিসাব হয়
+            dob: o.dob || "",
             gender: o.gender || "",
             area: o.area || "",
+            address: o.address || "",
             photoURL,
             provider: isGoogle ? "google" : "password",
-            role: DEFAULT_ROLE,
-            status: "active",
-            createdAt: nowIso()
-          });
+            status: "active"
+          };
+          if(existingProfile){
+            await ensureUserProfile({
+              uid, email:o.email, name:o.name, photo:photoURL,
+              phone:o.phone, dob:o.dob, gender:o.gender, area:o.area, username:o.username, address:o.address
+            }, {provider: isGoogle ? "google" : "password"});
+          } else {
+            await setRow(NODES.users, uid, {
+              ...profilePayload,
+              role: DEFAULT_ROLE,
+              createdAt: nowIso()
+            });
+          }
 
           /* ২) রক্তদাতা প্রোফাইল — RTDB `members` (অ্যাডমিন যাচাইয়ের পর পাবলিক তালিকায়) */
           const memberId = await addRow(NODES.members, {
@@ -4813,14 +4878,39 @@ function initPage() {
             email=found;
           }
           const cred=await signInWithEmailAndPassword(auth,email,password);
-          const resolved=await resolveRole({uid:cred.user.uid, email, name:cred.user.displayName || email});
-          // login-এর পর RTDB-তে প্রোফাইল আছে কিনা নিশ্চিত করি (self-heal)
+          const profile = await loadUserProfile(cred.user.uid);
+          const resolved=await resolveRole({uid:cred.user.uid, email, name: (profile&&profile.name) || cred.user.displayName || email});
+          const photo = photoForUid(profile, cred.user.photoURL || "");
           if(cred.user && cred.user.uid){
-            ensureUserProfile({uid:cred.user.uid, email:(cred.user.email||email), name: resolved.name || cred.user.displayName || email, photo: cred.user.photoURL || ""}, {provider:"password"})
-              .catch(e=>console.warn("profile upsert:", e&&e.message));
+            try{
+              await ensureUserProfile({
+                uid:cred.user.uid,
+                email:(cred.user.email||email),
+                name: (profile&&profile.name) || resolved.name || cred.user.displayName || email,
+                photo,
+                phone: profile&&profile.phone,
+                dob: profile&&profile.dob,
+                gender: profile&&profile.gender,
+                area: profile&&profile.area,
+                username: profile&&profile.username
+              }, {provider:"password"});
+            }catch(e){ console.warn("profile upsert:", e&&e.message); }
           }
           hideAppModal(); form.reset(); clearFormErrors(form);
-          finishLogin({email,name:resolved.name||email,role:resolved.role,permissions:resolved.permissions,photo:cred.user.photoURL||"",uid:cred.user.uid});
+          finishLogin({
+            email,
+            name:(profile&&profile.name)||resolved.name||email,
+            role:resolved.role,
+            permissions:resolved.permissions,
+            photo,
+            uid:cred.user.uid,
+            phone: profile&&profile.phone,
+            dob: profile&&profile.dob,
+            gender: profile&&profile.gender,
+            area: profile&&profile.area,
+            username: profile&&profile.username,
+            address: profile&&profile.address
+          });
         }catch(err){
           hideAppModal();console.warn("login failed:",err&&err.code,err&&err.message);
           const msg=authErrorMessage(err,{fallback:"লগইন করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।"});
@@ -4943,7 +5033,18 @@ function initPage() {
 
       setLogo();
       if(window.CBDCShared)CBDCShared.subscribe(()=>{ renderPublic(); renderGallery(); });
-      initFirebase().then(()=>{ renderPublic(); renderGallery(); renderLoginGate(); renderAuthState(); resumeGoogleRedirect(); watchAuthMirror(); });
+      initFirebase().then(()=>{
+        renderPublic(); renderGallery(); renderLoginGate(); renderAuthState();
+        try{
+          const pending = getPendingGoogleProfile();
+          if(pending && auth && auth.currentUser && auth.currentUser.uid === pending.uid){
+            googleProfile = pending;
+            const onSignup = $("#view-signup")?.classList.contains("active");
+            if(onSignup) setSignupGoogleMode(pending);
+          }
+        }catch(e){}
+        resumeGoogleRedirect(); watchAuthMirror();
+      });
       renderAuthState();
   
       /* Clean URL deep-link — "/dashboard", "/signup", "/profile/<id>" … (কোনো "#" নয়)
