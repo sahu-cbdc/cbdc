@@ -397,6 +397,15 @@ export async function ensureUserProfile(
     area?: string;
     username?: string;
     address?: string;
+    bloodGroup?: string;
+    donorId?: string;
+    donorStatus?: string;
+    lastDonation?: string;
+    whatsapp?: string;
+    health?: string;
+    available?: boolean;
+    appliedAt?: string;
+    cardTheme?: string;
   },
   extra: { provider?: string } = {}
 ): Promise<void> {
@@ -429,13 +438,58 @@ export async function ensureUserProfile(
   if (area) base.area = area;
   if (username) base.username = username;
   if (address) base.address = address;
+  // donor-related fields — একই UID তে donor তথ্য একীভূত (duplicate profile নয়)
+  const bloodGroup = keep((user as any).bloodGroup, (existing as any)?.bloodGroup);
+  const donorId = keep((user as any).donorId, (existing as any)?.donorId);
+  const donorStatus = keep((user as any).donorStatus, (existing as any)?.donorStatus);
+  const lastDonation = keep((user as any).lastDonation, (existing as any)?.lastDonation);
+  const whatsapp = keep((user as any).whatsapp, (existing as any)?.whatsapp);
+  const health = keep((user as any).health, (existing as any)?.health);
+  const appliedAt = keep((user as any).appliedAt, (existing as any)?.appliedAt);
+  const cardTheme = keep((user as any).cardTheme, (existing as any)?.cardTheme);
+  if (bloodGroup) base.bloodGroup = bloodGroup;
+  if (donorId) base.donorId = donorId;
+  if (donorStatus) base.donorStatus = donorStatus;
+  if (lastDonation !== undefined) {
+    if (lastDonation) base.lastDonation = lastDonation;
+    else if (String((user as any).lastDonation ?? "") === "" && String((existing as any)?.lastDonation ?? "") === "" && (user as any).lastDonation === "") {
+      base.lastDonation = "";
+    }
+  }
+  if (whatsapp !== undefined) {
+    if (whatsapp) base.whatsapp = whatsapp;
+    else if ((user as any).whatsapp === "") base.whatsapp = "";
+  }
+  if (health !== undefined) {
+    if (health) base.health = health;
+    else if ((user as any).health === "") base.health = "";
+  }
+  if (appliedAt) base.appliedAt = appliedAt;
+  if (cardTheme) base.cardTheme = cardTheme;
+  if ((user as any).available !== undefined) base.available = !!(user as any).available;
+  else if ((existing as any)?.available !== undefined) base.available = !!(existing as any).available;
   if (extra.provider) base.provider = extra.provider;
   if (!existing) {
     base.role = "donor";
     base.status = "active";
     base.createdAt = nowIso();
+    if (!base.donorStatus && bloodGroup) base.donorStatus = "pending";
+    if (!base.donorId && bloodGroup) {
+      let n = 0;
+      const src = String(user.uid);
+      for (let i = 0; i < src.length; i++) n = (n * 31 + src.charCodeAt(i)) >>> 0;
+      base.donorId = `CBDC-${new Date().getFullYear()}-${String((n % 9999) + 1).padStart(4, "0")}`;
+    }
     await setRow(NODES.users, user.uid, base);
     return;
+  }
+  // existing থাকলে donorStatus যদি আগে না থাকে কিন্তু এখন bloodGroup আসছে, pending করে দাও
+  if (!existing.donorStatus && bloodGroup && !base.donorStatus) base.donorStatus = "pending";
+  if (!existing.donorId && bloodGroup && !base.donorId) {
+    let n = 0;
+    const src = String(user.uid);
+    for (let i = 0; i < src.length; i++) n = (n * 31 + src.charCodeAt(i)) >>> 0;
+    base.donorId = `CBDC-${new Date().getFullYear()}-${String((n % 9999) + 1).padStart(4, "0")}`;
   }
   await updateRow(NODES.users, user.uid, base);
 }

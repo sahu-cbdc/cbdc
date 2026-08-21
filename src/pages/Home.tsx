@@ -28,7 +28,7 @@ import {
   verifyResetCode,
   completePasswordReset,
 } from "../lib/authx";
-import { addRow, setRow, findBy, getRow, nowIso } from "../lib/rtdb";
+import { addRow, setRow, updateRow, findBy, getRow, nowIso } from "../lib/rtdb";
 import { NODES } from "../lib/firebase";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, clearFieldError } from "../lib/forms";
 import { ageFromDob, ageText, dobBounds, isValidDob, toBanglaDigits } from "../lib/age";
@@ -4521,14 +4521,13 @@ function initPage() {
       }
       /* --- Google flow সম্পন্ন করা (popup এবং redirect-resume — দুই পথেই একই যুক্তি) --- */
       async function continueGoogleLogin(p){
-        showAppLoading();
+        // দ্রুত Google login — কোনো popup নয়
         const {role, name, permissions} = await resolveRole({uid:p.uid, email:p.email, name:p.name});
         if(role === "admin" || role === "moderator"){
           if(p.uid){
             try{ await ensureUserProfile({uid:p.uid, email:p.email, name:name || p.name, photo:p.photo}, {provider:"google"}); }
             catch(e){ console.warn("profile upsert:", e&&e.message); }
           }
-          hideAppModal();
           finishLogin({email:p.email, name: name || p.name, role, permissions, photo:p.photo, uid:p.uid});
           return;
         }
@@ -4541,20 +4540,24 @@ function initPage() {
               phone:member.phone, dob:member.dob, gender:member.gender, area:member.area, username:member.username
             }, {provider:"google"});
           }catch(e){ console.warn("profile upsert:", e&&e.message); }
-          hideAppModal();
           finishFromRtdb(p, member, {role: DEFAULT_ROLE, name: member.name, permissions:{}});
           return;
         }
-        hideAppModal();
-        /* নতুন বা অসম্পূর্ণ প্রোফাইল → Google email+photo সহ ফর্ম; বাকি তথ্য ইউজার দেবে */
+        /* নতুন বা অসম্পূর্ণ প্রোফাইল → Google email+photo সহ clean form; বাকি তথ্য ইউজার দেবে */
         setSignupGoogleMode(p);
         prefillSignupFromProfile(member);
+        // Google onboarding form এখন login-এর মতো clean card — signup view কে compact করে দেখানো
         showView("signup");
+        // form কে login-এর মতো clean করতে: narrow card already, Google chip উপরে
+        const _formCard = document.querySelector("#view-signup .form-card");
+        if(_formCard) _formCard.classList.add("auth-card");
+        if(_formCard) _formCard.style.margin = "0 auto";
         showMessage($("#signupMessage"),
           member
             ? "আপনার প্রোফাইল অসম্পূর্ণ। বাকি তথ্য পূরণ করে সংরক্ষণ করুন।"
             : "এই Google অ্যাকাউন্টে কোনো CBDC অ্যাকাউন্ট নেই। নিচের তথ্যগুলো নিশ্চিত করে অ্যাকাউন্ট তৈরি সম্পন্ন করুন।",
           "error");
+        setTimeout(()=>{ const _f=document.getElementById("suName"); if(_f) _f.focus(); }, 200);
       }
       async function continueGoogleSignup(p){
         const member = (await findUserByUid(p.uid)) || (await findUserByEmail(p.email));
@@ -4573,6 +4576,8 @@ function initPage() {
         setSignupGoogleMode(p);
         prefillSignupFromProfile(member);
         showView("signup");
+        const _fc2 = document.querySelector("#view-signup .form-card");
+        if(_fc2){ _fc2.classList.add("auth-card"); _fc2.style.margin="0 auto"; }
         toast("Google ইমেইল ও প্রোফাইল ছবি নেওয়া হয়েছে — বাকি তথ্য পূরণ করুন");
         setTimeout(()=>$("#suName")?.focus(), 300);
       }
@@ -4580,13 +4585,13 @@ function initPage() {
       /* --- Google দিয়ে লগইন --- */
       $("#btnGoogleLogin")?.addEventListener("click", async () => {
         const btn = $("#btnGoogleLogin");
+        const _orig = btn ? btn.innerHTML : "";
         try{
-          btn.disabled = true;
+          if(btn){ btn.disabled = true; btn.innerHTML = "অপেক্ষা..."; }
           const p = await googleSignIn("login");
           if(!p) return; // redirect শুরু হয়েছে — ফিরে এলে boot-এ flow resume হবে
           await continueGoogleLogin(p);
         }catch(err){
-          hideAppModal();
           console.warn("Google login:", err);
           setGoogleIntent(null);
           const code = err && err.code || "";
@@ -4595,14 +4600,15 @@ function initPage() {
           } else {
             uiAlert(authErrorMessage(err), {type:"error", title:"লগইন ব্যর্থ"});
           }
-        }finally{ btn.disabled = false; }
+        }finally{ if(btn){ btn.disabled = false; btn.innerHTML = _orig; } }
       });
 
       /* --- Google দিয়ে অ্যাকাউন্ট তৈরি --- */
       $("#btnGoogleSignup")?.addEventListener("click", async () => {
         const btn = $("#btnGoogleSignup");
+        const _orig2 = btn ? btn.innerHTML : "";
         try{
-          btn.disabled = true;
+          if(btn){ btn.disabled = true; btn.innerHTML = "অপেক্ষা..."; }
           const p = await googleSignIn("signup");
           if(!p) return; // redirect শুরু হয়েছে — ফিরে এলে boot-এ flow resume হবে
           await continueGoogleSignup(p);
@@ -4615,7 +4621,7 @@ function initPage() {
           } else {
             uiAlert(authErrorMessage(err), {type:"error", title:"ব্যর্থ হয়েছে"});
           }
-        }finally{ btn.disabled = false; }
+        }finally{ if(btn){ btn.disabled = false; btn.innerHTML = _orig2; } }
       });
   
       /* ══════════════════════════════════════════════════════════════════
@@ -4788,9 +4794,18 @@ function initPage() {
 
           const existingProfile = await getRow(NODES.users, uid);
           const photoURL = photoForUid(existingProfile, googleProfile ? (googleProfile.photo||"") : "");
-          /* ১) ওয়েবসাইট অ্যাকাউন্ট — RTDB `users/{uid}` (সাথে সাথেই সক্রিয়)।
+          // donorId — uid থেকে স্থির (duplicate নয়), একই UID-তে একই donorId
+          let _donorId = String(existingProfile?.donorId || "").trim();
+          if(!_donorId){
+            let n=0; const src=String(uid);
+            for(let i=0;i<src.length;i++) n=(n*31+src.charCodeAt(i))>>>0;
+            _donorId = `CBDC-${new Date().getFullYear()}-${String((n%9999)+1).padStart(4,"0")}`;
+          }
+          const donorStatusVal = String(existingProfile?.donorStatus || "pending").trim() || "pending";
+          /* ১) ওয়েবসাইট অ্যাকাউন্ট — RTDB `users/{uid}` (সাথে সাথেই সক্রিয়) — donor তথ্য সহ একীভূত।
                 role এখানে সবসময় donor; admin/moderator শুধু `admins` নোড থেকে আসে।
-                আগে থেকে প্রোফাইল থাকলে merge — পুরোনো ছবি/role মুছে যায় না। */
+                একই UID তে personal + donor info একসাথে থাকে — আলাদা duplicate profile নয়।
+                Doner Panel ও Settings একই users/{uid} থেকেই লোড করে। */
           const profilePayload = {
             uid,
             name: o.name,
@@ -4803,12 +4818,25 @@ function initPage() {
             address: o.address || "",
             photoURL,
             provider: isGoogle ? "google" : "password",
-            status: "active"
+            status: "active",
+            // donor fields — account creation-এই donor হিসেবে নিবন্ধন (pending)
+            bloodGroup: o.bloodGroup || existingProfile?.bloodGroup || "",
+            donorId: _donorId,
+            donorStatus: donorStatusVal,
+            lastDonation: o.lastDonationDate || existingProfile?.lastDonation || "",
+            whatsapp: o.whatsapp || existingProfile?.whatsapp || "",
+            health: o.healthNotes || existingProfile?.health || "",
+            available: true,
+            appliedAt: nowIso(),
+            cardTheme: existingProfile?.cardTheme || "green"
           };
           if(existingProfile){
             await ensureUserProfile({
               uid, email:o.email, name:o.name, photo:photoURL,
-              phone:o.phone, dob:o.dob, gender:o.gender, area:o.area, username:o.username, address:o.address
+              phone:o.phone, dob:o.dob, gender:o.gender, area:o.area, username:o.username, address:o.address,
+              bloodGroup: profilePayload.bloodGroup, donorId: profilePayload.donorId, donorStatus: profilePayload.donorStatus,
+              lastDonation: profilePayload.lastDonation, whatsapp: profilePayload.whatsapp, health: profilePayload.health,
+              available: true, appliedAt: profilePayload.appliedAt, cardTheme: profilePayload.cardTheme
             }, {provider: isGoogle ? "google" : "password"});
           } else {
             await setRow(NODES.users, uid, {
@@ -4818,32 +4846,98 @@ function initPage() {
             });
           }
 
-          /* ২) রক্তদাতা প্রোফাইল — RTDB `members` (অ্যাডমিন যাচাইয়ের পর পাবলিক তালিকায়) */
-          const memberId = await addRow(NODES.members, {
-            name: o.name, email: o.email, username: o.username,
-            bloodGroup: o.bloodGroup || "", gender: o.gender || "",
-            dob: o.dob || "", area: o.area || "", phone: o.phone || "",
-            whatsapp: o.whatsapp || "", address: o.address || "",
-            lastDonationDate: o.lastDonationDate || "", healthNotes: o.healthNotes || "",
-            uid, photoURL, district: "চট্টগ্রাম", status: "pending", createdAt: nowIso()
-          });
-          /* মডারেশন কিউ — Admin/Moderator প্যানেলে সঙ্গে সঙ্গে দেখা যাবে */
-          await setRow(NODES.queue, memberId, {
-            kind:"donor", memberId, uid, name:o.name, group:o.bloodGroup||"", area:o.area||"",
-            dob:o.dob||"", gender:o.gender||"", health:o.healthNotes||"",
-            last:o.lastDonationDate||"", phone:o.phone||"", whatsapp:o.whatsapp||"",
-            address:o.address||"", at:nowIso()
-          });
+          /* ২) রক্তদাতা প্রোফাইল — RTDB `members` (অ্যাডমিন যাচাইয়ের পর পাবলিক তালিকায়)
+                duplicate member তৈরি রোধ — একই UID-তে আগে pending/approved থাকলে নতুন তৈরি নয় */
+          let memberId = "";
+          try{
+            const existingMember = await findBy(NODES.members, "uid", uid);
+            if(existingMember && existingMember.id){
+              memberId = existingMember.id;
+              await updateRow(NODES.members, memberId, {
+                name: o.name, email: o.email, username: o.username,
+                bloodGroup: o.bloodGroup || "", gender: o.gender || "",
+                dob: o.dob || "", area: o.area || "", phone: o.phone || "",
+                whatsapp: o.whatsapp || "", address: o.address || "",
+                lastDonationDate: o.lastDonationDate || "", healthNotes: o.healthNotes || "",
+                uid, photoURL, donorId: _donorId, donorStatus: donorStatusVal
+              });
+            } else {
+              memberId = await addRow(NODES.members, {
+                name: o.name, email: o.email, username: o.username,
+                bloodGroup: o.bloodGroup || "", gender: o.gender || "",
+                dob: o.dob || "", area: o.area || "", phone: o.phone || "",
+                whatsapp: o.whatsapp || "", address: o.address || "",
+                lastDonationDate: o.lastDonationDate || "", healthNotes: o.healthNotes || "",
+                uid, photoURL, donorId: _donorId, donorStatus: donorStatusVal, district: "চট্টগ্রাম", status: "pending", createdAt: nowIso()
+              });
+            }
+          }catch(e){
+            memberId = await addRow(NODES.members, {
+              name: o.name, email: o.email, username: o.username,
+              bloodGroup: o.bloodGroup || "", gender: o.gender || "",
+              dob: o.dob || "", area: o.area || "", phone: o.phone || "",
+              whatsapp: o.whatsapp || "", address: o.address || "",
+              lastDonationDate: o.lastDonationDate || "", healthNotes: o.healthNotes || "",
+              uid, photoURL, donorId: _donorId, donorStatus: donorStatusVal, district: "চট্টগ্রাম", status: "pending", createdAt: nowIso()
+            });
+          }
+          /* মডারেশন কিউ — Admin/Moderator প্যানেলে সঙ্গে সঙ্গে দেখা যাবে — duplicate queue রোধ */
+          try{
+            const existingQ = await findBy(NODES.queue, "memberId", memberId);
+            if(existingQ){
+              await updateRow(NODES.queue, memberId, {
+                kind:"donor", memberId, uid, donorId: _donorId, donorStatus: donorStatusVal, name:o.name, group:o.bloodGroup||"", area:o.area||"",
+                dob:o.dob||"", gender:o.gender||"", health:o.healthNotes||"",
+                last:o.lastDonationDate||"", phone:o.phone||"", whatsapp:o.whatsapp||"",
+                address:o.address||"", at:existingQ.at || nowIso()
+              });
+            } else {
+              await setRow(NODES.queue, memberId, {
+                kind:"donor", memberId, uid, donorId: _donorId, donorStatus: donorStatusVal, name:o.name, group:o.bloodGroup||"", area:o.area||"",
+                dob:o.dob||"", gender:o.gender||"", health:o.healthNotes||"",
+                last:o.lastDonationDate||"", phone:o.phone||"", whatsapp:o.whatsapp||"",
+                address:o.address||"", at:nowIso()
+              });
+            }
+          }catch(e){
+            await setRow(NODES.queue, memberId, {
+              kind:"donor", memberId, uid, donorId: _donorId, donorStatus: donorStatusVal, name:o.name, group:o.bloodGroup||"", area:o.area||"",
+              dob:o.dob||"", gender:o.gender||"", health:o.healthNotes||"",
+              last:o.lastDonationDate||"", phone:o.phone||"", whatsapp:o.whatsapp||"",
+              address:o.address||"", at:nowIso()
+            });
+          }
 
           form.reset();
           clearFormErrors(form);
           $("#suAgree").checked = false;
+          const _wasGoogle = isGoogle;
           setSignupGoogleMode(null);
           message.className = "hidden"; message.textContent = "";
           hideAppModal();
-          /* কোনো success popup নয় — role অনুযায়ী সরাসরি dashboard-এ */
-          const rr = await resolveRole({uid, email:o.email, name:o.name});
-          finishLogin({email:o.email, name:o.name, role:rr.role, permissions:rr.permissions, photo:photoURL, uid});
+          if(_wasGoogle){
+            // Google দিয়ে প্রথমবার — সরাসরি Doner Panel (কোনো error নয়, clean form থেকে)
+            setPendingGoogleProfile(null);
+            const rr2 = await resolveRole({uid, email:o.email, name:o.name});
+            finishLogin({email:o.email, name:o.name, role:rr2.role, permissions:rr2.permissions, photo:photoURL, uid});
+          } else {
+            // Manual account creation: সরাসরি Doner Panel নয় — Login পেজে নিয়ে যাওয়া + 3s popup
+            try{
+              const {signOut} = await import("firebase/auth");
+              if(auth && auth.currentUser) await signOut(auth);
+            }catch(e){}
+            setPendingGoogleProfile(null);
+            try{ history.pushState(null,"",appBase()+"login"); }catch(e){}
+            showView("login");
+            const _loginEmail = document.getElementById("username");
+            if(_loginEmail) _loginEmail.value = o.email || "";
+            showMessage(document.getElementById("loginMessage"), "অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে। অনুগ্রহ করে ইউজারনেম অথবা ইমেইল এবং পাসওয়ার্ড দিয়ে লগইন করুন।", "success");
+            // 3 সেকেন্ডের popup — একাউন্ট সফলভাবে তৈরি হয়েছে
+            try{
+              showAppMessage("অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে। অনুগ্রহ করে ইউজারনেম অথবা ইমেইল এবং পাসওয়ার্ড দিয়ে লগইন করুন।", false, "অ্যাকাউন্ট তৈরি হয়েছে!");
+              setTimeout(()=>{ try{ hideAppModal(); }catch(e){} }, 3000);
+            }catch(e){ toast("অ্যাকাউন্ট তৈরি হয়েছে — এখন লগইন করুন"); }
+          }
         }catch(err){
           hideAppModal();
           console.warn("signup error:", err);
@@ -4866,7 +4960,9 @@ function initPage() {
         });
         if(!valid.ok){ $("#loginMessage").className="hidden"; $("#loginMessage").textContent=""; return; }
         const u=$("#username").value.trim(), password=$("#password").value;
-        showAppLoading();
+        const _btn = form.querySelector('button[type="submit"]');
+        const _orig = _btn ? _btn.innerHTML : "";
+        if(_btn){ _btn.disabled=true; _btn.innerHTML="লগইন হচ্ছে..."; }
         try{
           if(!fbReady || !auth) throw Object.assign(new Error("network"),{code:"auth/network-request-failed"});
           const {signInWithEmailAndPassword}=await import("firebase/auth");
@@ -4896,7 +4992,8 @@ function initPage() {
               }, {provider:"password"});
             }catch(e){ console.warn("profile upsert:", e&&e.message); }
           }
-          hideAppModal(); form.reset(); clearFormErrors(form);
+          if(_btn){ _btn.disabled=false; _btn.innerHTML=_orig; }
+          form.reset(); clearFormErrors(form);
           finishLogin({
             email,
             name:(profile&&profile.name)||resolved.name||email,
@@ -4912,7 +5009,8 @@ function initPage() {
             address: profile&&profile.address
           });
         }catch(err){
-          hideAppModal();console.warn("login failed:",err&&err.code,err&&err.message);
+          if(_btn){ _btn.disabled=false; _btn.innerHTML=_orig; }
+          console.warn("login failed:",err&&err.code,err&&err.message);
           const msg=authErrorMessage(err,{fallback:"লগইন করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।"});
           showMessage($("#loginMessage"),msg,"error");
         }
