@@ -4521,14 +4521,13 @@ function initPage() {
       }
       /* --- Google flow সম্পন্ন করা (popup এবং redirect-resume — দুই পথেই একই যুক্তি) --- */
       async function continueGoogleLogin(p){
-        showAppLoading();
+        // দ্রুত Google login — কোনো popup নয়
         const {role, name, permissions} = await resolveRole({uid:p.uid, email:p.email, name:p.name});
         if(role === "admin" || role === "moderator"){
           if(p.uid){
             try{ await ensureUserProfile({uid:p.uid, email:p.email, name:name || p.name, photo:p.photo}, {provider:"google"}); }
             catch(e){ console.warn("profile upsert:", e&&e.message); }
           }
-          hideAppModal();
           finishLogin({email:p.email, name: name || p.name, role, permissions, photo:p.photo, uid:p.uid});
           return;
         }
@@ -4541,20 +4540,24 @@ function initPage() {
               phone:member.phone, dob:member.dob, gender:member.gender, area:member.area, username:member.username
             }, {provider:"google"});
           }catch(e){ console.warn("profile upsert:", e&&e.message); }
-          hideAppModal();
           finishFromRtdb(p, member, {role: DEFAULT_ROLE, name: member.name, permissions:{}});
           return;
         }
-        hideAppModal();
-        /* নতুন বা অসম্পূর্ণ প্রোফাইল → Google email+photo সহ ফর্ম; বাকি তথ্য ইউজার দেবে */
+        /* নতুন বা অসম্পূর্ণ প্রোফাইল → Google email+photo সহ clean form; বাকি তথ্য ইউজার দেবে */
         setSignupGoogleMode(p);
         prefillSignupFromProfile(member);
+        // Google onboarding form এখন login-এর মতো clean card — signup view কে compact করে দেখানো
         showView("signup");
+        // form কে login-এর মতো clean করতে: narrow card already, Google chip উপরে
+        const _formCard = document.querySelector("#view-signup .form-card");
+        if(_formCard) _formCard.classList.add("auth-card");
+        if(_formCard) _formCard.style.margin = "0 auto";
         showMessage($("#signupMessage"),
           member
             ? "আপনার প্রোফাইল অসম্পূর্ণ। বাকি তথ্য পূরণ করে সংরক্ষণ করুন।"
             : "এই Google অ্যাকাউন্টে কোনো CBDC অ্যাকাউন্ট নেই। নিচের তথ্যগুলো নিশ্চিত করে অ্যাকাউন্ট তৈরি সম্পন্ন করুন।",
           "error");
+        setTimeout(()=>{ const _f=document.getElementById("suName"); if(_f) _f.focus(); }, 200);
       }
       async function continueGoogleSignup(p){
         const member = (await findUserByUid(p.uid)) || (await findUserByEmail(p.email));
@@ -4573,6 +4576,8 @@ function initPage() {
         setSignupGoogleMode(p);
         prefillSignupFromProfile(member);
         showView("signup");
+        const _fc2 = document.querySelector("#view-signup .form-card");
+        if(_fc2){ _fc2.classList.add("auth-card"); _fc2.style.margin="0 auto"; }
         toast("Google ইমেইল ও প্রোফাইল ছবি নেওয়া হয়েছে — বাকি তথ্য পূরণ করুন");
         setTimeout(()=>$("#suName")?.focus(), 300);
       }
@@ -4580,13 +4585,13 @@ function initPage() {
       /* --- Google দিয়ে লগইন --- */
       $("#btnGoogleLogin")?.addEventListener("click", async () => {
         const btn = $("#btnGoogleLogin");
+        const _orig = btn ? btn.innerHTML : "";
         try{
-          btn.disabled = true;
+          if(btn){ btn.disabled = true; btn.innerHTML = "অপেক্ষা..."; }
           const p = await googleSignIn("login");
           if(!p) return; // redirect শুরু হয়েছে — ফিরে এলে boot-এ flow resume হবে
           await continueGoogleLogin(p);
         }catch(err){
-          hideAppModal();
           console.warn("Google login:", err);
           setGoogleIntent(null);
           const code = err && err.code || "";
@@ -4595,14 +4600,15 @@ function initPage() {
           } else {
             uiAlert(authErrorMessage(err), {type:"error", title:"লগইন ব্যর্থ"});
           }
-        }finally{ btn.disabled = false; }
+        }finally{ if(btn){ btn.disabled = false; btn.innerHTML = _orig; } }
       });
 
       /* --- Google দিয়ে অ্যাকাউন্ট তৈরি --- */
       $("#btnGoogleSignup")?.addEventListener("click", async () => {
         const btn = $("#btnGoogleSignup");
+        const _orig2 = btn ? btn.innerHTML : "";
         try{
-          btn.disabled = true;
+          if(btn){ btn.disabled = true; btn.innerHTML = "অপেক্ষা..."; }
           const p = await googleSignIn("signup");
           if(!p) return; // redirect শুরু হয়েছে — ফিরে এলে boot-এ flow resume হবে
           await continueGoogleSignup(p);
@@ -4615,7 +4621,7 @@ function initPage() {
           } else {
             uiAlert(authErrorMessage(err), {type:"error", title:"ব্যর্থ হয়েছে"});
           }
-        }finally{ btn.disabled = false; }
+        }finally{ if(btn){ btn.disabled = false; btn.innerHTML = _orig2; } }
       });
   
       /* ══════════════════════════════════════════════════════════════════
@@ -4905,12 +4911,29 @@ function initPage() {
           form.reset();
           clearFormErrors(form);
           $("#suAgree").checked = false;
+          const _wasGoogle = isGoogle;
           setSignupGoogleMode(null);
           message.className = "hidden"; message.textContent = "";
           hideAppModal();
-          /* কোনো success popup নয় — role অনুযায়ী সরাসরি dashboard-এ */
-          const rr = await resolveRole({uid, email:o.email, name:o.name});
-          finishLogin({email:o.email, name:o.name, role:rr.role, permissions:rr.permissions, photo:photoURL, uid});
+          if(_wasGoogle){
+            // Google দিয়ে প্রথমবার — সরাসরি Doner Panel (কোনো error নয়, clean form থেকে)
+            setPendingGoogleProfile(null);
+            const rr2 = await resolveRole({uid, email:o.email, name:o.name});
+            finishLogin({email:o.email, name:o.name, role:rr2.role, permissions:rr2.permissions, photo:photoURL, uid});
+          } else {
+            // Manual account creation: সরাসরি Doner Panel নয় — Login পেজে নিয়ে যাওয়া
+            try{
+              const {signOut} = await import("firebase/auth");
+              if(auth && auth.currentUser) await signOut(auth);
+            }catch(e){}
+            setPendingGoogleProfile(null);
+            try{ history.pushState(null,"",appBase()+"login"); }catch(e){}
+            showView("login");
+            const _loginEmail = document.getElementById("username");
+            if(_loginEmail) _loginEmail.value = o.email || "";
+            showMessage(document.getElementById("loginMessage"), "অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে। এখন ইউজারনেম বা ইমেইল এবং পাসওয়ার্ড দিয়ে লগইন করুন।", "success");
+            toast("অ্যাকাউন্ট তৈরি হয়েছে — এখন লগইন করুন");
+          }
         }catch(err){
           hideAppModal();
           console.warn("signup error:", err);
@@ -4933,7 +4956,9 @@ function initPage() {
         });
         if(!valid.ok){ $("#loginMessage").className="hidden"; $("#loginMessage").textContent=""; return; }
         const u=$("#username").value.trim(), password=$("#password").value;
-        showAppLoading();
+        const _btn = form.querySelector('button[type="submit"]');
+        const _orig = _btn ? _btn.innerHTML : "";
+        if(_btn){ _btn.disabled=true; _btn.innerHTML="লগইন হচ্ছে..."; }
         try{
           if(!fbReady || !auth) throw Object.assign(new Error("network"),{code:"auth/network-request-failed"});
           const {signInWithEmailAndPassword}=await import("firebase/auth");
@@ -4963,7 +4988,8 @@ function initPage() {
               }, {provider:"password"});
             }catch(e){ console.warn("profile upsert:", e&&e.message); }
           }
-          hideAppModal(); form.reset(); clearFormErrors(form);
+          if(_btn){ _btn.disabled=false; _btn.innerHTML=_orig; }
+          form.reset(); clearFormErrors(form);
           finishLogin({
             email,
             name:(profile&&profile.name)||resolved.name||email,
@@ -4979,7 +5005,8 @@ function initPage() {
             address: profile&&profile.address
           });
         }catch(err){
-          hideAppModal();console.warn("login failed:",err&&err.code,err&&err.message);
+          if(_btn){ _btn.disabled=false; _btn.innerHTML=_orig; }
+          console.warn("login failed:",err&&err.code,err&&err.message);
           const msg=authErrorMessage(err,{fallback:"লগইন করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।"});
           showMessage($("#loginMessage"),msg,"error");
         }
