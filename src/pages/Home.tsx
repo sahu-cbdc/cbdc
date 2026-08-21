@@ -4921,7 +4921,7 @@ function initPage() {
             const rr2 = await resolveRole({uid, email:o.email, name:o.name});
             finishLogin({email:o.email, name:o.name, role:rr2.role, permissions:rr2.permissions, photo:photoURL, uid});
           } else {
-            // Manual account creation: সরাসরি Doner Panel নয় — Login পেজে নিয়ে যাওয়া
+            // Manual account creation: সরাসরি Doner Panel নয় — Login পেজে নিয়ে যাওয়া + 3s popup
             try{
               const {signOut} = await import("firebase/auth");
               if(auth && auth.currentUser) await signOut(auth);
@@ -4931,8 +4931,12 @@ function initPage() {
             showView("login");
             const _loginEmail = document.getElementById("username");
             if(_loginEmail) _loginEmail.value = o.email || "";
-            showMessage(document.getElementById("loginMessage"), "অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে। এখন ইউজারনেম বা ইমেইল এবং পাসওয়ার্ড দিয়ে লগইন করুন।", "success");
-            toast("অ্যাকাউন্ট তৈরি হয়েছে — এখন লগইন করুন");
+            showMessage(document.getElementById("loginMessage"), "অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে। অনুগ্রহ করে ইউজারনেম অথবা ইমেইল এবং পাসওয়ার্ড দিয়ে লগইন করুন।", "success");
+            // 3 সেকেন্ডের popup — একাউন্ট সফলভাবে তৈরি হয়েছে
+            try{
+              showAppMessage("অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে। অনুগ্রহ করে ইউজারনেম অথবা ইমেইল এবং পাসওয়ার্ড দিয়ে লগইন করুন।", false, "অ্যাকাউন্ট তৈরি হয়েছে!");
+              setTimeout(()=>{ try{ hideAppModal(); }catch(e){} }, 3000);
+            }catch(e){ toast("অ্যাকাউন্ট তৈরি হয়েছে — এখন লগইন করুন"); }
           }
         }catch(err){
           hideAppModal();
