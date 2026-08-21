@@ -28,7 +28,7 @@ import {
   verifyResetCode,
   completePasswordReset,
 } from "../lib/authx";
-import { addRow, setRow, findBy, getRow, nowIso } from "../lib/rtdb";
+import { addRow, setRow, updateRow, findBy, getRow, nowIso } from "../lib/rtdb";
 import { NODES } from "../lib/firebase";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, clearFieldError } from "../lib/forms";
 import { ageFromDob, ageText, dobBounds, isValidDob, toBanglaDigits } from "../lib/age";
@@ -4788,9 +4788,18 @@ function initPage() {
 
           const existingProfile = await getRow(NODES.users, uid);
           const photoURL = photoForUid(existingProfile, googleProfile ? (googleProfile.photo||"") : "");
-          /* ১) ওয়েবসাইট অ্যাকাউন্ট — RTDB `users/{uid}` (সাথে সাথেই সক্রিয়)।
+          // donorId — uid থেকে স্থির (duplicate নয়), একই UID-তে একই donorId
+          let _donorId = String(existingProfile?.donorId || "").trim();
+          if(!_donorId){
+            let n=0; const src=String(uid);
+            for(let i=0;i<src.length;i++) n=(n*31+src.charCodeAt(i))>>>0;
+            _donorId = `CBDC-${new Date().getFullYear()}-${String((n%9999)+1).padStart(4,"0")}`;
+          }
+          const donorStatusVal = String(existingProfile?.donorStatus || "pending").trim() || "pending";
+          /* ১) ওয়েবসাইট অ্যাকাউন্ট — RTDB `users/{uid}` (সাথে সাথেই সক্রিয়) — donor তথ্য সহ একীভূত।
                 role এখানে সবসময় donor; admin/moderator শুধু `admins` নোড থেকে আসে।
-                আগে থেকে প্রোফাইল থাকলে merge — পুরোনো ছবি/role মুছে যায় না। */
+                একই UID তে personal + donor info একসাথে থাকে — আলাদা duplicate profile নয়।
+                Doner Panel ও Settings একই users/{uid} থেকেই লোড করে। */
           const profilePayload = {
             uid,
             name: o.name,
@@ -4803,12 +4812,25 @@ function initPage() {
             address: o.address || "",
             photoURL,
             provider: isGoogle ? "google" : "password",
-            status: "active"
+            status: "active",
+            // donor fields — account creation-এই donor হিসেবে নিবন্ধন (pending)
+            bloodGroup: o.bloodGroup || existingProfile?.bloodGroup || "",
+            donorId: _donorId,
+            donorStatus: donorStatusVal,
+            lastDonation: o.lastDonationDate || existingProfile?.lastDonation || "",
+            whatsapp: o.whatsapp || existingProfile?.whatsapp || "",
+            health: o.healthNotes || existingProfile?.health || "",
+            available: true,
+            appliedAt: nowIso(),
+            cardTheme: existingProfile?.cardTheme || "green"
           };
           if(existingProfile){
             await ensureUserProfile({
               uid, email:o.email, name:o.name, photo:photoURL,
-              phone:o.phone, dob:o.dob, gender:o.gender, area:o.area, username:o.username, address:o.address
+              phone:o.phone, dob:o.dob, gender:o.gender, area:o.area, username:o.username, address:o.address,
+              bloodGroup: profilePayload.bloodGroup, donorId: profilePayload.donorId, donorStatus: profilePayload.donorStatus,
+              lastDonation: profilePayload.lastDonation, whatsapp: profilePayload.whatsapp, health: profilePayload.health,
+              available: true, appliedAt: profilePayload.appliedAt, cardTheme: profilePayload.cardTheme
             }, {provider: isGoogle ? "google" : "password"});
           } else {
             await setRow(NODES.users, uid, {
@@ -4818,22 +4840,67 @@ function initPage() {
             });
           }
 
-          /* ২) রক্তদাতা প্রোফাইল — RTDB `members` (অ্যাডমিন যাচাইয়ের পর পাবলিক তালিকায়) */
-          const memberId = await addRow(NODES.members, {
-            name: o.name, email: o.email, username: o.username,
-            bloodGroup: o.bloodGroup || "", gender: o.gender || "",
-            dob: o.dob || "", area: o.area || "", phone: o.phone || "",
-            whatsapp: o.whatsapp || "", address: o.address || "",
-            lastDonationDate: o.lastDonationDate || "", healthNotes: o.healthNotes || "",
-            uid, photoURL, district: "চট্টগ্রাম", status: "pending", createdAt: nowIso()
-          });
-          /* মডারেশন কিউ — Admin/Moderator প্যানেলে সঙ্গে সঙ্গে দেখা যাবে */
-          await setRow(NODES.queue, memberId, {
-            kind:"donor", memberId, uid, name:o.name, group:o.bloodGroup||"", area:o.area||"",
-            dob:o.dob||"", gender:o.gender||"", health:o.healthNotes||"",
-            last:o.lastDonationDate||"", phone:o.phone||"", whatsapp:o.whatsapp||"",
-            address:o.address||"", at:nowIso()
-          });
+          /* ২) রক্তদাতা প্রোফাইল — RTDB `members` (অ্যাডমিন যাচাইয়ের পর পাবলিক তালিকায়)
+                duplicate member তৈরি রোধ — একই UID-তে আগে pending/approved থাকলে নতুন তৈরি নয় */
+          let memberId = "";
+          try{
+            const existingMember = await findBy(NODES.members, "uid", uid);
+            if(existingMember && existingMember.id){
+              memberId = existingMember.id;
+              await updateRow(NODES.members, memberId, {
+                name: o.name, email: o.email, username: o.username,
+                bloodGroup: o.bloodGroup || "", gender: o.gender || "",
+                dob: o.dob || "", area: o.area || "", phone: o.phone || "",
+                whatsapp: o.whatsapp || "", address: o.address || "",
+                lastDonationDate: o.lastDonationDate || "", healthNotes: o.healthNotes || "",
+                uid, photoURL, donorId: _donorId, donorStatus: donorStatusVal
+              });
+            } else {
+              memberId = await addRow(NODES.members, {
+                name: o.name, email: o.email, username: o.username,
+                bloodGroup: o.bloodGroup || "", gender: o.gender || "",
+                dob: o.dob || "", area: o.area || "", phone: o.phone || "",
+                whatsapp: o.whatsapp || "", address: o.address || "",
+                lastDonationDate: o.lastDonationDate || "", healthNotes: o.healthNotes || "",
+                uid, photoURL, donorId: _donorId, donorStatus: donorStatusVal, district: "চট্টগ্রাম", status: "pending", createdAt: nowIso()
+              });
+            }
+          }catch(e){
+            memberId = await addRow(NODES.members, {
+              name: o.name, email: o.email, username: o.username,
+              bloodGroup: o.bloodGroup || "", gender: o.gender || "",
+              dob: o.dob || "", area: o.area || "", phone: o.phone || "",
+              whatsapp: o.whatsapp || "", address: o.address || "",
+              lastDonationDate: o.lastDonationDate || "", healthNotes: o.healthNotes || "",
+              uid, photoURL, donorId: _donorId, donorStatus: donorStatusVal, district: "চট্টগ্রাম", status: "pending", createdAt: nowIso()
+            });
+          }
+          /* মডারেশন কিউ — Admin/Moderator প্যানেলে সঙ্গে সঙ্গে দেখা যাবে — duplicate queue রোধ */
+          try{
+            const existingQ = await findBy(NODES.queue, "memberId", memberId);
+            if(existingQ){
+              await updateRow(NODES.queue, memberId, {
+                kind:"donor", memberId, uid, donorId: _donorId, donorStatus: donorStatusVal, name:o.name, group:o.bloodGroup||"", area:o.area||"",
+                dob:o.dob||"", gender:o.gender||"", health:o.healthNotes||"",
+                last:o.lastDonationDate||"", phone:o.phone||"", whatsapp:o.whatsapp||"",
+                address:o.address||"", at:existingQ.at || nowIso()
+              });
+            } else {
+              await setRow(NODES.queue, memberId, {
+                kind:"donor", memberId, uid, donorId: _donorId, donorStatus: donorStatusVal, name:o.name, group:o.bloodGroup||"", area:o.area||"",
+                dob:o.dob||"", gender:o.gender||"", health:o.healthNotes||"",
+                last:o.lastDonationDate||"", phone:o.phone||"", whatsapp:o.whatsapp||"",
+                address:o.address||"", at:nowIso()
+              });
+            }
+          }catch(e){
+            await setRow(NODES.queue, memberId, {
+              kind:"donor", memberId, uid, donorId: _donorId, donorStatus: donorStatusVal, name:o.name, group:o.bloodGroup||"", area:o.area||"",
+              dob:o.dob||"", gender:o.gender||"", health:o.healthNotes||"",
+              last:o.lastDonationDate||"", phone:o.phone||"", whatsapp:o.whatsapp||"",
+              address:o.address||"", at:nowIso()
+            });
+          }
 
           form.reset();
           clearFormErrors(form);
