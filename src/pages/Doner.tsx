@@ -6656,11 +6656,21 @@ function initPage() {
     const phoneMatches = x => !!phone && String(x.phone||"").replace(/\s+/g,"")===phone;
 
     // users/{uid} — প্রোফাইল, settings, activities, request history সব অ্যাকাউন্টের ভেতরে
+    const userProfile=await getRow(NODES.users, uid);
     paths[`users/${uid}`]=null;
+
+    // নতুন registration flow-এর pending member key — private node list না পড়েও সরানো যায়
+    const savedMemberId=String((userProfile&&userProfile.donorMemberId)||"").trim();
+    if(savedMemberId){
+      paths[`members/${savedMemberId}`]=null;
+      paths[`queue/${savedMemberId}`]=null;
+    }
 
     // donors/{id} — approved donor profile
     const donors=await listOnce(NODES.donors);
-    donors.filter(d=>ownerMatches(d) || (uid && String(d.uid||"")===uid)).forEach(d=>{ if(d.id) paths[`donors/${d.id}`]=null; });
+    /* নতুন record UID/ownerUid দিয়ে মেলে; পুরোনো donor record-এ UID না থাকলে
+       একই account-এর সংরক্ষিত email/phone দিয়ে fallback করে মেলানো হয়। */
+    donors.filter(d=>ownerMatches(d) || emailMatches(d) || phoneMatches(d)).forEach(d=>{ if(d.id) paths[`donors/${d.id}`]=null; });
 
     // members/{id} — অনুমোদন-প্রক্রিয়ার ডোনার আবেদন
     const members=await listOnce(NODES.members);
@@ -7019,13 +7029,17 @@ function initPage() {
   async function hydrateDonorFromRtdb(uid){
     if(!uid || STORE.donor.is) return false;
     try{
+      const accountEmail = String(STORE.account.email || "").trim().toLowerCase();
+      const accountPhone = String(STORE.account.phone || "").replace(/\s+/g, "");
+      const legacyOwner = row => (!!accountEmail && String(row.email || "").trim().toLowerCase() === accountEmail)
+        || (!!accountPhone && String(row.phone || "").replace(/\s+/g, "") === accountPhone);
       // 1) approved donors
       let donor = null;
       try{
         donor = await findBy(NODES.donors, "ownerUid", uid);
         if(!donor){
           const all = await listOnce(NODES.donors);
-          donor = all.find(d=> String(d.ownerUid)===String(uid) || String(d.uid)===String(uid));
+          donor = all.find(d=> String(d.ownerUid)===String(uid) || String(d.uid)===String(uid) || legacyOwner(d));
         }
       }catch(e){}
       if(donor){
@@ -7048,7 +7062,7 @@ function initPage() {
         member = await findBy(NODES.members, "uid", uid);
         if(!member){
           const allM = await listOnce(NODES.members);
-          member = allM.find(m=> String(m.uid)===String(uid));
+          member = allM.find(m=> String(m.uid)===String(uid) || String(m.ownerUid)===String(uid) || legacyOwner(m));
         }
       }catch(e){}
       if(member){
@@ -7071,7 +7085,7 @@ function initPage() {
       // 3) queue (pending donor request)
       try{
         const allQ = await listOnce(NODES.queue);
-        const q = allQ.find(x=> x.kind==="donor" && String(x.ownerUid)===String(uid)) || allQ.find(x=> String(x.uid)===String(uid) && x.group);
+        const q = allQ.find(x=> x.kind==="donor" && (String(x.ownerUid)===String(uid) || String(x.uid)===String(uid) || legacyOwner(x))) || allQ.find(x=> String(x.uid)===String(uid) && x.group);
         if(q){
           STORE.donor.is=true; STORE.donor.status="pending";
           /* pending queue — Donor UID এখনো তৈরি হয়নি; approve-র পরে Admin সেট করবে */
