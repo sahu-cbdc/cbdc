@@ -116,7 +116,7 @@ metadata** সেভ হয়।
 
 | Node | Key | Fields | Access |
 | --- | --- | --- | --- |
-| `donors` | donor id (`CBDC-2026-0001`) | name, bloodGroup, gender, **dob**, phone, whatsapp, area, lastDonationDate, donations, totalDonations, status, available, verified, suspended, joined, occupation, ownerUid, photo (ImgBB URL) | public read; admin write; **owner delete (own record)** |
+| `donors` | donor id (`CBDC-2026-0001`) | name, bloodGroup, gender, **dob**, phone, whatsapp, area, lastDonationDate, donations, totalDonations, status, available, verified, suspended, joined, occupation, ownerUid, photo (ImgBB URL) | public read; admin/moderator write; **owner update (নিজের তথ্য, protected ফিল্ড বাদ) ও owner delete** |
 | `_meta` | counter | `donorCounter/<year>` — পরবর্তী ধারাবাহিক Donor UID-এর atomic counter | public read; authenticated increment |
 | `requests` | push id | patientName, bloodGroup, bags, urgency, status, workflowStatus, hospitalName, hospitalAddress, requesterName, phone, whatsapp, **patientDob**, createdAt, expiresAt, responders | anyone can create; public read; staff manage |
 | `members` | push id | donor sign-up application (status `pending`, **dob**) | anyone can create; owner/staff read |
@@ -174,7 +174,8 @@ Website-এ role শুধুমাত্র ৩টি: **Admin** (Full Access),
   তার নিজের dashboard-এ সরিয়ে দেওয়া হয়। **Admin/Moderator কখনোই সাধারণ Doner
   dashboard ব্যবহার করে না**, এবং উল্টোটাও নয়।
 - **Permission**: Admin সব permission পায়। Moderator সীমিত moderation কাজ করতে পারে;
-  donor application approve করে public `donors` node-এ যোগ করার ক্ষমতা শুধু Admin-এর।
+  donor application approve করে public `donors` node-এ যোগ করার ক্ষমতা Admin ও
+  Moderator উভয়েরই আছে (Security Rules-এ `admins/{uid}/role` দিয়ে যাচাই)।
 - Security Rules-এও একই যাচাই আছে (দেখুন `database.rules.json`)।
 
 ### Donor application flow
@@ -222,6 +223,13 @@ firebase deploy --only hosting
 `database.rules.json`-এ যা যা আছে:
 
 - `donors` / `requests` / `gallery` / `notices` — public read (পাবলিক ওয়েবসাইটের জন্য)।
+- `donors/{id}` — **owner update**: ডোনার নিজের public record-এর নিজস্ব তথ্য
+  (name, gender, dob, area, phone, whatsapp, lastDonationDate, available, photo)
+  আপডেট করতে পারে — RTDB live listener-এর মাধ্যমে সাথে সাথে মেইন ওয়েবসাইট ও সব
+  প্যানেলে দেখা যায়, কোনো refresh লাগে না। Admin-নিয়ন্ত্রিত ফিল্ড
+  (donorId/verified/suspended/donations/status/bloodGroup/…) `.validate`-এ রক্ষিত —
+  owner পরিবর্তন করতে পারে না। owner নিজের record delete-ও করতে পারে
+  (ডোনার তালিকা থেকে সরে যাওয়া)।
 - `members` / `requests` / `queue` — নতুন রেকর্ড তৈরি খোলা (রেজিস্ট্রেশন ও ইমারজেন্সি
   আবেদন), কিন্তু পড়া/সম্পাদনা মালিক বা staff ছাড়া বন্ধ।
 - `users/{uid}` — owner read/write; staff full access; `role` ফিল্ড শুধু Admin বদলাতে পারে; `donorStatus:"approved"` শুধু Admin লিখতে পারে।

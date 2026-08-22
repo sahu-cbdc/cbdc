@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "smoke": "node scripts/smoke.mjs",
     "verify-become": "node scripts/verify-become.mjs",
-    "verify-profile": "node scripts/verify-profile-photo.mjs"
+    "verify-profile": "node scripts/verify-profile-photo.mjs",
+    "verify-realtime": "node scripts/verify-realtime-donors.mjs"
   },
   "dependencies": {
     "firebase": "^11.10.0",

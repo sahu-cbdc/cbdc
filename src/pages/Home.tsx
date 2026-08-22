@@ -3432,7 +3432,8 @@ function initPage() {
       const setRequests = async (list) => { };
       // Realtime Database is the single source of truth — no demo/mock data anywhere
       const daysSince = date => { if(!date)return null; const d=new Date(date+"T00:00:00"); if(Number.isNaN(d.getTime()))return null; const n=new Date(); const a=new Date(n.getFullYear(),n.getMonth(),n.getDate()); const b=new Date(d.getFullYear(),d.getMonth(),d.getDate()); return Math.floor((a-b)/86400000); };
-      const canDonate = donor => !donor.lastDonationDate || (daysSince(donor.lastDonationDate) !== null && daysSince(donor.lastDonationDate) >= 90);
+      const canDonate = donor => donor.available !== false && !donor.suspended
+        && (!donor.lastDonationDate || (daysSince(donor.lastDonationDate) !== null && daysSince(donor.lastDonationDate) >= 90));
       const statusText = status => ({pending:"অপেক্ষমাণ",approved:"অনুমোদিত",rejected:"বাতিল",resolved:"সমাধান হয়েছে"}[status] || status);
       const statusBadge = status => `<span class="status ${esc(status)}">${esc(statusText(status))}</span>`;
   
@@ -3875,6 +3876,11 @@ function initPage() {
       function renderPublic(){ renderStats();renderSearch();renderBoard();
         /* keep the profile-page hand-off in sync with whatever is on screen (RTDB live data) */
         try{ publishDonors(); }catch(e){}
+        /* খোলা ডোনার প্রোফাইল পেজটিও live update হয় — RTDB listener-এর কল্যাণে
+           ডোনার/অ্যাডমিন তথ্য বদলালে রিলোড ছাড়াই নতুন তথ্য দেখায় */
+        if(currentProfId&&document.getElementById("profileBody")){
+          try{ renderProfile(currentProfId); }catch(e){}
+        }
       }
   
       let currentDcardId=null;

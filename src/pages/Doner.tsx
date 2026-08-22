@@ -18,7 +18,7 @@ import {
   loadUserProfile,
   isProfileComplete,
 } from "../lib/authx";
-import { getRow, setRow, updateRow, watchRow, addRow, findBy, listOnce, nowIso, updatePaths } from "../lib/rtdb";
+import { getRow, setRow, updateRow, watchRow, addRow, findBy, listOnce, nowIso, updatePaths, removeRow } from "../lib/rtdb";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
@@ -440,6 +440,7 @@ button.row:hover,a.row:hover{background:var(--card2)}
 .dc-name{margin-top:2px;color:#172e27;font-size:20px;font-weight:800;line-height:1.2}
 .dc-st{margin-top:3px;color:#168158;font-size:13px;font-weight:700}
 .dc-st.rest{color:#a5720c}
+.dc-st.off{color:#7c8a84}
 .dc-meta{display:grid;gap:5px;margin-top:10px;color:#5d6d67;font-size:13.5px}
 .dc-meta div{display:flex;align-items:center;gap:6px}
 .dc-meta svg{opacity:.62;flex:none}
@@ -3918,6 +3919,9 @@ function initPage() {
     if(!SHARED_PULLING)queueMicrotask(publishPersonalShared);
     /* একই তথ্য আলাদা করে দ্বিতীয়বার লিখতে হয় না — এখান থেকেই RTDB-তে যায় */
     if(typeof pushAccountToRtdb==="function")queueMicrotask(()=>pushAccountToRtdb());
+    /* অনুমোদিত ডোনার হলে পাবলিক রেকর্ডও (donors/{id}) সাথে সাথে update —
+       মেইন ওয়েবসাইটের তালিকা/কার্ড/প্রোফাইলে রিয়েল-টাইমে দেখা যায় */
+    if(typeof pushDonorRecordToRtdb==="function")queueMicrotask(()=>pushDonorRecordToRtdb());
   }
   function load(){try{const d=JSON.parse(localStorage.getItem(LS)||"{}");
     if(d.account)Object.assign(STORE.account,d.account);
@@ -4033,6 +4037,10 @@ function initPage() {
       STORE.donor.is=true;
       STORE.donor.status="approved";STORE.donor.donorId=mine.id;STORE.donor.bloodGroup=mine.bloodGroup;
       STORE.donor.lastDonation=mine.lastDonationDate||"";
+      /* admin-পরিবর্তিত প্রাপ্যতা/WhatsApp পাবলিক রেকর্ড থেকেই সাথে সাথে সিঙ্ক —
+         নইলে ডোনারের পরবর্তী save() পুরোনো মান দিয়ে আবার admin-এর পরিবর্তন মুছে দেবে */
+      if(mine.available!==undefined)STORE.donor.available=!!mine.available;
+      if(typeof mine.whatsapp==="string")STORE.donor.whatsapp=mine.whatsapp;
       if(!wasDonor){
         try{ persistLocalAccount(); }catch(e){}
         // RTDB-তে একীভূত — duplicate profile নয়, একই UID তে sync
@@ -4334,7 +4342,7 @@ function initPage() {
       <div class="sk" style="height:11px;width:65%"></div></div></div>`).join("")}</div>`;
     await sleep(340);
     const rows=DB().donors.filter(d=>(!findQ.g||d.group===findQ.g)&&(!findQ.a||d.area===findQ.a)
-      &&(!findQ.ready||donorReady(d)));
+      &&(!findQ.ready||(donorReady(d)&&d.available!==false)));
     box.innerHTML=rows.length?`
       <div style="display:flex;align-items:center;margin:4px 4px 10px">
         <b style="font-size:.85rem;flex:1">${tp(`${bn(rows.length)} জন রক্তদাতা পাওয়া গেছে`,`${rows.length} donor${rows.length!==1?"s":""} found`)}</b>
@@ -4365,7 +4373,8 @@ function initPage() {
     /* readiness is derived from the rest period, never stored — and the list
        honours the same privacy rules as the profile screen, so a hidden
        number can never leak through the search results */
-    const ready=donorReady(d);
+    const avail=d.available!==false;
+    const ready=donorReady(d)&&avail;
     const pv=d.privacy||{};
     const phone=d.phone;                       /* always shown */
     const wa=pv.showWhatsapp!==false?phone:"";
@@ -4374,8 +4383,8 @@ function initPage() {
         <div>
           <div class="dc-id">${esc(id)}</div>
           <div class="dc-name">${esc(d.name)}</div>
-          <div class="dc-st ${ready?"":"rest"}">${ready?"✓ রক্তদানে প্রস্তুত"
-            :`বিশ্রামে · আর ${bn(donorRest(d))} দিন`}</div>
+          <div class="dc-st ${ready?"":avail?"rest":"off"}">${ready?"✓ রক্তদানে প্রস্তুত"
+            :avail?`বিশ্রামে · আর ${bn(donorRest(d))} দিন`:"প্রাপ্যতা বন্ধ"}</div>
           <div class="dc-meta">
             <div>${ICON.pin(13)} এলাকা: <strong>${esc(d.area)}</strong></div>
             <div>${ICON.phone(13)} যোগাযোগ: <strong>${esc(phone)}</strong></div>
@@ -4434,6 +4443,7 @@ function initPage() {
       occupation:a.occupation||"", phone:ov.phone||a.phone, whatsapp:!!d.whatsapp,
       lastDonation:d.lastDonation, totalDonations:DB().donations.length,
       joined:a.joined||"", verified:d.status==="approved", bio:a.bio||"",
+      available:STORE.donor.available!==false,
       privacy:{showArea:STORE.privacy.showArea,
                showGroup:STORE.privacy.showGroup,showWhatsapp:STORE.privacy.showWhatsapp}
     };
@@ -4460,7 +4470,8 @@ function initPage() {
       whatsapp:(pv.showWhatsapp!==false&&(d.whatsappNo||d.phone))?(d.whatsappNo||d.phone):null,
       total:d.totalDonations||0,
       last:d.lastDonation||"",
-      ready:donorReady(d), rest:donorRest(d),
+      ready:donorReady(d)&&d.available!==false, avail:d.available!==false,
+      rest:donorRest(d),
       joined:d.joined||""
     };
   }
@@ -4568,8 +4579,8 @@ function initPage() {
         </div>
         ${v.bio?`<p class="pbio">${esc(v.bio)}</p>`:""}
         <div class="pchips">
-          <span class="pchip ${v.ready?"ok":"rest"}">${v.ready?"✓ রক্তদানে প্রস্তুত"
-            :`বিশ্রামে · আর ${bn(v.rest)} দিন`}</span>
+          <span class="pchip ${v.ready?"ok":v.avail?"rest":"m"}">${v.ready?"✓ রক্তদানে প্রস্তুত"
+            :v.avail?`বিশ্রামে · আর ${bn(v.rest)} দিন`:"প্রাপ্যতা বন্ধ"}</span>
           ${v.area?`<span class="pchip">${ICON.pin(12)} ${esc(v.area)}</span>`:""}
           ${v.age?`<span class="pchip">${bn(v.age)} বছর</span>`:""}
           ${v.occupation?`<span class="pchip">${esc(v.occupation)}</span>`:""}
@@ -5964,7 +5975,23 @@ function initPage() {
         toast("সব তথ্য অ্যাকাউন্ট থেকে নেওয়া হবে","ok")}break;
       case "leaveDonor":if(await confirmS({title:"ডোনার তালিকা থেকে সরে যাবেন?",
         desc:"অ্যাকাউন্ট থাকবে, শুধু ডোনার তথ্য ও কার্ড সরে যাবে। চাইলে আবার যুক্ত হতে পারবেন।",ok:"সরে যান",danger:true})){
-        STORE.donor.is=false;STORE.donor.status="none";save();logAct("ডোনার তালিকা থেকে সরে গেছেন","");go("set","donor");toast("সরে গেছেন")}break;
+        const leftId=STORE.donor.donorId||"";
+        STORE.donor.is=false;STORE.donor.status="none";save();
+        /* নিজের পাবলিক রেকর্ড RTDB থেকে মুছে দিলে সাথে সাথে সব জায়গা থেকে সরে যায় */
+        if(leftId){
+          (async()=>{
+            try{
+              let rec=null;
+              try{ rec=await findBy(NODES.donors,"ownerUid",STORE.account.uid||""); }catch(e){}
+              if(!rec){
+                const all=await listOnce(NODES.donors);
+                rec=all.find(x=>String(x.id||"")===String(leftId)||String(x.ownerUid||"")===String(STORE.account.uid||""));
+              }
+              if(rec&&rec.id)await removeRow(NODES.donors,rec.id);
+            }catch(e){ console.warn("leave donor remove:",e&&e.message); }
+          })();
+        }
+        logAct("ডোনার তালিকা থেকে সরে গেছেন","");go("set","donor");toast("সরে গেছেন")}break;
       case "withdraw":if(await confirmS({title:"আবেদন প্রত্যাহার করবেন?",desc:"পরে আবার আবেদন করতে পারবেন।",ok:"প্রত্যাহার",danger:true})){
         STORE.donor.is=false;STORE.donor.status="none";save();
         if(CUR==="become"){reqTab="become";go("req");}else{rReq();}
@@ -6599,6 +6626,27 @@ function initPage() {
       await updateRow(NODES.users, RTDB_UID, payload);
     }catch(e){ console.warn("profile push:", e && e.message); }
   }
+  /* অনুমোদিত ডোনারের পাবলিক রেকর্ড (donors/{id}) — নিজের তথ্য বদলালে সাথে সাথে
+     RTDB-তে update হয়, আর RTDB থেকে store-এর live listener-এর মাধ্যমে মেইন
+     ওয়েবসাইট ও ডোনার প্যানেলের সব জায়গায় (তালিকা/কার্ড/প্রোফাইল) সাথে সাথে
+     দেখা যায় — কোনো refresh লাগে না। bloodGroup/verified/suspended/donations
+     ইত্যাদি admin-নিয়ন্ত্রিত ফিল্ড লেখা হয় না (rules-ও রক্ষা করে)। */
+  async function pushDonorRecordToRtdb(){
+    if(!RTDB_UID||RTDB_PULLING)return;
+    const d=STORE.donor;
+    if(!d.is||d.status!=="approved"||!d.donorId)return;
+    try{
+      let donor=null;
+      try{ donor=await findBy(NODES.donors,"ownerUid",RTDB_UID); }catch(e){}
+      if(!donor){
+        const all=await listOnce(NODES.donors);
+        donor=all.find(x=>String(x.ownerUid||"")===String(RTDB_UID)||String(x.id||"")===String(d.donorId));
+      }
+      const id=(donor&&donor.id)||d.donorId;
+      if(!id)return;
+      await updatePaths({[NODES.donors+"/"+id]: donorPublicPatch(STORE.account,STORE.donor)});
+    }catch(e){ console.warn("donor public push:", e && e.message); }
+  }
   /* ডোনারের নিজস্ব রেকর্ড (রক্তদান, নিজের আবেদন, বিজ্ঞপ্তি, কার্যক্রম) RTDB-তে —
      ডিভাইস বদলালেও একই তথ্য, এবং অ্যাডমিন প্যানেলও একই উৎস পড়ে। */
   async function pushMyDataToRtdb(){
@@ -6875,7 +6923,24 @@ function initPage() {
   if(window.CBDCShared)CBDCShared.subscribe((st,meta)=>{
     if(meta&&meta.source==="doner:personal")return;
     pullSharedPublic();
-    if(!document.querySelector(".sheet")&&!PUBLIC_MODE)go(CUR,SUB,false);
+    if(PUBLIC_MODE){
+      /* public profile link (?uid=…) — ডোনার/অ্যাডমিন তথ্য বদলালে পেজ রিলোড ছাড়াই
+         updated প্রোফাইল দেখায় (RTDB live listener থেকে) */
+      try{
+        const uid=new URLSearchParams(location.search).get("uid");
+        if(!uid)return;
+        const d=resolveUid(uid);
+        if(d){
+          if(!DB().donors.some(x=>x.uid===d.uid))DB().donors.push(d);
+          profId=d.uid;
+        }else{
+          profId="__missing__";
+        }
+        renderSub("profile");
+      }catch(e){}
+      return;
+    }
+    if(!document.querySelector(".sheet"))go(CUR,SUB,false);
   });
   /* onboarding শুধু auth + RTDB প্রোফাইল লোডের পর (maybeShowSetup) —
      বুটে খালি cache দেখে বারবার স্বাগতম ফর্ম দেখানো বন্ধ। */
@@ -6895,4 +6960,30 @@ export default function Doner() {
       <StaticShell />
     </>
   );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   পাবলিক ডোনার রেকর্ডে (donors/{id}) ডোনার নিজে কী আপডেট করতে পারে —
+   RTDB rules-এর protected ফিল্ডগুলোর (verified/suspended/donations/
+   bloodGroup ইত্যাদি) বাইরে। একমাত্র এই ফিল্ডগুলোই লেখা হয়, তাই
+   ডোনারের নিজের তথ্য পরিবর্তন সাথে সাথে সর্বত্র (মেইন ওয়েবসাইটসহ)
+   রিয়েল-টাইমে দেখায়। ছোট ও pure — টেস্টযোগ্য।                    */
+export function donorPublicPatch(
+  account: Record<string, any> | null | undefined,
+  donor: Record<string, any> | null | undefined
+): Record<string, string | boolean> {
+  const a = account || {};
+  const d = donor || {};
+  const ov = (d.ov && typeof d.ov === "object" ? d.ov : {}) as Record<string, any>;
+  return {
+    name: String(ov.name || a.name || ""),
+    gender: String(ov.gender || a.gender || ""),
+    dob: String(ov.dob || a.dob || ""),
+    area: String(ov.area || a.area || ""),
+    phone: String(ov.phone || a.phone || ""),
+    whatsapp: String(d.whatsapp || ""),
+    lastDonationDate: String(d.lastDonation || ""),
+    available: d.available !== false,
+    photo: String(a.photo || ""),
+  };
 }
