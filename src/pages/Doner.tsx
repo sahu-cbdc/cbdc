@@ -10,7 +10,14 @@ import { useEffect } from "react";
 import "../lib/store";
 import { initFirebase as initSharedFirebase, NODES } from "../lib/firebase";
 import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
-import { authErrorMessage, resolveUserRole, panelForRole } from "../lib/authx";
+import {
+  authErrorMessage,
+  resolveUserRole,
+  panelForRole,
+  photoForUid,
+  loadUserProfile,
+  isProfileComplete,
+} from "../lib/authx";
 import { getRow, setRow, updateRow, watchRow, addRow, findBy, listOnce, nowIso } from "../lib/rtdb";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
@@ -4282,11 +4289,12 @@ function initPage() {
         <div style="padding:12px 15px 15px">${actHTML}</div></div>`;
   }
   function timeAgo(at){
-    const d=new Date(at),diff=(now()-d)/1000;
+    /* বাংলাদেশ সময় (Asia/Dhaka) অনুযায়ী */
+    const d=bdDate(at),diff=(bdNow()-d)/1000;
     if(diff<3600){const v=Math.max(1,Math.floor(diff/60));return tp(`${bn(v)} মিনিট আগে`,`${v} min ago`)}
     if(diff<86400){const v=Math.floor(diff/3600);return tp(`${bn(v)} ঘণ্টা আগে`,`${v} hr ago`)}
-    if(diff<172800)return "গতকাল";
-    return d.toLocaleDateString(LOC(),{day:"numeric",month:"short"});
+    if(bdDayKey(at)===1)return "গতকাল";
+    return bdDate(at).toLocaleDateString(LOC(),{day:"numeric",month:"short"});
   }
   
   /* ══════════ SCREEN: FIND ══════════ */
@@ -4808,7 +4816,7 @@ function initPage() {
       const acts=DB().activity;
       if(!acts.length)return emptyBox(ICON.clock(26),"কোনো কার্যকলাপ নেই","আপনার অ্যাকাউন্টের পরিবর্তন এখানে দেখা যাবে");
       const groups={};
-      acts.forEach(x=>{const d=new Date(x.at),k=dayDiff(iso(d))===0?"আজ":dayDiff(iso(d))===1?"গতকাল":dL(iso(d));
+      acts.forEach(x=>{const k=bdDateLabel(x.at);
         (groups[k]=groups[k]||[]).push(x)});
       return Object.entries(groups).map(([k,list])=>`
         <div class="sec-t">${esc(k)}</div>
@@ -4816,8 +4824,8 @@ function initPage() {
           <span class="ic" style="background:${x.type==="security"?"var(--blu-s)":x.type==="donor"?"var(--red-s)":"var(--card2)"};
             color:${x.type==="security"?"var(--blu)":x.type==="donor"?"var(--red)":"var(--mut)"}">
             ${x.type==="security"?ICON.shield(18):x.type==="donor"?ICON.drop(18):ICON.user(18)}</span>
-          <span class="tx"><b>${esc(x.title)}</b><small>${esc(x.detail)}</small></span>
-          <span class="rt">${new Date(x.at).toLocaleTimeString("bn-BD",{hour:"2-digit",minute:"2-digit"})}</span></div>`).join("")}</div>`).join("");
+          <span class="tx"><b>${esc(x.title)}</b><small>${esc(x.detail)}</small>
+            <small style="color:var(--mut);font-size:.7rem">${bdDate(x.at).toLocaleDateString(LOC(),{day:"numeric",month:"short",year:"numeric"})} · ${bdTimeStr(x.at)}</small></span></div>`).join("")}</div>`).join("");
     };
   
     P.privacy=()=>`
@@ -5507,9 +5515,31 @@ function initPage() {
     });
   }
   function logAct(title,detail,type="account"){
-    RAW.activity.unshift({at:new Date().toISOString().slice(0,16),title,detail,type});
+    /* সম্পূর্ণ ISO (UTC) timestamp — বাংলাদেশ সময় দেখানো হয় দেখার সময়ে (Asia/Dhaka) */
+    RAW.activity.unshift({at:new Date().toISOString(),title,detail,type});
     if(RAW.activity.length>200)RAW.activity.length=200;
     saveData();
+  }
+
+  /* ══ বাংলাদেশ সময় (Asia/Dhaka, UTC+6 — DST নেই) ══
+     RTDB-তে টাইমস্ট্যাম্প UTC ISO আকারে থাকে; সব সময়-প্রদর্শন এখানে বাংলাদেশ
+     সময়ে রূপান্তর করে — তাই কার্যকলাপের সঠিক সময় সবসময় একই দেখায়। */
+  const BD_OFFSET = 6*60*60*1000;
+  const bdDate = v => new Date((new Date(v)).getTime() + BD_OFFSET);
+  const bdNow = () => bdDate(new Date());
+  function bdDayKey(v){ // 0 = আজ, 1 = গতকাল, else দিন-সংখ্যা (বাংলাদেশ সময়ে)
+    const d=bdDate(v), n=bdNow();
+    const z=x=>new Date(x.getFullYear(),x.getMonth(),x.getDate()).getTime();
+    return Math.round((z(n)-z(d))/864e5);
+  }
+  function bdDateLabel(v){
+    const k=bdDayKey(v);
+    if(k===0)return "আজ";
+    if(k===1)return "গতকাল";
+    return bdDate(v).toLocaleDateString("bn-BD",{day:"numeric",month:"short",year:"numeric"});
+  }
+  function bdTimeStr(v){
+    return bdDate(v).toLocaleTimeString("bn-BD",{hour:"2-digit",minute:"2-digit"});
   }
 
   /* ── id generator (local request id) ── */
@@ -5522,20 +5552,34 @@ function initPage() {
     if(isDonor()&&dStatus()==="pending"){ toast("আপনার আবেদন ইতিমধ্যে যাচাইয়ের অপেক্ষায় আছে","er"); reqTab="become"; go("req"); return; }
     if(isDonor()&&dStatus()==="approved"){ go("set","donor"); return; }
     const s=sheet("রক্তদাতা হিসেবে যুক্ত হন",`
-      <div class="note i">${ICON.info(17)}<span>আপনার অ্যাকাউন্টের নাম, লিঙ্গ, এলাকা ও মোবাইল স্বয়ংক্রিয়ভাবে ব্যবহার হবে — আবার লিখতে হবে না।</span></div>
+      <div class="note i">${ICON.info(17)}<span>আপনার অ্যাকাউন্টের তথ্য (নাম, লিঙ্গ, এলাকা, মোবাইল) স্বয়ংক্রিয়ভাবে বসে গেছে — প্রয়োজন হলে পরিবর্তন করে জমা দিন।</span></div>
       <form id="becomeForm" novalidate>
+      <div class="f"><label>নাম <i>*</i></label>
+        <input id="bc_name" name="bc_name" value="${esc(a.name||"")}" maxlength="60"></div>
+      <div class="f"><label>লিঙ্গ <i>*</i></label>
+        <select id="bc_gender" name="bc_gender">
+          <option value="">লিঙ্গ নির্বাচন করুন</option>
+          ${["পুরুষ","মহিলা","অন্যান্য"].map(g=>`<option ${a.gender===g?"selected":""}>${esc(g)}</option>`).join("")}
+        </select></div>
+      <div class="f"><label>এলাকা <i>*</i></label>
+        <select id="bc_area" name="bc_area">
+          <option value="">থানা / এলাকা নির্বাচন করুন</option>
+          ${SITE.homeAreas.map(g=>`<option ${a.area===g?"selected":""}>${esc(g)}</option>`).join("")}
+        </select></div>
+      <div class="f"><label>মোবাইল নম্বর <i>*</i></label>
+        <input id="bc_phone" name="bc_phone" value="${esc(a.phone||"")}" inputmode="numeric" maxlength="11"></div>
       <div class="f"><label>রক্তের গ্রুপ <i>*</i></label>
         <select id="bc_group" name="bc_group">
           <option value="">রক্তের গ্রুপ নির্বাচন করুন</option>
-          ${GROUPS.map(g=>`<option>${esc(g)}</option>`).join("")}
+          ${GROUPS.map(g=>`<option ${d.bloodGroup===g?"selected":""}>${esc(g)}</option>`).join("")}
         </select></div>
       <div class="f"><label>সর্বশেষ রক্তদান <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
-        <input id="bc_last" name="bc_last" type="date" max="${iso(now())}">
+        <input id="bc_last" name="bc_last" type="date" max="${iso(now())}" value="${esc(d.lastDonation||"")}">
         <span class="hint">মনে না থাকলে খালি রাখুন।</span></div>
       <div class="f"><label>স্বাস্থ্য তথ্য <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
-        <textarea id="bc_health" name="bc_health" placeholder="সম্পূর্ণ সুস্থ, কোনো দীর্ঘমেয়াদি রোগ নেই।"></textarea></div>
+        <textarea id="bc_health" name="bc_health" placeholder="সম্পূর্ণ সুস্থ, কোনো দীর্ঘমেয়াদি রোগ নেই।">${esc(d.health||"")}</textarea></div>
       <div class="f"><label>WhatsApp নম্বর <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
-        <input id="bc_wa" name="bc_wa" inputmode="numeric" maxlength="11"></div>
+        <input id="bc_wa" name="bc_wa" inputmode="numeric" maxlength="11" value="${esc(d.whatsapp||"")}"></div>
       <label class="chk"><input type="checkbox" id="bc_ok" name="bc_ok">
         <span>আমি নিশ্চিত করছি প্রদত্ত তথ্য সঠিক এবং স্বেচ্ছায় রক্তদানে সম্মত।</span></label>
       </form>`,
@@ -5544,6 +5588,10 @@ function initPage() {
     s.q("#bc_save").onclick=async()=>{
       const form=s.q("#becomeForm");
       const v=validateForm(form,{
+        bc_name:{required:true,minLength:2,label:"নাম"},
+        bc_gender:{required:true,label:"লিঙ্গ"},
+        bc_area:{required:true,label:"এলাকা"},
+        bc_phone:{required:true, custom:val=>phoneOK(val)||"১১ সংখ্যার সঠিক মোবাইল নম্বর দিন", label:"মোবাইল নম্বর"},
         bc_group:{required:true,label:"রক্তের গ্রুপ"},
         bc_last:{custom:v=>!v||dayDiff(v)>=0||"ভবিষ্যতের তারিখ দেওয়া যাবে না"},
         bc_wa:{custom:v=>!v||phoneOK(v)||"সঠিক ১১ সংখ্যার নম্বর দিন"},
@@ -5551,7 +5599,12 @@ function initPage() {
       });
       if(!v.ok)return;
       const btn=s.q("#bc_save");btn.disabled=true;btn.textContent="সংরক্ষণ হচ্ছে…";
-      const d=STORE.donor;
+      const a=STORE.account,d=STORE.donor;
+      /* অ্যাকাউন্টের তথ্যও হালনাগাদ — RTDB `users/{uid}`-এ সাথে সাথে (আইটেম ৩, ৬) */
+      a.name=s.q("#bc_name").value.trim();
+      a.gender=s.q("#bc_gender").value;
+      a.area=s.q("#bc_area").value;
+      a.phone=s.q("#bc_phone").value.trim();
       d.is=true; d.status="pending";
       d.bloodGroup=s.q("#bc_group").value;
       d.lastDonation=s.q("#bc_last").value||"";
@@ -5686,27 +5739,50 @@ function initPage() {
   function sheetGroupChange(){
     const d=STORE.donor;
     const s=sheet("রক্তের গ্রুপ পরিবর্তন",`
-      <div class="note w">${ICON.warn(17)}<span>রক্তের গ্রুপ বদলালে অ্যাডমিনের অনুমোদন লাগবে — এটি অনুরোধ হিসেবে যাবে।</span></div>
+      <div class="note w">${ICON.warn(17)}<span>রক্তের গ্রুপ বদলালে অ্যাডমিনের অনুমোদন লাগবে — এটি অনুরোধ হিসেবে যাবে এবং অনুমোদনের আগে কার্যকর হবে না।</span></div>
       <div class="f"><label>বর্তমান গ্রুপ</label><input value="${esc(d.bloodGroup||"")}" readonly></div>
       <div class="f"><label>নতুন গ্রুপ <i>*</i></label>
         <select id="gch"><option value="">নতুন গ্রুপ নির্বাচন করুন</option>
         ${GROUPS.map(g=>`<option ${g===d.bloodGroup?"selected":""}>${esc(g)}</option>`).join("")}</select>
-        <span class="hint er hide" id="gche"></span></div>`,
-      `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="ok">অনুরোধ পাঠান</button>`);
-    s.q("#ok").onclick=()=>{
+        <span class="hint er hide" id="gche"></span></div>
+      <div class="f"><label>কারণ <i>*</i></label>
+        <textarea id="gcr" rows="2" placeholder="ভুল দিয়ে দিয়েছি / পরীক্ষার ফলাফল অনুযায়ী পরিবর্তন…"></textarea></div>
+      <div class="f"><label>রিপোর্ট / প্রমাণ (ছবি) <i>*</i></label>
+        <input id="gcf" type="file" accept="image/*" class="file">
+        <span class="hint">রক্তের গ্রুপের রিপোর্ট/ছবি দিন — ImgBB-তে আপলোড হয়ে অ্যাডমিন সরাসরি দেখতে পাবেন।</span>
+        <div id="gcpv" class="hide" style="margin-top:8px"><img alt="প্রিভিউ" style="max-height:120px;border-radius:10px;border:1px solid var(--line)"></div></div>`,
+      `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="ok">অনুরোধ পাঠান</button>`,{lock:true});
+    /* ছবি প্রিভিউ */
+    const _gcf=s.q("#gcf"); if(_gcf) _gcf.onchange=()=>{
+      const f=_gcf.files&&_gcf.files[0]; const pv=s.q("#gcpv");
+      if(!f||!pv)return;
+      const url=URL.createObjectURL(f); pv.querySelector("img").src=url; pv.classList.remove("hide");
+    };
+    s.q("#ok").onclick=async()=>{
       const v=s.q("#gch").value;
+      const reason=(s.q("#gcr").value||"").trim();
       if(!v){const e=s.q("#gche");e.textContent="নতুন গ্রুপ নির্বাচন করুন";e.classList.remove("hide");return}
       if(v===d.bloodGroup){toast("এটি আপনার বর্তমান গ্রুপ","er");return}
+      if(!reason){toast("কারণ লিখুন","er");return}
+      const f=s.q("#gcf")&&s.q("#gcf").files&&s.q("#gcf").files[0];
+      if(!f){toast("রক্তের গ্রুপের রিপোর্ট/ছবি দিন","er");return}
+      if(f.size>4*1024*1024){toast("ছবি ৪ MB-এর কম হতে হবে","er");return}
+      const btn=s.q("#ok");btn.disabled=true;btn.textContent="আপলোড হচ্ছে…";
+      let proof="";
+      try{ const up=await imgbbUploadImage(f); proof=up.url; }
+      catch(e){ btn.disabled=false;btn.textContent="অনুরোধ পাঠান"; return toast(e&&e.message?e.message:"ছবি আপলোড করা যায়নি","er"); }
       if(window.CBDCShared){
         CBDCShared.update(st=>{
           const owner=STORE.account.uid||""; if(!owner) return;
           const gid="GR-"+String(owner).replace(/[^A-Za-z0-9]/g,"").slice(-8);
-          if(!st.queue.some(q=>q.kind==="group"&&q.ownerUid===owner))
-            st.queue.unshift({kind:"group",id:gid,name:STORE.account.name,from:d.bloodGroup,to:v,group:v,ownerUid:owner,at:new Date().toISOString()});
+          const existing=st.queue.findIndex(q=>q.kind==="group"&&q.ownerUid===owner);
+          const q={kind:"group",id:gid,name:STORE.account.name,from:d.bloodGroup,to:v,group:v,reason,
+            proof,ownerUid:owner,at:new Date().toISOString()};
+          existing>=0?st.queue[existing]={...st.queue[existing],...q}:st.queue.unshift(q);
           return st;
         },"doner:personal");
       }
-      logAct("রক্তের গ্রুপ পরিবর্তনের অনুরোধ",d.bloodGroup+" → "+v,"donor");
+      logAct("রক্তের গ্রুপ পরিবর্তনের অনুরোধ",d.bloodGroup+" → "+v+" · ছবি সহ","donor");
       s.close();renderSub("donor");toast("অনুরোধ পাঠানো হয়েছে — অ্যাডমিন যাচাই করবেন","ok");
     };
   }
@@ -5938,7 +6014,7 @@ function initPage() {
     i.onchange=async()=>{
       const f=i.files[0];if(!f)return;
       if(f.size>4*1024*1024){toast("ছবি ৪ MB এর কম হতে হবে","er");return}
-      const s=sheet("ছবি আপলোড","<div style='text-align:center;padding:14px 0'><div class='sk' style='width:96px;height:96px;border-radius:50%;margin:0 auto 14px'></div><p class='mut'>ImgBB-তে আপলোড হচ্ছে…</p><div style='height:7px;border-radius:9px;background:var(--card2);margin-top:12px;overflow:hidden'><div id='pb' style='height:100%;width:8%;background:var(--grn);transition:width .3s'></div></div></div>","");
+      const s=sheet("ছবি আপলোড","<div style='text-align:center;padding:14px 0'><div class='sk' style='width:96px;height:96px;border-radius:50%;margin:0 auto 14px'></div><p class='mut'>ছবি আপলোড হচ্ছে…</p><div style='height:7px;border-radius:9px;background:var(--card2);margin-top:12px;overflow:hidden'><div id='pb' style='height:100%;width:8%;background:var(--grn);transition:width .3s'></div></div></div>","");
       try{
         /* ছবি ImgBB-তে upload → পাওয়া linkটাই প্রোফাইলে সেভ */
         const res=await imgbbUploadImage(f);
@@ -6590,6 +6666,7 @@ function initPage() {
         STORE.account.uid = STORE.account.uid || memberUid;
         STORE.account.name = STORE.account.name || localStorage.getItem("cbdcMemberName") || "";
         STORE.account.email = STORE.account.email || localStorage.getItem("cbdcMemberEmail") || "";
+        STORE.account.username = STORE.account.username || localStorage.getItem("cbdcMemberUsername") || "";
         if(STORE.account.uid === memberUid){
           STORE.account.photo = STORE.account.photo || localStorage.getItem("cbdcMemberPhoto") || "";
         }

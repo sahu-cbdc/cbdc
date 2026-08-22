@@ -2869,45 +2869,10 @@ function StaticShell() {
                     <span>
                       {"২"}
                     </span>
-                    {" রক্তদাতা সম্পর্কিত তথ্য"}
+                    {" ব্যক্তিগত তথ্য"}
                   </h2>
                   {" "}
                   <div className="form-grid">
-                    {" "}
-                    <div className="field">
-                      <label className="required" htmlFor="suGroup">
-                        {"রক্তের গ্রুপ"}
-                      </label>
-                      <select id="suGroup" name="bloodGroup" required={true}>
-                        <option value="">
-                          {"রক্তের গ্রুপ নির্বাচন করুন"}
-                        </option>
-                        <option>
-                          {"A+"}
-                        </option>
-                        <option>
-                          {"A-"}
-                        </option>
-                        <option>
-                          {"B+"}
-                        </option>
-                        <option>
-                          {"B-"}
-                        </option>
-                        <option>
-                          {"AB+"}
-                        </option>
-                        <option>
-                          {"AB-"}
-                        </option>
-                        <option>
-                          {"O+"}
-                        </option>
-                        <option>
-                          {"O-"}
-                        </option>
-                      </select>
-                    </div>
                     {" "}
                     <div className="field">
                       <label className="required" htmlFor="suGender">
@@ -3003,44 +2968,15 @@ function StaticShell() {
                     {" "}
                   </div>
                   {" "}
-                  <h2 className="form-title">
-                    <span>
-                      {"৪"}
-                    </span>
-                    {" রক্তদানের তথ্য"}
-                  </h2>
-                  {" "}
-                  <div className="form-grid">
-                    {" "}
-                    <div className="field">
-                      <label htmlFor="suLastDonation">
-                        {"সর্বশেষ রক্তদানের তারিখ "}
-                        <span className="muted">
-                          {"(ঐচ্ছিক)"}
-                        </span>
-                      </label>
-                      <input id="suLastDonation" name="lastDonationDate" type="date" />
-                    </div>
-                    {" "}
-                    <div className="field">
-                      <label htmlFor="suHealth">
-                        {"শারীরিক সুস্থতা / কোনো রোগ আছে কি? "}
-                        <span className="muted">
-                          {"(ঐচ্ছিক)"}
-                        </span>
-                      </label>
-                      <textarea id="suHealth" name="healthNotes">
-                      </textarea>
-                    </div>
-                    {" "}
-                  </div>
-                  {" "}
                   <label className="check">
                     <input id="suAgree" type="checkbox" required={true} />
                     <span>
                       {"আমি অঙ্গীকার করছি যে, আমার প্রদত্ত সকল তথ্য সঠিক। আমি স্বেচ্ছায় রক্তদানে প্রস্তুত এবং ক্লাবের সকল নিয়মাবলী মেনে চলতে সম্মত।"}
                     </span>
                   </label>
+                  <div className="note" style={{ marginTop: "12px" }}>
+                    {"অ্যাকাউন্ট তৈরি হয়ে যাবে — রক্তদাতা হিসেবে যুক্ত হতে চাইলে পরে Doner প্যানেলের 'রক্তদাতা হিসেবে যুক্ত হন' অপশন থেকে আলাদাভাবে আবেদন করতে হবে।"}
+                  </div>
                   {" "}
                   <div className="form-actions">
                     <button className="btn btn-green" type="submit">
@@ -3422,14 +3358,17 @@ function initPage() {
         const role = sessionStorage.getItem("cbdcUserRole");
         const box = $("#alreadyBox"), card = $("#loginBox");
         if(!box || !card) return;
+        /* ইতিমধ্যে লগইন করা থাকলে "✅ লগইন সক্রিয় আছে" আলাদা পেজ আর দেখানো হয় না —
+           role অনুযায়ী সরাসরি নিজ নিজ প্যানেলে পাঠানো হয় (আইটেম ৯)। */
         if(sessionStorage.getItem("cbdcAdmin")==="1" && (role==="admin"||role==="moderator")){
-          box.classList.remove("hidden"); card.classList.add("hidden");
-          const link = $("#alreadyLink"); if(link) link.href = dashPage(role);
-          const name = sessionStorage.getItem("cbdcUserName")||"";
-          const ttl = $("#alreadyTitle"); if(ttl) ttl.textContent = (role==="admin"?"অ্যাডমিন":"মডারেটর")+" হিসেবে লগইন করা আছে"+(name?" — "+name:"");
-        } else {
-          box.classList.add("hidden"); card.classList.remove("hidden");
+          try{ navigateToPage(role==="admin"?"admin":"moderator"); }catch(e){}
+          return;
         }
+        if(isLoggedIn()){
+          try{ navigateToPage("doner"); }catch(e){}
+          return;
+        }
+        box.classList.add("hidden"); card.classList.remove("hidden");
       }
       $("#btnSwitchAccount")?.addEventListener("click", async ()=>{
         try{ if(auth&&auth.currentUser){ const {signOut}=await import("firebase/auth"); await signOut(auth); } }catch(e){}
@@ -3486,7 +3425,15 @@ function initPage() {
         if(route==="homeSearch"){showView("home","#donor-search");return}
         if(route==="homeAbout"){showView("home","#about");return}
         if(route==="homeGallery"){showView("home","#gallery");return}
-        if(route==="dashboard"||route==="login"){showView("login");return}
+        if(route==="dashboard"||route==="login"){
+          /* ইতিমধ্যে লগইন করা থাকলে "লগইন সক্রিয় আছে" পেজ না দেখিয়ে নিজ নিজ প্যানেলে
+             সরাসরি পাঠানো হয় — Doner→Doner, Moderator→Moderator, Admin→Admin (আইটেম ৯)। */
+          const _role=sessionStorage.getItem("cbdcUserRole");
+          const _isStaff=sessionStorage.getItem("cbdcAdmin")==="1" && (_role==="admin"||_role==="moderator");
+          if(_isStaff){ navigateToPage(_role==="admin"?"admin":"moderator"); return; }
+          if(isLoggedIn()){ navigateToPage("doner"); return; }
+          showView("login");return}
+
         if(route==="forgot-password"){ showView("forgot-password"); resetForgotPage($("#username")?.value||""); return}
         if(route==="signup"){ if(isLoggedIn()){ toast("আপনি ইতিমধ্যে লগইন করা আছেন"); showView("home"); } else showView("signup"); return}
         if(route==="logout"){ doLogout(); return}
@@ -4440,6 +4387,7 @@ function initPage() {
         localStorage.setItem("cbdcMemberName", profile.name||"");
         localStorage.setItem("cbdcMemberPhoto", profile.photo||"");
         localStorage.setItem("cbdcMemberRole", profile.role||"donor");
+        if(profile.username) localStorage.setItem("cbdcMemberUsername", profile.username||"");
         if(profile.uid) localStorage.setItem("cbdcMemberUid", profile.uid);
         try{
           const app=JSON.parse(localStorage.getItem("cbdc.app")||"{}");
@@ -4755,7 +4703,6 @@ function initPage() {
           username:   {required:true, pattern:/^[a-z0-9._]{3,20}$/i, label:"ইউজার নেইম",
                        message:"ইউজার নেইম ৩–২০ অক্ষরের হতে হবে (শুধু ইংরেজি ছোট হাতের অক্ষর, সংখ্যা, ডট বা আন্ডারস্কোর)"},
           email:      {required:true, email:true, label:"ইমেইল"},
-          bloodGroup: {required:true, label:"রক্তের গ্রুপ"},
           gender:     {required:true, label:"লিঙ্গ"},
           dob:        {required:true, dob:{min:SITE.rules.minAge, max:SITE.rules.maxAge}, label:"জন্ম তারিখ"},
           area:       {required:true, label:"এলাকা"},
@@ -4774,6 +4721,24 @@ function initPage() {
         const o = normalizeFormPhones(formObj(form));
         o.username = (o.username||"").trim().toLowerCase();
         o.email = (o.email||"").trim().toLowerCase();
+
+        /* ── Duplicate account রোধ (আইটেম ৭) ──
+           একই ইমেইল / মোবাইল নম্বর / ইউজারনেম দিয়ে দ্বিতীয় অ্যাকাউন্ট তৈরি
+           বন্ধ করা হয় — যথাযথ ঘরে inline error দেখানো হয়। */
+        const dupOwnerUid = isGoogle ? (googleProfile?.uid || (auth && auth.currentUser && auth.currentUser.uid) || "") : "";
+        const dupIsSelf = (row) => !!dupOwnerUid && row && String(row.uid) === dupOwnerUid;
+        let dupEmail=null, dupPhone=null, dupUser=null;
+        try{
+          dupEmail = await findBy(NODES.users, "email", o.email);
+          dupPhone = await findBy(NODES.users, "phone", digits(o.phone));
+          dupUser  = await findBy(NODES.users, "username", o.username);
+          /* পুরোনো members-এও মোবাইল/ইউজারনেম থাকতে পারে (users-এ এখনো না আসলে) */
+          if(!dupPhone){ const m=await findBy(NODES.members, "phone", digits(o.phone)); if(m) dupPhone=m; }
+          if(!dupUser){ const m=await findBy(NODES.members, "username", o.username); if(m) dupUser=m; }
+        }catch(e){ console.warn("duplicate check:", e && e.message); }
+        if(dupEmail && !dupIsSelf(dupEmail)){ message.className="hidden"; message.textContent=""; setFieldError($("#suEmail"), "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।"); return; }
+        if(dupPhone && !dupIsSelf(dupPhone)){ message.className="hidden"; message.textContent=""; setFieldError($("#suPhone"), "এই মোবাইল নম্বর দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে।"); return; }
+        if(dupUser && !dupIsSelf(dupUser)){ message.className="hidden"; message.textContent=""; setFieldError($("#suUsername"), "এই ইউজার নেইম ইতিমধ্যে ব্যবহৃত হচ্ছে — অন্যটি বেছে নিন।"); return; }
 
         showAppLoading();
         const password = o.password || "";
@@ -4794,18 +4759,10 @@ function initPage() {
 
           const existingProfile = await getRow(NODES.users, uid);
           const photoURL = photoForUid(existingProfile, googleProfile ? (googleProfile.photo||"") : "");
-          // donorId — uid থেকে স্থির (duplicate নয়), একই UID-তে একই donorId
-          let _donorId = String(existingProfile?.donorId || "").trim();
-          if(!_donorId){
-            let n=0; const src=String(uid);
-            for(let i=0;i<src.length;i++) n=(n*31+src.charCodeAt(i))>>>0;
-            _donorId = `CBDC-${new Date().getFullYear()}-${String((n%9999)+1).padStart(4,"0")}`;
-          }
-          const donorStatusVal = String(existingProfile?.donorStatus || "pending").trim() || "pending";
-          /* ১) ওয়েবসাইট অ্যাকাউন্ট — RTDB `users/{uid}` (সাথে সাথেই সক্রিয়) — donor তথ্য সহ একীভূত।
-                role এখানে সবসময় donor; admin/moderator শুধু `admins` নোড থেকে আসে।
-                একই UID তে personal + donor info একসাথে থাকে — আলাদা duplicate profile নয়।
-                Doner Panel ও Settings একই users/{uid} থেকেই লোড করে। */
+          /* ১) ওয়েবসাইট অ্যাকাউন্ট — RTDB `users/{uid}` (সাথে সাথেই সক্রিয়)।
+                account তৈরি করার সময় কোনো রক্তদাতা আবেদন (donorStatus/members/queue)
+                স্বয়ংক্রিয়ভাবে তৈরি হয় না — donor নিজে আলাদাভাবে
+                "রক্তদাতা হিসেবে যুক্ত হন" দিয়ে আবেদন করবে (আইটেম ২)। */
           const profilePayload = {
             uid,
             name: o.name,
@@ -4818,93 +4775,20 @@ function initPage() {
             address: o.address || "",
             photoURL,
             provider: isGoogle ? "google" : "password",
-            status: "active",
-            // donor fields — account creation-এই donor হিসেবে নিবন্ধন (pending)
-            bloodGroup: o.bloodGroup || existingProfile?.bloodGroup || "",
-            donorId: _donorId,
-            donorStatus: donorStatusVal,
-            lastDonation: o.lastDonationDate || existingProfile?.lastDonation || "",
-            whatsapp: o.whatsapp || existingProfile?.whatsapp || "",
-            health: o.healthNotes || existingProfile?.health || "",
-            available: true,
-            appliedAt: nowIso(),
-            cardTheme: existingProfile?.cardTheme || "green"
+            status: "active"
           };
           if(existingProfile){
+            /* বিদ্যমান প্রোফাইল — শুধু account তথ্য আপডেট; donor তথ্য
+               (donorStatus/donorId/bloodGroup) অক্ষত থাকে — pending-এ ঠেলে দেওয়া হয় না। */
             await ensureUserProfile({
               uid, email:o.email, name:o.name, photo:photoURL,
-              phone:o.phone, dob:o.dob, gender:o.gender, area:o.area, username:o.username, address:o.address,
-              bloodGroup: profilePayload.bloodGroup, donorId: profilePayload.donorId, donorStatus: profilePayload.donorStatus,
-              lastDonation: profilePayload.lastDonation, whatsapp: profilePayload.whatsapp, health: profilePayload.health,
-              available: true, appliedAt: profilePayload.appliedAt, cardTheme: profilePayload.cardTheme
+              phone:o.phone, dob:o.dob, gender:o.gender, area:o.area, username:o.username, address:o.address
             }, {provider: isGoogle ? "google" : "password"});
           } else {
             await setRow(NODES.users, uid, {
               ...profilePayload,
               role: DEFAULT_ROLE,
               createdAt: nowIso()
-            });
-          }
-
-          /* ২) রক্তদাতা প্রোফাইল — RTDB `members` (অ্যাডমিন যাচাইয়ের পর পাবলিক তালিকায়)
-                duplicate member তৈরি রোধ — একই UID-তে আগে pending/approved থাকলে নতুন তৈরি নয় */
-          let memberId = "";
-          try{
-            const existingMember = await findBy(NODES.members, "uid", uid);
-            if(existingMember && existingMember.id){
-              memberId = existingMember.id;
-              await updateRow(NODES.members, memberId, {
-                name: o.name, email: o.email, username: o.username,
-                bloodGroup: o.bloodGroup || "", gender: o.gender || "",
-                dob: o.dob || "", area: o.area || "", phone: o.phone || "",
-                whatsapp: o.whatsapp || "", address: o.address || "",
-                lastDonationDate: o.lastDonationDate || "", healthNotes: o.healthNotes || "",
-                uid, photoURL, donorId: _donorId, donorStatus: donorStatusVal
-              });
-            } else {
-              memberId = await addRow(NODES.members, {
-                name: o.name, email: o.email, username: o.username,
-                bloodGroup: o.bloodGroup || "", gender: o.gender || "",
-                dob: o.dob || "", area: o.area || "", phone: o.phone || "",
-                whatsapp: o.whatsapp || "", address: o.address || "",
-                lastDonationDate: o.lastDonationDate || "", healthNotes: o.healthNotes || "",
-                uid, photoURL, donorId: _donorId, donorStatus: donorStatusVal, district: "চট্টগ্রাম", status: "pending", createdAt: nowIso()
-              });
-            }
-          }catch(e){
-            memberId = await addRow(NODES.members, {
-              name: o.name, email: o.email, username: o.username,
-              bloodGroup: o.bloodGroup || "", gender: o.gender || "",
-              dob: o.dob || "", area: o.area || "", phone: o.phone || "",
-              whatsapp: o.whatsapp || "", address: o.address || "",
-              lastDonationDate: o.lastDonationDate || "", healthNotes: o.healthNotes || "",
-              uid, photoURL, donorId: _donorId, donorStatus: donorStatusVal, district: "চট্টগ্রাম", status: "pending", createdAt: nowIso()
-            });
-          }
-          /* মডারেশন কিউ — Admin/Moderator প্যানেলে সঙ্গে সঙ্গে দেখা যাবে — duplicate queue রোধ */
-          try{
-            const existingQ = await findBy(NODES.queue, "memberId", memberId);
-            if(existingQ){
-              await updateRow(NODES.queue, memberId, {
-                kind:"donor", memberId, uid, donorId: _donorId, donorStatus: donorStatusVal, name:o.name, group:o.bloodGroup||"", area:o.area||"",
-                dob:o.dob||"", gender:o.gender||"", health:o.healthNotes||"",
-                last:o.lastDonationDate||"", phone:o.phone||"", whatsapp:o.whatsapp||"",
-                address:o.address||"", at:existingQ.at || nowIso()
-              });
-            } else {
-              await setRow(NODES.queue, memberId, {
-                kind:"donor", memberId, uid, donorId: _donorId, donorStatus: donorStatusVal, name:o.name, group:o.bloodGroup||"", area:o.area||"",
-                dob:o.dob||"", gender:o.gender||"", health:o.healthNotes||"",
-                last:o.lastDonationDate||"", phone:o.phone||"", whatsapp:o.whatsapp||"",
-                address:o.address||"", at:nowIso()
-              });
-            }
-          }catch(e){
-            await setRow(NODES.queue, memberId, {
-              kind:"donor", memberId, uid, donorId: _donorId, donorStatus: donorStatusVal, name:o.name, group:o.bloodGroup||"", area:o.area||"",
-              dob:o.dob||"", gender:o.gender||"", health:o.healthNotes||"",
-              last:o.lastDonationDate||"", phone:o.phone||"", whatsapp:o.whatsapp||"",
-              address:o.address||"", at:nowIso()
             });
           }
 

@@ -2289,8 +2289,10 @@ function initPage() {
   };
   const PERMS=Object.values(PERM_GROUPS).flat();
   const ROLES={
+    /* আলাদা Super Admin role-এর দরকার নেই — অ্যাডমিনই সর্বোচ্চ administrative role
+       (আইটেম ১৩): team/access/settings সহ সব permission অ্যাডমিনের কাছেই আছে। */
     super:{label:"সুপার অ্যাডমিন",icon:"👑",perms:PERMS.slice()},
-    admin:{label:"অ্যাডমিন",icon:"🛡️",perms:PERMS.filter(p=>!["team.manage","access.manage","settings.manage"].includes(p))},
+    admin:{label:"অ্যাডমিন",icon:"🛡️",perms:PERMS.slice()},
     /* A moderator exists to clear the pending queue — nothing else.
        They may read a donor's details while judging an application
        (the review sheet), but cannot browse or manage the donor list. */
@@ -2298,7 +2300,12 @@ function initPage() {
       "request.view","request.approve","group.approve","report.resolve"]}
   };
   let ME={uid:"",name:"",role:PANEL.role};
-  const myPerms=()=>new Set((ME.permissions&&ME.permissions.length)?ME.permissions:ROLES[ME.role].perms);
+  /* অ্যাডমিন/সুপার অ্যাডমিন সবসময় full access — RTDB-তে সীমিত permissions
+     array থাকলেও তা উপেক্ষা করা হয় (আইটেম ১৩)। */
+  const myPerms=()=>{
+    if(ME.role==="admin"||ME.role==="super") return new Set(PERMS);
+    return new Set((ME.permissions&&ME.permissions.length)?ME.permissions:ROLES[ME.role].perms);
+  };
   const can=p=>myPerms().has(p);
   
   /* ══════════ BLOOD COMPATIBILITY ══════════ */
@@ -3367,6 +3374,9 @@ function initPage() {
         <ul class="wl">${w.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`:""}
       <div class="sec-t">বিস্তারিত</div>
       <div class="kv">${rows.map(([a,b])=>`<div><span>${esc(a)}</span><b>${esc(b)}</b></div>`).join("")}</div>
+      ${q.kind==="group"&&q.proof?`<div class="sec-t">রিপোর্ট / প্রমাণ ছবি</div>
+        <a href="${esc(q.proof)}" target="_blank" rel="noopener"><img src="${esc(q.proof)}" alt="রক্তের গ্রুপের প্রমাণ ছবি"
+          style="width:100%;max-height:280px;object-fit:contain;border-radius:12px;border:1px solid var(--line);background:var(--card2)"></a>`:""}
       ${q.kind==="request"?matchBlock(q.group):""}
       <p class="hint2" style="margin-top:12px">${can("contact.reveal")
         ?"নম্বর দেখা হয়েছে — এটি অডিট লগে থেকে যাবে।":"ফোন নম্বর দেখার অনুমতি আপনার নেই।"}</p>
@@ -3412,7 +3422,17 @@ function initPage() {
     if(q.kind==="request"&&ok)DB.live.unshift({id:q.id,patient:q.patient,group:q.group,bags:q.bags,
       urgency:q.urgency,status:"searching",responders:0,hospital:q.hospital,area:q.area,requester:q.requester||"স্বজন",
       phone:q.phone,whatsapp:q.whatsapp||q.phone,expiresAt:q.expiresAt||"",at:new Date().toISOString()});
-    if(q.kind==="group"&&ok){const d=DB.donors.find(x=>x.name===q.name);if(d)d.group=q.to}
+    if(q.kind==="group"&&ok){
+      const d=(q.ownerUid&&DB.donors.find(x=>String(x.ownerUid)===String(q.ownerUid)))||DB.donors.find(x=>x.name===q.name);
+      if(d)d.group=q.to;
+      /* অনুমোদনের পর স্থায়ীভাবে আপডেট — users/{uid} ও donors নোডে (আইটেম ১০) */
+      if(q.ownerUid){
+        updateRow(NODES.users, q.ownerUid, {bloodGroup:q.to, donorStatus:"approved"}).catch(e=>console.warn("bg update user:",e));
+        findBy(NODES.donors, "ownerUid", q.ownerUid).then(donor=>{
+          if(donor&&donor.id) setRow(NODES.donors, donor.id, {...donor, bloodGroup:q.to, group:q.to}).catch(e=>console.warn("bg update donor:",e));
+        }).catch(e=>console.warn(e));
+      }
+    }
     DB.queue.splice(i,1);
     logAudit(ok?QK[q.kind].t+" অনুমোদন":QK[q.kind].t+" বাতিল",id+(note?" — "+note.slice(0,40):""),q.kind);
     if(!quiet){persist();RENDER.work();paintNav();paintTop();toast(ok?"অনুমোদন করা হয়েছে":"বাতিল করা হয়েছে",ok?"ok":"")}
