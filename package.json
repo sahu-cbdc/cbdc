@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "verify-become": "node scripts/verify-become.mjs"
   },
   "dependencies": {
     "firebase": "^11.10.0",
