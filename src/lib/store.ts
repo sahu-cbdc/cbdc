@@ -405,6 +405,11 @@ const toDonerDonor = (d: any) => ({
   totalDonations: Number(d.totalDonations ?? d.donations) || 0,
   joined: d.joined || "",
   verified: d.verified !== false,
+  /* Availability & suspension মেইন ওয়েবসাইটের মতোই ম্যাপ হয় — নইলে
+     donors/{id}-এর `available:false` বদল ডোনার প্যানেলের তালিকা/প্রোফাইলে
+     প্রতিফলিত হতো না (সবসময় "প্রস্তুত" দেখাত)। */
+  available: d.available !== false,
+  suspended: !!d.suspended,
   privacy: { showArea: true, showGroup: true, showWhatsapp: !!d.whatsapp },
 });
 

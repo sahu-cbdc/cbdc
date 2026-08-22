@@ -4638,6 +4638,9 @@ function initPage() {
       totalDonations:Number.isFinite(+r.donations)?+r.donations
         :(r.lastDonationDate?((parseInt(String(r.id||"").replace(/\D/g,"").slice(-2)||"0",10)%9)+1):0),
       joined:r.joined||"", verified:(r.status||"approved")==="approved", bio:"",
+      /* মেইন ওয়েবসাইটের মতোই availability/suspension — পাবলিক প্রোফাইলেও
+         একই প্রাপ্যতা দেখায় (toDonerDonor-এর সাথে মিল রেখে)। */
+      available:r.available!==false, suspended:!!r.suspended,
       privacy:{showArea:true,showGroup:true,showWhatsapp:!!(r.whatsapp&&String(r.whatsapp).trim())}
     };
   }
