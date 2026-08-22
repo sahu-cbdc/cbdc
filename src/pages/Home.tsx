@@ -3073,9 +3073,6 @@ function StaticShell() {
                       {"আমি অঙ্গীকার করছি যে, আমার প্রদত্ত সকল তথ্য সঠিক। আমি স্বেচ্ছায় রক্তদানে প্রস্তুত এবং ক্লাবের সকল নিয়মাবলী মেনে চলতে সম্মত।"}
                     </span>
                   </label>
-                  <div className="note" style={{ marginTop: "12px" }}>
-                    {"অ্যাকাউন্ট তৈরি হয়ে যাবে — রক্তদাতা হিসেবে যুক্ত হতে চাইলে পরে Doner প্যানেলের 'রক্তদাতা হিসেবে যুক্ত হন' অপশন থেকে আলাদাভাবে আবেদন করতে হবে।"}
-                  </div>
                   {" "}
                   <div className="form-actions">
                     <button className="btn btn-green" type="submit">
@@ -4786,8 +4783,11 @@ function initPage() {
       }
 
       /* --- অ্যাকাউন্ট তৈরি (Email/Password অথবা Google) ---
-         • কোনো popup/alert নয় — ভুল থাকলে ঘরটি highlight হয়, নিচে বার্তা আসে।
-         • সফল হলে কোনো success popup নয় — সরাসরি নিজ role-এর dashboard-এ। */
+         • ভুল থাকলে ঘরটি highlight হয়, নিচে বার্তা আসে।
+         • সফল হলে শুধু ১টি popup: "অনুগ্রহ করে অপেক্ষা করুন..." পরিবর্তন হয়ে
+           ছোট success popup দেখায়, ৩ সেকেন্ড পর বন্ধ হয়ে Login পেজে নিয়ে যায়।
+           Google প্রথমবার হলে সরাসরি Doner Panel-এ পাঠানো হয়।
+         • Account তৈরি করলে কোনো রক্তদাতা আবেদন/ডোনার হিসেবে যুক্ত হয় না। */
       $("#signupForm")?.addEventListener("submit", async e => {
         e.preventDefault();
         const form = e.currentTarget, message = $("#signupMessage");
@@ -4897,9 +4897,9 @@ function initPage() {
           const _wasGoogle = isGoogle;
           setSignupGoogleMode(null);
           message.className = "hidden"; message.textContent = "";
-          hideAppModal();
           if(_wasGoogle){
             // Google দিয়ে প্রথমবার — সরাসরি Doner Panel (কোনো error নয়, clean form থেকে)
+            hideAppModal();
             setPendingGoogleProfile(null);
             const rr2 = await resolveRole({uid, email:o.email, name:o.name});
             finishLogin({email:o.email, name:o.name, role:rr2.role, permissions:rr2.permissions, photo:photoURL, uid});
@@ -4910,16 +4910,20 @@ function initPage() {
               if(auth && auth.currentUser) await signOut(auth);
             }catch(e){}
             setPendingGoogleProfile(null);
-            try{ history.pushState(null,"",appBase()+"login"); }catch(e){}
-            showView("login");
+            /* Login ফর্মে ইমেইল আগে থেকেই বসিয়ে রাখি — popup বন্ধ হলে যেন ব্যবহারকারী
+               সহজেই লগইন করতে পারে। */
             const _loginEmail = document.getElementById("username");
             if(_loginEmail) _loginEmail.value = o.email || "";
-            showMessage(document.getElementById("loginMessage"), "অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে। অনুগ্রহ করে ইউজারনেম অথবা ইমেইল এবং পাসওয়ার্ড দিয়ে লগইন করুন।", "success");
-            // 3 সেকেন্ডের popup — একাউন্ট সফলভাবে তৈরি হয়েছে
+            /* শুধু ১টি popup: loading popup-এর ভেতরেই text বদলে ছোট success দেখাই —
+               Login পেজে আলাদা success message আর দেখানো হয় না। */
+            const _loginMsg = document.getElementById("loginMessage");
+            if(_loginMsg){ _loginMsg.className = "hidden"; _loginMsg.textContent = ""; }
+            showView("login");
             try{
               showAppMessage("অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে। অনুগ্রহ করে ইউজারনেম অথবা ইমেইল এবং পাসওয়ার্ড দিয়ে লগইন করুন।", false, "অ্যাকাউন্ট তৈরি হয়েছে!");
+              /* popup ৩ সেকেন্ড পর নিজে থেকে বন্ধ হবে — Login পেজটি ইতিমধ্যে তার পেছনে আছে */
               setTimeout(()=>{ try{ hideAppModal(); }catch(e){} }, 3000);
-            }catch(e){ toast("অ্যাকাউন্ট তৈরি হয়েছে — এখন লগইন করুন"); }
+            }catch(e){ hideAppModal(); toast("অ্যাকাউন্ট তৈরি হয়েছে — এখন লগইন করুন"); }
           }
         }catch(err){
           hideAppModal();
