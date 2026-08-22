@@ -4221,7 +4221,7 @@ function initPage() {
       ? `<div class="card">
           <div class="per"><span style="width:44px;height:44px;border-radius:50%;background:var(--red-s);
             display:grid;place-items:center;color:var(--red)">${ICON.drop(24)}</span>
-            <div class="i"><b>আপনি এখনো রক্তদাতা নন</b><small>কয়েকটি তথ্য দিলেই যুক্ত হতে পারবেন</small></div></div>
+            <div class="i"><b>রক্তদাতা হিসেবে নিবন্ধিত নন (Not Registered)</b><small>আপনি এখনো রক্তদাতা হিসেবে আবেদন করেননি। 'রক্তদাতা হিসেবে যুক্ত হন' অপশন থেকে আবেদন করুন।</small></div></div>
           <button class="btn w" style="margin-top:12px" data-act="become">রক্তদাতা হিসেবে যুক্ত হন</button></div>`
       : `<div class="card">
           <div class="per"><span class="bg" style="width:46px;height:46px;border-radius:12px;font-size:1rem">${esc(d.bloodGroup)}</span>
@@ -6479,20 +6479,37 @@ function initPage() {
     // donor fields — একই UID তে donor তথ্য একীভূত, কোনো duplicate নয়
     const _bg = row.bloodGroup || row.group || "";
     const _dId = row.donorId || row.donorID || "";
-    const _dStatus = row.donorStatus || row.status || "";
+    /* Account-এর `status:"active"` কে কখনোই donor status ভাবা যাবে না।
+       নতুন অ্যাকাউন্টে শুধু `status:"active"` থাকে — এটি Read হলে যেন নবাগত
+       ইউজারকে Approved/প্রস্তুত Donor দেখানো না হয়। Donor status তখনই
+       ব্যবহার করা হয় যখন `donorStatus` অথবা স্পষ্ট donor status (pending/
+       approved/rejected/none) থাকে। */
+    const _dStatusRaw = String(row.donorStatus || "").trim().toLowerCase();
+    const _accountStatus = String(row.status || "").trim().toLowerCase();
+    const _knownDonorStatuses = ["pending", "approved", "rejected", "none"];
+    const _dStatus = _knownDonorStatuses.includes(_dStatusRaw)
+      ? _dStatusRaw
+      : (_knownDonorStatuses.includes(_accountStatus) ? _accountStatus : "");
     const _last = row.lastDonation || row.lastDonationDate || row.last || "";
     const _wa = row.whatsapp || row.whatsApp || "";
     const _health = row.health || row.healthNotes || "";
+    /* `users/{uid}` কখনোই donor status-এর প্রমাণ নয়:
+       - নতুন Account-এ শুধু `status:"active"` থাকে → এটি donor status হিসেবে
+         ব্যবহার করলে নবাগতকে Approved/তৈরি Donor দেখায়।
+       - `users/{uid}` user-ই লিখতে পারে, তাই এটি থেকে Approved আসতে পারে না।
+       আসল Donor status (pending/approved) শুধু `donors` / `members` / `queue`
+       রেকর্ড থেকে আসে (pullSharedPublic + hydrateDonorFromRtdb)। */
+    const _hasDonorInfo = !!(_bg || _dId || (_dStatus && _dStatus!=="none"));
     if(_bg) STORE.donor.bloodGroup=_bg;
     if(_dId) STORE.donor.donorId=_dId;
-    if(_dStatus && _dStatus!=="none"){
-      // users/{uid} is user-writable, so never trust it as proof of approval.
-      // Real approval is detected only from an approved donors/{id} record in
-      // hydrateDonorFromRtdb(). Until then the application remains pending.
-      STORE.donor.is=true; STORE.donor.status=_dStatus==="approved"?"pending":_dStatus;
-    } else if(_bg && _dId){
-      // bloodGroup + donorId থাকলে অন্তত pending — হিস্টোরিক ডেটার জন্য fallback
-      STORE.donor.is=true; if(STORE.donor.status==="none") STORE.donor.status="pending";
+    if(!_hasDonorInfo){
+      /* RTDB অ্যাকাউন্টে কোনো donor আবেদন/তথ্য নেই → Donor নয়। এর ফলে আগের
+         ভুল cache বা `status:"active"`-এর কারণে অনুমোদিত Donor দেখানো বন্ধ হয়। */
+      STORE.donor.is=false; STORE.donor.status="none";
+      STORE.donor.donorId=""; STORE.donor.bloodGroup="";
+      STORE.donor.whatsapp=""; STORE.donor.lastDonation="";
+      STORE.donor.health=""; STORE.donor.appliedAt="";
+      STORE.donor.available=true;
     }
     if(_last !== undefined && _last !== null) STORE.donor.lastDonation = String(_last||"");
     if(_wa !== undefined && _wa !== null) STORE.donor.whatsapp = String(_wa||"");
