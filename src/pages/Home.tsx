@@ -28,7 +28,7 @@ import {
   verifyResetCode,
   completePasswordReset,
 } from "../lib/authx";
-import { addRow, setRow, updateRow, findBy, getRow, nowIso } from "../lib/rtdb";
+import { addRow, setRow, updateRow, findBy, getRow, listOnce, nowIso } from "../lib/rtdb";
 import { NODES } from "../lib/firebase";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, clearFieldError } from "../lib/forms";
 import { ageFromDob, ageText, dobBounds, isValidDob, toBanglaDigits } from "../lib/age";
@@ -3417,8 +3417,17 @@ function initPage() {
 
       const sharedState = () => window.CBDCShared ? CBDCShared.load() : null;
       const getDonors = () => {
-        const s=sharedState();
-        return s&&s.donors.length ? s.donors.map(d=>({...d,status:"approved"})) : [];
+        const s = sharedState();
+        return s && Array.isArray(s.donors)
+          ? s.donors.filter(d => (d.status || "approved") === "approved" && !d.suspended).map(d => ({
+              ...d,
+              bloodGroup: d.bloodGroup || d.group || "",
+              group: d.group || d.bloodGroup || "",
+              lastDonationDate: d.lastDonationDate || d.lastDonation || d.last || "",
+              last: d.last || d.lastDonationDate || d.lastDonation || "",
+              status: d.status || "approved"
+            }))
+          : [];
       };
       const getRequests = () => {
         const s=sharedState();
@@ -3580,7 +3589,9 @@ function initPage() {
         /* বয়স জন্ম তারিখ (dob) থেকে হিসাব হয় — কোনো hardcoded ডিফল্ট নেই */
         const ageStr = ageText(d);
         const ageVal = ageStr === "—" ? "" : `বয়স ${ageStr}`;
-        const lastDon = d.lastDonationDate ? dateText(d.lastDonationDate) : "নতুন দাতা";
+        const lastDate = d.lastDonationDate || d.lastDonation || d.last || "";
+        const lastDon = lastDate ? dateText(lastDate) : "নতুন দাতা";
+        const bgVal = d.bloodGroup || d.group || "";
         return `<div class="donor-card">
     <div class="card-content">
       <div class="donor-details">
@@ -3601,7 +3612,7 @@ function initPage() {
       </div>
       <div class="blood-info">
         <div class="blood-group">
-          ${esc(d.bloodGroup)}
+          ${esc(bgVal)}
         </div>
         <div class="age">
           ${esc(ageVal)}
@@ -3885,8 +3896,9 @@ function initPage() {
   
       let currentDcardId=null;
       function dcardHTML(d){
-        const last= d.lastDonationDate?dateText(d.lastDonationDate):"নতুন দাতা";
-        return `<div class="dcard"><div class="dcard-topbar"><img class="dcard-logo" src="${LOGO_SRC}" alt=""><span>${SITE.name}</span></div><div class="dcard-photo"><img src="${avatarData(d.gender)}" alt=""></div><h3 class="dcard-name">${esc(d.name)}</h3><div class="dcard-group">${esc(d.bloodGroup)}</div><div class="dcard-rows"><div>📍 এলাকা <strong>${esc(d.area)}</strong></div><div>🗓 শেষ রক্তদান <strong>${esc(last)}</strong></div><div>☎ মোবাইল <strong>${esc(d.phone)}</strong></div><div>🪪 কার্ড নং <strong>${esc(d.id)}</strong></div></div><div class="dcard-footer">✓ অনুমোদিত রক্তদাতা • রক্ত দিন, জীবন বাঁচান 🩸</div></div>`;
+        const last= (d.lastDonationDate||d.lastDonation||d.last)?dateText(d.lastDonationDate||d.lastDonation||d.last):"নতুন দাতা";
+        const bg=d.bloodGroup||d.group||"";
+        return `<div class="dcard"><div class="dcard-topbar"><img class="dcard-logo" src="${LOGO_SRC}" alt=""><span>${SITE.name}</span></div><div class="dcard-photo"><img src="${avatarData(d.gender)}" alt=""></div><h3 class="dcard-name">${esc(d.name)}</h3><div class="dcard-group">${esc(bg)}</div><div class="dcard-rows"><div>📍 এলাকা <strong>${esc(d.area)}</strong></div><div>🗓 শেষ রক্তদান <strong>${esc(last)}</strong></div><div>☎ মোবাইল <strong>${esc(d.phone)}</strong></div><div>🪪 কার্ড নং <strong>${esc(d.id||d.donorId)}</strong></div></div><div class="dcard-footer">✓ অনুমোদিত রক্তদাতা • রক্ত দিন, জীবন বাঁচান 🩸</div></div>`;
       }
       function openDonorCard(idv){ const d=publicDonors().find(x=>x.id===idv); if(!d)return; currentDcardId=idv; $("#dcardPreview").innerHTML=dcardHTML(d); $("#donorCardModalBg").classList.remove("hidden"); document.body.classList.add("lock"); }
       function closeDonorCard(){ $("#donorCardModalBg").classList.add("hidden"); document.body.classList.remove("lock"); currentDcardId=null; }
@@ -3926,7 +3938,8 @@ function initPage() {
         x.fillStyle="#ffffff"; x.font='900 30px '+font; x.fillText(String(d.name), W/2, 396);
         x.fillStyle="#e51f2a"; x.beginPath(); x.arc(W/2,462,52,0,Math.PI*2); x.fill();
         x.strokeStyle="rgba(255,255,255,.85)"; x.lineWidth=3; x.stroke();
-        x.fillStyle="#ffffff"; x.font='900 30px '+font; x.fillText(String(d.bloodGroup), W/2, 478);
+        const bg=d.bloodGroup||d.group||"";
+        x.fillStyle="#ffffff"; x.font='900 30px '+font; x.fillText(String(bg), W/2, 478);
         const donorCardId = formatDonorId(d, publicDonors().indexOf(d));
         const rows=[["এলাকা",d.area],["শেষ রক্তদান",d.lastDonationDate?dateText(d.lastDonationDate):"নতুন দাতা"],["মোবাইল",d.phone],["কার্ড নং",donorCardId]];
         let yy=548; x.font='700 18px '+font;
@@ -4066,8 +4079,9 @@ function initPage() {
   
       function shareDonorCard(idv){
         const d=publicDonors().find(x=>x.id===idv); if(!d)return;
-        const text=`🩸 ${d.name} (${d.bloodGroup}) — ${d.area}\n${SITE.name}ের অনুমোদিত রক্তদাতা।\nযোগাযোগ: ${d.phone}`;
-        if(navigator.share){ navigator.share({title:"ডিজিটাল ডোনার কার্ড",text,url:location.href}).catch(()=>{}); }
+        const bg=d.bloodGroup||d.group||"";
+        const text=`🩸 ${d.name} (${bg}) — ${d.area}\n${SITE.name}ের অনুমোদিত রক্তদাতা।\nযোগাযোগ: ${d.phone}`;
+        if(navigator.share){ navigator.share({title:"ডিজিタル ডোনার কার্ড",text,url:location.href}).catch(()=>{}); }
         else if(navigator.clipboard){ navigator.clipboard.writeText(text).then(()=>toast("তথ্য কপি হয়েছে")); }
         else toast("শেয়ার করা যাচ্ছে না",true);
       }
@@ -4690,15 +4704,93 @@ function initPage() {
         if(v.includes("@")){const [a,b]=v.split("@");return (a.slice(0,2)||"*")+"***@"+b}
         return v;
       }
-      /* ইউজার নেইম বা মোবাইল দিয়ে লগইনের সময় ইমেইল বের করা (RTDB `users`) */
+      /* ইউজার নেইম, মোবাইল বা ডোনার আইডি দিয়ে লগইনের সময় ইমেইল বের করা (RTDB) */
       async function resolveEmailByIdentifier(identifier){
         if(!fbReady) return null;
         const q=String(identifier).trim().toLowerCase();
+        const raw=String(identifier).trim();
+        const dig=digits(q);
         try{
+          // 1) users by username
           const byName = await findBy(NODES.users, "username", q);
           if(byName && byName.email) return String(byName.email).toLowerCase();
-          const byPhone = await findBy(NODES.users, "phone", digits(q));
-          if(byPhone && byPhone.email) return String(byPhone.email).toLowerCase();
+
+          // 2) users by phone
+          if(dig){
+            const byPhone = await findBy(NODES.users, "phone", dig);
+            if(byPhone && byPhone.email) return String(byPhone.email).toLowerCase();
+          }
+
+          // 3) users by donorId
+          const byDonorId = await findBy(NODES.users, "donorId", raw);
+          if(byDonorId && byDonorId.email) return String(byDonorId.email).toLowerCase();
+
+          // 4) donors node lookup (by id, donorId, phone, email, username)
+          const allDonors = await listOnce(NODES.donors);
+          const donorMatch = allDonors.find(d => {
+            if(!d) return false;
+            const did = String(d.id || "").toLowerCase();
+            const donorId = String(d.donorId || "").toLowerCase();
+            const dphone = digits(d.phone || "");
+            const demail = String(d.email || "").toLowerCase();
+            const duser = String(d.username || "").toLowerCase();
+            return did === q || donorId === q || (dig && dphone === dig) || (demail && demail === q) || (duser && duser === q);
+          });
+          if(donorMatch){
+            if(donorMatch.email) return String(donorMatch.email).toLowerCase();
+            if(donorMatch.ownerUid){
+              const u = await getRow(NODES.users, donorMatch.ownerUid);
+              if(u && u.email) return String(u.email).toLowerCase();
+            }
+            if(donorMatch.phone){
+              const u = await findBy(NODES.users, "phone", digits(donorMatch.phone));
+              if(u && u.email) return String(u.email).toLowerCase();
+            }
+          }
+
+          // 5) members node lookup
+          const allMembers = await listOnce(NODES.members);
+          const memberMatch = allMembers.find(m => {
+            if(!m) return false;
+            const mid = String(m.id || "").toLowerCase();
+            const mDonorId = String(m.donorId || "").toLowerCase();
+            const mUser = String(m.username || "").toLowerCase();
+            const mPhone = digits(m.phone || "");
+            const mEmail = String(m.email || "").toLowerCase();
+            return mid === q || mDonorId === q || mUser === q || (dig && mPhone === dig) || (mEmail && mEmail === q);
+          });
+          if(memberMatch){
+            if(memberMatch.email) return String(memberMatch.email).toLowerCase();
+            if(memberMatch.uid){
+              const u = await getRow(NODES.users, memberMatch.uid);
+              if(u && u.email) return String(u.email).toLowerCase();
+            }
+          }
+
+          // 6) accounts node lookup
+          const allAccounts = await listOnce(NODES.accounts);
+          const accMatch = allAccounts.find(a => {
+            if(!a) return false;
+            const aid = String(a.id || a.uid || "").toLowerCase();
+            const aDonorId = String(a.donorId || "").toLowerCase();
+            const aUser = String(a.username || "").toLowerCase();
+            const aPhone = digits(a.phone || "");
+            const aEmail = String(a.email || "").toLowerCase();
+            return aid === q || aDonorId === q || aUser === q || (dig && aPhone === dig) || (aEmail && aEmail === q);
+          });
+          if(accMatch && accMatch.email) return String(accMatch.email).toLowerCase();
+
+          // 7) users list scan fallback
+          const allUsers = await listOnce(NODES.users);
+          const uMatch = allUsers.find(u => {
+            if(!u) return false;
+            const uid = String(u.uid || u.id || "").toLowerCase();
+            const uDonorId = String(u.donorId || "").toLowerCase();
+            const uUser = String(u.username || "").toLowerCase();
+            const uPhone = digits(u.phone || "");
+            return uid === q || uDonorId === q || uUser === q || (dig && uPhone === dig);
+          });
+          if(uMatch && uMatch.email) return String(uMatch.email).toLowerCase();
         }catch(e){ console.warn("identifier lookup:", e && e.message); }
         return null;
       }

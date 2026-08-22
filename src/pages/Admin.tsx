@@ -3452,13 +3452,14 @@ function initPage() {
           return;
         }
       }
-      DB.donors.unshift({id:approvedDonorId,
-        name:q.name,group:q.group,area:q.area,phone:q.phone,whatsapp:q.whatsapp||q.phone,gender:q.gender,dob:q.dob||"",last:q.last,
+      const blood = q.bloodGroup || q.group || "";
+      DB.donors.unshift({id:approvedDonorId, donorId:approvedDonorId,
+        name:q.name,group:blood,bloodGroup:blood,area:q.area,phone:q.phone,whatsapp:q.whatsapp||q.phone,gender:q.gender,dob:q.dob||"",last:q.last||q.lastDonation||"",
         photo:q.photo||"",ownerUid:q.ownerUid||"",available:true,verified:true,suspended:false,joined:iso(now()),donations:q.last?1:0});
       if(q.ownerUid){
-        updateRow(NODES.users, q.ownerUid, {donorStatus:"approved", donorId:approvedDonorId, bloodGroup:q.group||""})
+        updateRow(NODES.users, q.ownerUid, {donorStatus:"approved", donorId:approvedDonorId, bloodGroup:blood})
           .catch(e=>console.warn("donor approve user:",e&&e.message));
-        if(q.memberId) updateRow(NODES.members, q.memberId, {status:"approved", donorId:approvedDonorId})
+        if(q.memberId) updateRow(NODES.members, q.memberId, {status:"approved", donorId:approvedDonorId, bloodGroup:blood})
           .catch(e=>console.warn("donor approve member:",e&&e.message));
         /* প্রোফাইল ছবি (ImgBB link) — queue-তে না থাকলে users/{uid}/photoURL থেকে অনুলিপি,
            যাতে অনুমোদিত ডোনারের পাবলিক প্রোফাইলে সঠিক ছবি দেখায় */

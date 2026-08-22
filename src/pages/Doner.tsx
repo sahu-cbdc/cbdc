@@ -17,6 +17,7 @@ import {
   photoForUid,
   loadUserProfile,
   isProfileComplete,
+  requestPasswordReset,
 } from "../lib/authx";
 import { getRow, setRow, updateRow, watchRow, addRow, findBy, listOnce, nowIso, updatePaths, removeRow } from "../lib/rtdb";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
@@ -124,6 +125,7 @@ svg{display:block;flex:none}
 .scr{display:none;animation:in .2s ease}
 .scr.on{display:block}
 @keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes spin{to{transform:rotate(360deg)}}
 
 @media(min-width:900px){
   .dnav{display:flex}
@@ -1493,6 +1495,7 @@ function initPage() {
   /* ---------- helpers ---------- */
   const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
   const D9=["০","১","২","৩","৪","৫","৬","৭","৮","৯"];
+  const digits=v=>String(v??"").replace(/[০-৯]/g,d=>String(D9.indexOf(d))).replace(/\D/g,"");
   /* Bangla digits — kept Latin when the app is in English */
   const bn=v=>(typeof STORE!=="undefined"&&STORE.prefs.lang==="en")?String(v??""):String(v??"").replace(/\d/g,d=>D9[d]);
   const esc=v=>String(v??"").replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
@@ -4078,17 +4081,36 @@ function initPage() {
           createdAt:r.createdAt||"",responders:Array.isArray(r.responders)?r.responders:[]});
       });
     }
-    // donor detection — শুধু UID দিয়ে, phone দিয়ে অন্য user-এর donor লিক হবে না
-    const mine=st.donors.find(d=> STORE.account.uid && String(d.ownerUid)===String(STORE.account.uid));
+    // donor detection — matches by UID, donor ID, phone, or email so old ID accounts load correctly
+    const userUid = String(STORE.account.uid || "").trim();
+    const userDonorId = String(STORE.donor.donorId || "").trim();
+    const userPhone = digits(STORE.account.phone || "");
+    const userEmail = String(STORE.account.email || "").trim().toLowerCase();
+
+    const mine = st.donors.find(d => {
+      if(!d) return false;
+      if(userUid && (String(d.ownerUid||"").trim() === userUid || String(d.uid||"").trim() === userUid || String(d.id||"").trim() === userUid)) return true;
+      if(userDonorId && (String(d.id||"").trim().toLowerCase() === userDonorId.toLowerCase() || String(d.donorId||"").trim().toLowerCase() === userDonorId.toLowerCase())) return true;
+      if(userPhone && d.phone && digits(d.phone) === userPhone) return true;
+      if(userEmail && d.email && String(d.email).trim().toLowerCase() === userEmail) return true;
+      return false;
+    });
     if(mine){
       const wasDonor = STORE.donor.is;
       STORE.donor.is=true;
-      STORE.donor.status="approved";STORE.donor.donorId=mine.id;STORE.donor.bloodGroup=mine.bloodGroup;
-      STORE.donor.lastDonation=mine.lastDonationDate||"";
+      STORE.donor.status="approved";
+      STORE.donor.donorId=mine.id||mine.donorId||STORE.donor.donorId;
+      STORE.donor.bloodGroup=mine.bloodGroup||mine.group||STORE.donor.bloodGroup;
+      STORE.donor.lastDonation=mine.lastDonationDate||mine.lastDonation||mine.last||STORE.donor.lastDonation;
       /* admin-পরিবর্তিত প্রাপ্যতা/WhatsApp পাবলিক রেকর্ড থেকেই সাথে সাথে সিঙ্ক —
          নইলে ডোনারের পরবর্তী save() পুরোনো মান দিয়ে আবার admin-এর পরিবর্তন মুছে দেবে */
       if(mine.available!==undefined)STORE.donor.available=!!mine.available;
       if(typeof mine.whatsapp==="string")STORE.donor.whatsapp=mine.whatsapp;
+      if(mine.gender&&!STORE.account.gender)STORE.account.gender=mine.gender;
+      if(mine.dob&&!STORE.account.dob)STORE.account.dob=mine.dob;
+      if(mine.area&&!STORE.account.area)STORE.account.area=mine.area;
+      if(mine.name&&!STORE.account.name)STORE.account.name=mine.name;
+      if((mine.photo||mine.photoURL)&&!STORE.account.photo)STORE.account.photo=mine.photo||mine.photoURL;
       if(!wasDonor){
         try{ persistLocalAccount(); }catch(e){}
         // RTDB-তে একীভূত — duplicate profile নয়, একই UID তে sync
@@ -4261,7 +4283,7 @@ function initPage() {
     return {
       mine:false,
       a:{name:x.name,gender:x.gender,area:x.area,phone:x.phone,photo:x.photo||"",dob:x.dob||""},
-      d:{donorId:x.donorId,bloodGroup:x.group,lastDonation:x.lastDonation||"",
+      d:{donorId:x.donorId,bloodGroup:x.bloodGroup||x.group||"",lastDonation:x.lastDonation||x.lastDonationDate||x.last||"",
          available:true,cardTheme:"green",whatsapp:!!x.phone,
          ov:{name:x.name,gender:x.gender,dob:x.dob||"",area:x.area,phone:x.phone}}
     };
@@ -4526,7 +4548,7 @@ function initPage() {
           </div>
         </div>
         <div class="dc-blood">
-          <div class="dc-grp">${esc(d.group)}</div>
+          <div class="dc-grp">${esc(d.bloodGroup || d.group || "")}</div>
           <div class="dc-age">${esc(age)}</div>
         </div>
       </div>
@@ -4645,9 +4667,16 @@ function initPage() {
     if(!uid)return null;
     const key=String(uid).trim().toLowerCase();
     const hit=DB().donors.find(d=>
-      String(d.uid).toLowerCase()===key||String(d.donorId||"").toLowerCase()===key);
+      String(d.uid||"").toLowerCase()===key||
+      String(d.donorId||"").toLowerCase()===key||
+      String(d.id||"").toLowerCase()===key||
+      String(d.ownerUid||"").toLowerCase()===key);
     if(hit)return hit;
-    const pub=pubDirectory().find(d=>String(d.id||"").toLowerCase()===key);
+    const pub=pubDirectory().find(d=>
+      String(d.id||"").toLowerCase()===key||
+      String(d.donorId||"").toLowerCase()===key||
+      String(d.uid||"").toLowerCase()===key||
+      String(d.ownerUid||"").toLowerCase()===key);
     return pub?fromPublic(pub):null;
   }
   /* true while the page is showing one public profile and nothing else */
@@ -4942,7 +4971,7 @@ function initPage() {
     P.security=()=>`
       <div class="card pad0">
         ${sRow("পাসওয়ার্ড","সর্বশেষ "+dL(STORE.security.passwordChangedAt),"editPass")}
-        ${sRow("পাসওয়ার্ড ভুলে গেছেন?","ইমেইল বা মোবাইলে OTP পাঠানো হবে","forgotPass")}
+        ${sRow("পাসওয়ার্ড ভুলে গেছেন?","ইমেইলে সরাসরি রিসেট লিংক পাঠানো হবে","forgotPass")}
       </div>
       <div class="sec-t">লগইন সুরক্ষা</div>
       <div class="card pad0">
@@ -6518,10 +6547,69 @@ function initPage() {
     await reauthenticateWithCredential(user,cred);
     await updatePassword(user,newPassword);
   }
-  /* পাসওয়ার্ড ভুলে গেলে — সাইটের আলাদা full-page UI (/forgot-password)।
-     সেখান থেকেই Firebase-এর built-in reset link পাঠানো হয়; কোনো custom OTP নেই। */
-  function sheetForgot(){
-    try{ window.location.assign(appBase()+"forgot-password"); }catch(e){ navigateToPage("home"); }
+  /* পাসওয়ার্ড ভুলে গেলে — লগইন করা অ্যাকাউন্টের ইমেইলে সরাসরি Firebase reset link পাঠানো হয় */
+  async function sheetForgot(){
+    const shared=initSharedFirebase();
+    const user=shared.auth && shared.auth.currentUser;
+    const email=String((user && user.email) || STORE.account.email || "").trim().toLowerCase();
+    if(!email){
+      sheet("পাসওয়ার্ড রিসেট", `
+        <div class="note r">${ICON.warn(17)}<span>আপনার অ্যাকাউন্টের সাথে কোনো ইমেইল ঠিকানা যুক্ত নেই। সেটিংস থেকে আগে ইমেইল যুক্ত করুন।</span></div>
+      `, `<button class="btn" data-close style="flex:1">বুঝেছি</button>`);
+      return;
+    }
+
+    const maskEmail = (em)=>{
+      if(!em.includes("@")) return em;
+      const [a, b] = em.split("@");
+      return (a.slice(0, 2) || "*") + "***@" + b;
+    };
+
+    const s=sheet("পাসওয়ার্ড রিসেট", `
+      <div id="fgt-loading" style="text-align:center;padding:18px 0">
+        <div style="width:36px;height:36px;border:3px solid var(--line);border-top-color:var(--grn);border-radius:50%;margin:0 auto 12px;animation:spin 0.8s linear infinite"></div>
+        <p class="mut" style="margin:0;font-size:.85rem">পাসওয়ার্ড রিসেট লিংক পাঠানো হচ্ছে…</p>
+      </div>
+      <div id="fgt-sent" class="hide" style="text-align:center;padding:6px 0">
+        <div style="width:52px;height:52px;border-radius:50%;background:var(--grn-s);color:var(--grn);display:grid;place-items:center;margin:0 auto 12px;font-size:1.6rem;font-weight:900">✓</div>
+        <b style="font-size:1.02rem;color:var(--ink);display:block;margin-bottom:6px">রিসেট লিংক পাঠানো হয়েছে</b>
+        <p class="mut" style="font-size:.84rem;margin:0 0 12px;line-height:1.6">
+          আপনার অ্যাকাউন্টের ইমেইল <b>${esc(maskEmail(email))}</b>-এ পাসওয়ার্ড রিসেট লিংক পাঠানো হয়েছে।
+        </p>
+        <div class="note g" style="text-align:left;margin-top:10px">
+          ${ICON.checkC(16)}<span>ইমেইলের Inbox বা Spam ফোল্ডারে থাকা লিংকে ক্লিক করে সরাসরি নতুন পাসওয়ার্ড সেট করে নিন।</span>
+        </div>
+      </div>
+      <div id="fgt-err" class="hide" style="padding:6px 0">
+        <div class="note r">${ICON.warn(17)}<span id="fgt-err-msg">রিসেট লিংক পাঠানো যায়নি।</span></div>
+      </div>
+    `, `
+      <button class="btn gh" id="fgt-resend" style="flex:1;display:none">আবার পাঠান</button>
+      <button class="btn" data-close style="flex:1">বুঝেছি</button>
+    `);
+
+    async function sendLink(){
+      try{
+        s.q("#fgt-loading").classList.remove("hide");
+        s.q("#fgt-sent").classList.add("hide");
+        s.q("#fgt-err").classList.add("hide");
+        s.q("#fgt-resend").style.display="none";
+        if(!shared.auth) throw new Error("Firebase সংযোগ নেই।");
+        await requestPasswordReset(shared.auth, email);
+        s.q("#fgt-loading").classList.add("hide");
+        s.q("#fgt-sent").classList.remove("hide");
+        s.q("#fgt-resend").style.display="inline-flex";
+        toast("রিসেট লিংক পাঠানো হয়েছে","ok");
+      }catch(err){
+        s.q("#fgt-loading").classList.add("hide");
+        s.q("#fgt-err").classList.remove("hide");
+        s.q("#fgt-err-msg").textContent = authErrorMessage(err, { fallback: "রিসেট লিংক পাঠানো যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।" });
+        s.q("#fgt-resend").style.display="inline-flex";
+      }
+    }
+
+    s.q("#fgt-resend").onclick = () => sendLink();
+    sendLink();
   }
 
   /* ---------- REAL account deletion ----------
@@ -6875,35 +6963,34 @@ function initPage() {
     const _dStatus = _knownDonorStatuses.includes(_dStatusRaw)
       ? _dStatusRaw
       : (_knownDonorStatuses.includes(_accountStatus) ? _accountStatus : "");
-    /* Donor UID শুধু approved হলে রাখা হয়। পেন্ডিং/নতুন status-এ পুরোনো
-       (ভুলভাবে তৈরি) donorId থাকলেও তা ব্যবহার করা হয় না — approve হলে
-       Admin sequential সিরিয়ালে নতুন UID দেবে। */
-    const _dId = _dStatus==="approved" ? (row.donorId || row.donorID || "") : "";
+    const _explicitDonorId = row.donorId || row.donorID || "";
+    const _dId = (_dStatus==="approved" || _explicitDonorId) ? _explicitDonorId : "";
     const _last = row.lastDonation || row.lastDonationDate || row.last || "";
     const _wa = row.whatsapp || row.whatsApp || "";
     const _health = row.health || row.healthNotes || "";
-    /* `users/{uid}` কখনোই donor status-এর প্রমাণ নয়:
-       - নতুন Account-এ শুধু `status:"active"` থাকে → এটি donor status হিসেবে
-         ব্যবহার করলে নবাগতকে Approved/তৈরি Donor দেখায়।
-       - `users/{uid}` user-ই লিখতে পারে, তাই এটি থেকে Approved আসতে পারে না।
-       আসল Donor status (pending/approved) শুধু `donors` / `members` / `queue`
-       রেকর্ড থেকে আসে (pullSharedPublic + hydrateDonorFromRtdb)। */
-    const _hasDonorInfo = !!(_bg || _dId || (_dStatus && _dStatus!=="none"));
-    if(_bg) STORE.donor.bloodGroup=_bg;
-    if(_dId) STORE.donor.donorId=_dId;
-    else if(_dStatus && _dStatus!=="approved") STORE.donor.donorId="";
-    if(!_hasDonorInfo){
-      /* RTDB অ্যাকাউন্টে কোনো donor আবেদন/তথ্য নেই → Donor নয়। এর ফলে আগের
-         ভুল cache বা `status:"active"`-এর কারণে অনুমোদিত Donor দেখানো বন্ধ হয়। */
+    const _hasDonorInfo = !!(_bg || _dId || (_dStatus && _dStatus!=="none") || _explicitDonorId || row.isDonor || row.role === "donor");
+    if(_hasDonorInfo){
+      STORE.donor.is = true;
+      if(_explicitDonorId || _dStatus === "approved"){
+        STORE.donor.status = "approved";
+        if(_explicitDonorId) STORE.donor.donorId = _explicitDonorId;
+      }else if(_dStatus){
+        STORE.donor.status = _dStatus;
+      }else if(_bg){
+        STORE.donor.status = "pending";
+      }
+      if(_bg) STORE.donor.bloodGroup = _bg;
+      if(_dId) STORE.donor.donorId = _dId;
+    }else if(!STORE.donor.is || !STORE.donor.donorId){
       STORE.donor.is=false; STORE.donor.status="none";
       STORE.donor.donorId=""; STORE.donor.bloodGroup="";
       STORE.donor.whatsapp=""; STORE.donor.lastDonation="";
       STORE.donor.health=""; STORE.donor.appliedAt="";
       STORE.donor.available=true;
     }
-    if(_last !== undefined && _last !== null) STORE.donor.lastDonation = String(_last||"");
-    if(_wa !== undefined && _wa !== null) STORE.donor.whatsapp = String(_wa||"");
-    if(_health !== undefined && _health !== null) STORE.donor.health = String(_health||"");
+    if(_last !== undefined && _last !== null && _last !== "") STORE.donor.lastDonation = String(_last||"");
+    if(_wa !== undefined && _wa !== null && _wa !== "") STORE.donor.whatsapp = String(_wa||"");
+    if(_health !== undefined && _health !== null && _health !== "") STORE.donor.health = String(_health||"");
     if(row.available !== undefined) STORE.donor.available = !!row.available;
     if(row.appliedAt) STORE.donor.appliedAt = String(row.appliedAt||"");
     if(row.cardTheme) STORE.donor.cardTheme = String(row.cardTheme||"green");
@@ -6920,72 +7007,163 @@ function initPage() {
   /* UID অনুযায়ী existing donor record detect — users/{uid} ছাড়াও donors/members/queue যাচাই
      hardcode/demo নয়, RTDB-র বাস্তব রেকর্ড থেকেই hydrate; duplicate তৈরি নয় */
   async function hydrateDonorFromRtdb(uid){
-    if(!uid || STORE.donor.is) return false;
+    if(!uid) return false;
+    const userEmail = String(STORE.account.email || "").trim().toLowerCase();
+    const userPhone = digits(STORE.account.phone || "");
+    const userDonorId = String(STORE.donor.donorId || "").trim();
+    const userName = String(STORE.account.username || "").trim().toLowerCase();
+
     try{
-      // 1) approved donors
+      // 1) approved donors (RTDB `donors` node)
       let donor = null;
       try{
-        donor = await findBy(NODES.donors, "ownerUid", uid);
-        if(!donor){
-          const all = await listOnce(NODES.donors);
-          donor = all.find(d=> String(d.ownerUid)===String(uid) || String(d.uid)===String(uid));
-        }
+        if(uid) donor = await findBy(NODES.donors, "ownerUid", uid);
       }catch(e){}
+      if(!donor){
+        try{
+          const all = await listOnce(NODES.donors);
+          donor = all.find(d => {
+            if(!d) return false;
+            const did = String(d.id || "").toLowerCase();
+            const donorId = String(d.donorId || "").toLowerCase();
+            const dOwner = String(d.ownerUid || "").toLowerCase();
+            const dUid = String(d.uid || "").toLowerCase();
+            const dPhone = digits(d.phone || "");
+            const dEmail = String(d.email || "").toLowerCase();
+            const dUser = String(d.username || "").toLowerCase();
+            if(uid && (dOwner === String(uid).toLowerCase() || dUid === String(uid).toLowerCase() || did === String(uid).toLowerCase())) return true;
+            if(userDonorId && (did === userDonorId.toLowerCase() || donorId === userDonorId.toLowerCase())) return true;
+            if(userPhone && dPhone && dPhone === userPhone) return true;
+            if(userEmail && dEmail && dEmail === userEmail) return true;
+            if(userName && dUser && dUser === userName) return true;
+            return false;
+          });
+        }catch(e){}
+      }
       if(donor){
-        STORE.donor.is=true; STORE.donor.status="approved";
+        STORE.donor.is = true;
+        STORE.donor.status = "approved";
         STORE.donor.donorId = donor.id || donor.donorId || STORE.donor.donorId || "";
         STORE.donor.bloodGroup = donor.bloodGroup || donor.group || STORE.donor.bloodGroup;
-        if(donor.lastDonationDate) STORE.donor.lastDonation = donor.lastDonationDate;
-        else if(donor.lastDonation) STORE.donor.lastDonation = donor.lastDonation;
-        else if(donor.last) STORE.donor.lastDonation = donor.last;
+        const last = donor.lastDonationDate || donor.lastDonation || donor.last || "";
+        if(last) STORE.donor.lastDonation = last;
         if(donor.whatsapp) STORE.donor.whatsapp = donor.whatsapp;
-        if(donor.health) STORE.donor.health = donor.health;
-        if(donor.healthNotes) STORE.donor.health = donor.healthNotes;
+        if(donor.healthNotes || donor.health) STORE.donor.health = donor.healthNotes || donor.health;
+        if(donor.available !== undefined) STORE.donor.available = !!donor.available;
+        if(donor.cardTheme) STORE.donor.cardTheme = donor.cardTheme;
+        if(donor.joined) STORE.donor.appliedAt = donor.joined;
+
+        if(!STORE.account.name && donor.name) STORE.account.name = donor.name;
+        if(!STORE.account.phone && donor.phone) STORE.account.phone = donor.phone;
+        if(!STORE.account.gender && donor.gender) STORE.account.gender = donor.gender;
+        if(!STORE.account.dob && donor.dob) STORE.account.dob = donor.dob;
+        if(!STORE.account.area && donor.area) STORE.account.area = donor.area;
+        if(!STORE.account.photo && (donor.photo || donor.photoURL)) STORE.account.photo = donor.photo || donor.photoURL;
+
         try{ persistLocalAccount(); }catch(e){}
-        try{ await pushAccountToRtdb(); }catch(e){}
+        if(donor.id && (!donor.ownerUid || donor.ownerUid !== uid)){
+          try{ await updateRow(NODES.donors, donor.id, { ownerUid: uid }); }catch(e){}
+        }
         return true;
       }
-      // 2) members (pending)
+
+      // 2) members (pending/approved)
       let member = null;
       try{
-        member = await findBy(NODES.members, "uid", uid);
-        if(!member){
-          const allM = await listOnce(NODES.members);
-          member = allM.find(m=> String(m.uid)===String(uid));
-        }
+        if(uid) member = await findBy(NODES.members, "uid", uid);
       }catch(e){}
+      if(!member){
+        try{
+          const allM = await listOnce(NODES.members);
+          member = allM.find(m => {
+            if(!m) return false;
+            const mid = String(m.id || "").toLowerCase();
+            const mDonorId = String(m.donorId || "").toLowerCase();
+            const mUid = String(m.uid || "").toLowerCase();
+            const mPhone = digits(m.phone || "");
+            const mEmail = String(m.email || "").toLowerCase();
+            const mUser = String(m.username || "").toLowerCase();
+            if(uid && (mUid === String(uid).toLowerCase() || mid === String(uid).toLowerCase())) return true;
+            if(userDonorId && (mDonorId === userDonorId.toLowerCase() || mid === userDonorId.toLowerCase())) return true;
+            if(userPhone && mPhone && mPhone === userPhone) return true;
+            if(userEmail && mEmail && mEmail === userEmail) return true;
+            if(userName && mUser && mUser === userName) return true;
+            return false;
+          });
+        }catch(e){}
+      }
       if(member){
-        STORE.donor.is=true;
-        const st = String(member.status||member.donorStatus||"pending").toLowerCase();
-        STORE.donor.status = st==="approved" ? "approved" : "pending";
-        /* Donor UID শুধু approved হলে রাখা হয়; pending হলে approve-র আগে না রাখা */
-        STORE.donor.donorId = st==="approved" ? (member.donorId || member.id || STORE.donor.donorId || "") : "";
+        STORE.donor.is = true;
+        const st = String(member.status || member.donorStatus || "pending").toLowerCase();
+        STORE.donor.status = st === "approved" ? "approved" : "pending";
+        STORE.donor.donorId = st === "approved" ? (member.donorId || member.id || STORE.donor.donorId || "") : "";
         STORE.donor.bloodGroup = member.bloodGroup || member.group || STORE.donor.bloodGroup;
-        if(member.lastDonationDate) STORE.donor.lastDonation = member.lastDonationDate;
-        else if(member.lastDonation) STORE.donor.lastDonation = member.lastDonation;
-        else if(member.last) STORE.donor.lastDonation = member.last;
+        const last = member.lastDonationDate || member.lastDonation || member.last || "";
+        if(last) STORE.donor.lastDonation = last;
         if(member.whatsapp) STORE.donor.whatsapp = member.whatsapp;
-        if(member.healthNotes) STORE.donor.health = member.healthNotes;
-        else if(member.health) STORE.donor.health = member.health;
+        if(member.healthNotes || member.health) STORE.donor.health = member.healthNotes || member.health;
+        if(!STORE.account.name && member.name) STORE.account.name = member.name;
+        if(!STORE.account.phone && member.phone) STORE.account.phone = member.phone;
+        if(!STORE.account.gender && member.gender) STORE.account.gender = member.gender;
+        if(!STORE.account.dob && member.dob) STORE.account.dob = member.dob;
+        if(!STORE.account.area && member.area) STORE.account.area = member.area;
+        if(!STORE.account.photo && (member.photo || member.photoURL)) STORE.account.photo = member.photo || member.photoURL;
         try{ persistLocalAccount(); }catch(e){}
-        try{ await pushAccountToRtdb(); }catch(e){}
         return true;
       }
+
       // 3) queue (pending donor request)
       try{
         const allQ = await listOnce(NODES.queue);
-        const q = allQ.find(x=> x.kind==="donor" && String(x.ownerUid)===String(uid)) || allQ.find(x=> String(x.uid)===String(uid) && x.group);
+        const q = allQ.find(x => {
+          if(!x || x.kind !== "donor") return false;
+          const qOwner = String(x.ownerUid || "").toLowerCase();
+          const qUid = String(x.uid || "").toLowerCase();
+          const qPhone = digits(x.phone || "");
+          const qEmail = String(x.email || "").toLowerCase();
+          if(uid && (qOwner === String(uid).toLowerCase() || qUid === String(uid).toLowerCase())) return true;
+          if(userPhone && qPhone && qPhone === userPhone) return true;
+          if(userEmail && qEmail && qEmail === userEmail) return true;
+          return false;
+        }) || allQ.find(x => uid && String(x.uid)===String(uid) && x.group);
         if(q){
-          STORE.donor.is=true; STORE.donor.status="pending";
-          /* pending queue — Donor UID এখনো তৈরি হয়নি; approve-র পরে Admin সেট করবে */
+          STORE.donor.is = true;
+          STORE.donor.status = "pending";
           STORE.donor.donorId = "";
           STORE.donor.bloodGroup = q.group || q.bloodGroup || STORE.donor.bloodGroup;
-          if(q.last) STORE.donor.lastDonation = q.last;
-          else if(q.lastDonation) STORE.donor.lastDonation = q.lastDonation;
+          if(q.last || q.lastDonation) STORE.donor.lastDonation = q.last || q.lastDonation;
           if(q.whatsapp) STORE.donor.whatsapp = q.whatsapp;
           if(q.health) STORE.donor.health = q.health;
           try{ persistLocalAccount(); }catch(e){}
-          try{ await pushAccountToRtdb(); }catch(e){}
+          return true;
+        }
+      }catch(e){}
+
+      // 4) accounts node
+      try{
+        const allA = await listOnce(NODES.accounts);
+        const acc = allA.find(a => {
+          if(!a) return false;
+          const aid = String(a.uid || a.id || "").toLowerCase();
+          const aDonorId = String(a.donorId || "").toLowerCase();
+          const aPhone = digits(a.phone || "");
+          const aEmail = String(a.email || "").toLowerCase();
+          if(uid && aid === String(uid).toLowerCase()) return true;
+          if(userDonorId && aDonorId === userDonorId.toLowerCase()) return true;
+          if(userPhone && aPhone && aPhone === userPhone) return true;
+          if(userEmail && aEmail && aEmail === userEmail) return true;
+          return false;
+        });
+        if(acc && (acc.donorId || acc.bloodGroup || acc.group)){
+          STORE.donor.is = true;
+          if(acc.donorId){
+            STORE.donor.status = "approved";
+            STORE.donor.donorId = acc.donorId;
+          }
+          if(acc.bloodGroup || acc.group) STORE.donor.bloodGroup = acc.bloodGroup || acc.group;
+          if(acc.lastDonationDate || acc.lastDonation || acc.last) STORE.donor.lastDonation = acc.lastDonationDate || acc.lastDonation || acc.last;
+          if(acc.whatsapp) STORE.donor.whatsapp = acc.whatsapp;
+          try{ persistLocalAccount(); }catch(e){}
           return true;
         }
       }catch(e){}
@@ -7007,7 +7185,7 @@ function initPage() {
       RTDB_PULLING=true;
       applyRtdbRow(uid, row, authUser);
       // users/{uid} এ donor তথ্য না থাকলেও donors/members/queue এ থাকলে UID দিয়ে hydrate
-      if(!STORE.donor.is){
+      if(!STORE.donor.is || !STORE.donor.donorId){
         try{ await hydrateDonorFromRtdb(uid); }catch(e){ console.warn("hydrate in watch:", e && e.message); }
       }
       /* data/mine লোড হওয়ার পর queue/requests-এর সাথে status মিলিয়ে নিই —
@@ -7067,7 +7245,7 @@ function initPage() {
         try{ row = await loadUserProfile(user.uid); }catch(e){}
         applyRtdbRow(user.uid, row, user);
         // users/{uid} এ donor না থাকলেও existing donor record (donors/members/queue) UID দিয়ে detect
-        if(!STORE.donor.is){
+        if(!STORE.donor.is || !STORE.donor.donorId){
           try{ await hydrateDonorFromRtdb(user.uid); }catch(e){ console.warn("hydrate on login:", e && e.message); }
         }
         try{save()}catch(e){}
