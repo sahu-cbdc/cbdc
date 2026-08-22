@@ -225,10 +225,10 @@ firebase deploy --only hosting
 
 - `donors` / `requests` / `gallery` / `notices` — public read (পাবলিক ওয়েবসাইটের জন্য)।
 - `donors/{id}` — **owner update**: ডোনার নিজের public record-এর নিজস্ব তথ্য
-  (name, gender, dob, area, phone, whatsapp, lastDonationDate, available, photo)
+  (name, gender, dob, area, phone, bloodGroup, whatsapp, lastDonationDate, available, photo)
   আপডেট করতে পারে — RTDB live listener-এর মাধ্যমে সাথে সাথে মেইন ওয়েবসাইট ও সব
   প্যানেলে দেখা যায়, কোনো refresh লাগে না। Admin-নিয়ন্ত্রিত ফিল্ড
-  (donorId/verified/suspended/donations/status/bloodGroup/…) `.validate`-এ রক্ষিত —
+  (donorId/verified/suspended/donations/status/…) `.validate`-এ রক্ষিত —
   owner পরিবর্তন করতে পারে না। owner নিজের record delete-ও করতে পারে
   (ডোনার তালিকা থেকে সরে যাওয়া)।
 - `members` / `requests` / `queue` — নতুন রেকর্ড তৈরি খোলা (রেজিস্ট্রেশন ও ইমারজেন্সি
