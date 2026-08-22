@@ -6167,21 +6167,42 @@ function initPage() {
       case "leaveDonor":if(await confirmS({title:"ডোনার তালিকা থেকে সরে যাবেন?",
         desc:"অ্যাকাউন্ট থাকবে, শুধু ডোনার তথ্য ও কার্ড সরে যাবে। চাইলে আবার যুক্ত হতে পারবেন।",ok:"সরে যান",danger:true})){
         const leftId=STORE.donor.donorId||"";
-        STORE.donor.is=false;STORE.donor.status="none";save();
-        /* নিজের পাবলিক রেকর্ড RTDB থেকে মুছে দিলে সাথে সাথে সব জায়গা থেকে সরে যায় */
-        if(leftId){
-          (async()=>{
-            try{
-              let rec=null;
-              try{ rec=await findBy(NODES.donors,"ownerUid",STORE.account.uid||""); }catch(e){}
-              if(!rec){
-                const all=await listOnce(NODES.donors);
-                rec=all.find(x=>String(x.id||"")===String(leftId)||String(x.ownerUid||"")===String(STORE.account.uid||""));
-              }
-              if(rec&&rec.id)await removeRow(NODES.donors,rec.id);
-            }catch(e){ console.warn("leave donor remove:",e&&e.message); }
-          })();
-        }
+        const uid=String(STORE.account.uid||RTDB_UID||"").trim();
+        /* Account তথ্য অক্ষত রেখে শুধু donor state local cache থেকেও পরিষ্কার করি। */
+        STORE.donor.is=false;STORE.donor.status="none";STORE.donor.donorId="";
+        STORE.donor.bloodGroup="";STORE.donor.whatsapp="";STORE.donor.lastDonation="";
+        STORE.donor.health="";STORE.donor.appliedAt="";STORE.donor.available=true;
+        STORE.donor.ov={name:null,gender:null,dob:null,area:null,phone:null};
+        save();
+        /* donors, pending member ও queue record একসাথে সরালে Main Website,
+           Doner Panel এবং profile/list-এর existing RTDB listeners-এ realtime update যায়। */
+        (async()=>{
+          try{
+            const paths={};
+            const accountEmail=String(STORE.account.email||"").trim().toLowerCase();
+            const accountPhone=String(STORE.account.phone||"").replace(/\\s+/g,"");
+            const sameOwner=x=>String(x&&(x.ownerUid||x.uid||x.userId)||"").trim()===uid
+              || (!!accountEmail&&String(x&&x.email||"").trim().toLowerCase()===accountEmail)
+              || (!!accountPhone&&String(x&&x.phone||"").replace(/\\s+/g,"")===accountPhone);
+            const donors=await listOnce(NODES.donors);
+            donors.filter(x=>sameOwner(x)||String(x&&x.id||"")===String(leftId)).forEach(x=>{if(x.id)paths[NODES.donors+"/"+x.id]=null});
+            const profile=uid?await getRow(NODES.users,uid):null;
+            const memberId=String(profile&&profile.donorMemberId||"").trim();
+            if(memberId){paths[NODES.members+"/"+memberId]=null;paths[NODES.queue+"/"+memberId]=null;}
+            if(uid) {
+              paths[NODES.users+"/"+uid+"/donorStatus"]=null;
+              paths[NODES.users+"/"+uid+"/donorId"]=null;
+              paths[NODES.users+"/"+uid+"/bloodGroup"]=null;
+              paths[NODES.users+"/"+uid+"/lastDonation"]=null;
+              paths[NODES.users+"/"+uid+"/whatsapp"]=null;
+              paths[NODES.users+"/"+uid+"/health"]=null;
+              paths[NODES.users+"/"+uid+"/available"]=null;
+              paths[NODES.users+"/"+uid+"/appliedAt"]=null;
+              paths[NODES.users+"/"+uid+"/cardTheme"]=null;
+            }
+            if(Object.keys(paths).length)await updatePaths(paths);
+          }catch(e){ console.warn("leave donor remove:",e&&e.message); }
+        })();
         logAct("ডোনার তালিকা থেকে সরে গেছেন","");go("set","donor");toast("সরে গেছেন")}break;
       case "withdraw":if(await confirmS({title:"আবেদন প্রত্যাহার করবেন?",desc:"পরে আবার আবেদন করতে পারবেন।",ok:"প্রত্যাহার",danger:true})){
         STORE.donor.is=false;STORE.donor.status="none";save();
@@ -6908,6 +6929,19 @@ function initPage() {
         payload.donorId = d.donorId||"";
         if(d.status && d.status!=="none") payload.donorStatus = d.status;
         else if(d.bloodGroup) payload.donorStatus = "pending";
+      } else {
+        /* Donor থেকে সরে গেলে account থাকবে, কিন্তু donor registration/status
+           metadata users/{uid}-তে আর থাকবে না। null update RTDB-তে field remove
+           করে; account-এর নাম/ছবি/email/phone ইত্যাদি অক্ষত থাকে। */
+        payload.donorStatus = null;
+        payload.donorId = null;
+        payload.bloodGroup = null;
+        payload.lastDonation = null;
+        payload.whatsapp = null;
+        payload.health = null;
+        payload.available = null;
+        payload.appliedAt = null;
+        payload.cardTheme = null;
       }
       await updateRow(NODES.users, RTDB_UID, payload);
     }catch(e){ console.warn("profile push:", e && e.message); }
