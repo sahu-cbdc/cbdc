@@ -28,7 +28,7 @@ import {
   verifyResetCode,
   completePasswordReset,
 } from "../lib/authx";
-import { addRow, setRow, updateRow, findBy, getRow, nowIso } from "../lib/rtdb";
+import { addRow, setRow, updateRow, findBy, getRow, listOnce, nowIso } from "../lib/rtdb";
 import { NODES } from "../lib/firebase";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, clearFieldError } from "../lib/forms";
 import { ageFromDob, ageText, dobBounds, isValidDob, toBanglaDigits } from "../lib/age";
@@ -4087,8 +4087,10 @@ function initPage() {
       function formObj(form){ return Object.fromEntries(new FormData(form).entries()); }
       function normalizeFormPhones(obj){ if(obj.phone)obj.phone=digits(obj.phone);if(obj.whatsapp)obj.whatsapp=digits(obj.whatsapp);return obj; }
       /* Register — inline validation (কোনো popup নয়) + Realtime Database (`members`, pending) */
+      let donorRegistrationBusy = false;
       $("#registerForm").addEventListener("submit", async e => {
         e.preventDefault();
+        if(donorRegistrationBusy) return;
         const form = e.currentTarget, message = $("#registerMessage");
         const v = validateForm(form, {
           name:        {required:true, label:"নাম", minLength:2},
@@ -4103,23 +4105,53 @@ function initPage() {
         if(!v.ok){ message.className="hidden"; message.textContent=""; return; }
 
         const o = normalizeFormPhones(formObj(form));
+        const registrationUid = String((auth && auth.currentUser && auth.currentUser.uid) || "").trim();
+        donorRegistrationBusy = true;
         showAppLoading();
-
-        const newMember = {
-          ...o,
-          dob: o.dob || "",
-          district: "চট্টগ্রাম",
-          status: "pending",
-          createdAt: nowIso()
-        };
 
         try{
           if(!fbReady) throw new Error("ডাটাবেস সংযোগ নেই। ইন্টারনেট সংযোগ পরীক্ষা করুন।");
+          /* একই Firebase Auth account-এর approved donor বা pending application
+             আগে থেকেই থাকলে নতুন push record তৈরি করা যাবে না। UID-ই প্রধান
+             পরিচয়; পুরোনো record-এ UID না থাকলে phone/email fallback থাকে। */
+          if(registrationUid){
+            const [existingDonors, existingMembers] = await Promise.all([
+              listOnce(NODES.donors),
+              listOnce(NODES.members)
+            ]);
+            const authEmail = String((auth && auth.currentUser && auth.currentUser.email) || "").trim().toLowerCase();
+            const sameAccount = (row) => {
+              if(!row) return false;
+              if(String(row.ownerUid || row.uid || row.userId || "").trim() === registrationUid) return true;
+              /* পুরোনো registration record-এ UID না থাকলেও একই Auth account-এর
+                 email/এই donor form-এর phone দিয়ে সেটি শনাক্ত করা যায়। */
+              return (!!authEmail && String(row.email || "").trim().toLowerCase() === authEmail)
+                || (!!o.phone && String(row.phone || "").replace(/\s+/g, "") === String(o.phone).replace(/\s+/g, ""));
+            };
+            const existing = existingDonors.find(sameAccount) || existingMembers.find(sameAccount);
+            if(existing){
+              hideAppModal();
+              showMessage(message, "এই অ্যাকাউন্টের ডোনার তথ্য আগে থেকেই সংরক্ষিত আছে। নতুন রেকর্ড তৈরি করা হয়নি।", "success");
+              return;
+            }
+          }
+          const newMember = {
+            ...o,
+            ...(registrationUid ? {uid:registrationUid, ownerUid:registrationUid} : {}),
+            dob: o.dob || "",
+            district: "চট্টগ্রাম",
+            status: "pending",
+            createdAt: nowIso()
+          };
           /* RTDB-তে লেখা হলে listener-এর কল্যাণে Admin/Moderator প্যানেলে
              সাথে সাথেই আবেদনটি দেখা যায় — আলাদা করে কিছু push করতে হয় না। */
           const memberId = await addRow(NODES.members, newMember);
+          /* নিজের users record-এ member key রাখি, যাতে private members node
+             list না পড়েও account deletion-এ pending donor আবেদনটি সরানো যায়। */
+          if(registrationUid) await updateRow(NODES.users, registrationUid, {donorMemberId:memberId})
+            .catch(err=>console.warn("donor member key:", err && err.message));
           await setRow(NODES.queue, memberId, {
-            kind:"donor", memberId, name:o.name, group:o.bloodGroup, area:o.area,
+            kind:"donor", memberId, ...(registrationUid ? {uid:registrationUid, ownerUid:registrationUid} : {}), name:o.name, group:o.bloodGroup, area:o.area,
             dob:o.dob||"", gender:o.gender, health:o.healthNotes||"", last:o.lastDonationDate||"",
             phone:o.phone, whatsapp:o.whatsapp||"", address:o.address||"", at:newMember.createdAt
           });
@@ -4133,6 +4165,8 @@ function initPage() {
           hideAppModal();
           console.warn("register write:", err && err.message);
           showMessage(message, "নিবন্ধন সংরক্ষণ করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।", "error");
+        }finally{
+          donorRegistrationBusy = false;
         }
       });
       attachLiveClear($("#registerForm"));
