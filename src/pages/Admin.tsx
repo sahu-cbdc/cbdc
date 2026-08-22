@@ -2342,7 +2342,8 @@ function initPage() {
       st.requests=DB.live.map(r=>({id:r.id,patientName:r.patient,bloodGroup:r.group,bags:r.bags,
         urgency:r.urgency,status:"approved",workflowStatus:r.status||"searching",hospitalName:r.hospital,
         hospitalAddress:r.area,requesterName:r.requester||"স্বজন",phone:r.phone,whatsapp:r.whatsapp||r.phone,
-        createdAt:r.at||new Date().toISOString(),expiresAt:r.expiresAt||"",responders:r.responders||0}));
+        createdAt:r.at||new Date().toISOString(),expiresAt:r.expiresAt||"",responders:r.responders||0,
+        ownerUid:r.ownerUid||r.uid||r.userId||""}));
       st.gallery=DB.gallery.map((g,i)=>({...g,imageUrl:g.imageUrl||g.url,url:g.url||g.imageUrl,order:g.order??i+1}));
       st.notices=DB.notices.map(x=>CBDCShared.clone(x));
       if(DB.accounts)st.accounts=DB.accounts.map(x=>CBDCShared.clone(x));
@@ -2359,7 +2360,8 @@ function initPage() {
       id:r.id,patient:r.patientName,group:r.bloodGroup,bags:r.bags,urgency:r.urgency,
       status:r.workflowStatus||"searching",responders:r.responders||0,hospital:r.hospitalName,
       area:r.hospitalAddress,requester:r.requesterName||"স্বজন",phone:r.phone,whatsapp:r.whatsapp||"",
-      at:r.createdAt||new Date().toISOString(),expiresAt:r.expiresAt||""}));
+      at:r.createdAt||new Date().toISOString(),expiresAt:r.expiresAt||"",
+      ownerUid:r.ownerUid||r.uid||r.userId||""}));
     if(st.gallery.length)DB.gallery=st.gallery.map(g=>({...g,url:g.url||g.imageUrl}));
     DB.notices=st.notices.map(x=>CBDCShared.clone(x));
     if(st.accounts.length)DB.accounts=st.accounts.map(x=>CBDCShared.clone(x));

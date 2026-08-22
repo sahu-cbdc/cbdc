@@ -1208,6 +1208,9 @@ function initPage() {
   "যাচাই চলছে":"Under review",
   "আপাতত বন্ধ":"Currently off",
   "আমার আবেদন":"My requests",
+  "আবেদন লোড হচ্ছে…":"Loading requests…",
+  "আপনার সর্বশেষ আবেদনগুলো আনা হচ্ছে":"Fetching your latest requests",
+  "কোনো আবেদন নেই":"No requests",
   "ডোনার তথ্য":"Donor information",
   "✓ যাচাইকৃত":"✓ Verified",
   "কার্ডের রং":"Card colour",
@@ -1670,6 +1673,24 @@ function initPage() {
        • localStorage       → শুধু দ্রুত লোডের জন্য cache, উৎস নয় */
   const LS_DATA="cbdc.data";
   const RAW={ donations:[], incoming:[], mine:[], notifs:[], activity:[], sessions:[], donors:[] };
+
+  /*
+     "আমার আবেদন" is private data.  It must not be reconstructed from the
+     public/shared cache: that cache is intentionally filtered to approved
+     emergency requests and may belong to a previous session.  Keep the two
+     RTDB sources separate until both have delivered their first snapshot, then
+     merge them by request id.
+  */
+  let MY_APPLICATION_UID="";
+  let AUTH_SESSION_READY=false;
+  let MY_APPLICATION_USER_READY=false;
+  let MY_APPLICATION_REQUESTS_READY=false;
+  let MY_APPLICATION_USER_ROWS=[];
+  let MY_APPLICATION_REQUEST_ROWS=[];
+  let stopMyApplicationRequests=()=>{};
+  let stopMyProfileListener=()=>{};
+  let myApplicationNotifUnsubscribe=null;
+
   function loadData(){
     try{
       const d=JSON.parse(localStorage.getItem(LS_DATA)||"{}");
@@ -1681,7 +1702,14 @@ function initPage() {
       RAW.sessions=[{id:"s1",name:thisDevice(),place:"এই ডিভাইস",last:"বর্তমানে সক্রিয়",cur:true}];
     }
   }
-  function saveData(){try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
+  function saveData(){
+    /* A local edit is immediately reflected in the personal source as well;
+       the user/{uid} listener will confirm it from RTDB shortly afterwards. */
+    if(MY_APPLICATION_UID&&MY_APPLICATION_USER_READY){
+      MY_APPLICATION_USER_ROWS=RAW.mine.slice();
+      mergeMyApplications();
+    }
+    try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
     if(!SHARED_PULLING)queueMicrotask(publishPersonalShared);
     /* একই তথ্য দ্বিতীয়বার হাতে লিখতে হয় না — এখান থেকেই RTDB-তে চলে যায় */
     if(typeof pushMyDataToRtdb==="function")queueMicrotask(()=>pushMyDataToRtdb());
@@ -1748,46 +1776,10 @@ function initPage() {
     const st=CBDCShared.load();
     RAW.donors=st.donors.filter(d=>d.status!=="pending"&&!d.suspended).map(CBDCShared.toDonerDonor);
     RAW.incoming=st.requests.filter(r=>r.status!=="cancelled"&&r.status!=="resolved").map(requestForDoner);
-    /* আমার আবেদন — UID অনুযায়ী RTDB (users/{uid}/data/mine + queue/requests) থেকে
-       একীভূত: Pending (queue), Approved/Matched (requests), Rejected/Cancelled
-       (users/{uid}/data/mine-এ admin-লিখিত status) — প্রতিটি অবস্থা সঠিক দেখায় */
-    const uid=String(STORE.account.uid||"").trim();
-    const liveById={};st.requests.forEach(r=>{if(r&&r.id)liveById[r.id]=r});
-    const pendById={};st.queue.filter(q=>q&&q.kind==="request").forEach(q=>{if(q.id)pendById[q.id]=q});
-    RAW.mine.forEach(m=>{
-      if(!m||!m.id)return;
-      const live=liveById[m.id];
-      if(live){
-        const ws=String(live.workflowStatus||live.status||"").toLowerCase();
-        m.status = ws==="matched"?"matched"
-          :(ws==="cancelled"||ws==="rejected"||ws==="resolved")?ws
-          :"approved";
-        m.responders=Array.isArray(live.responders)?live.responders:[];
-      }else if(pendById[m.id]){
-        /* queue-তে pending থাকলে pending; কিন্তু admin-লিখিত rejected/cancelled
-           status-কে queue-র অস্থায়ী উপস্থিতি আবার pending দেখাবে না */
-        if(m.status!=="rejected"&&m.status!=="cancelled")m.status="pending";
-      }else if(m.status!=="rejected"&&m.status!=="cancelled"&&m.status!=="done"){
-        /* live/queue-তে নেই — পুরোনো pending আবেদন (ধরে রাখা, কিন্তু queue-তে
-           নেই মানে admin বাতিল করেছে → rejected হিসেবে দেখাই না; pendingই থাকে
-           যতক্ষণ না admin-এর সিদ্ধান্ত users/{uid}/data/mine-এ লেখা হয়) */
-      }
-    });
-    /* RTDB `requests`-এ আমার UID-তে থাকা আবেদনগুলো data/mine-এ না থাকলে যোগ করি —
-       নতুন ডিভাইসে log in করলেও "আমার আবেদন" লোড হবে */
-    if(uid){
-      st.requests.forEach(r=>{
-        if(!r||!r.id)return;
-        if(String(r.ownerUid||"")!==String(uid))return;
-        if(RAW.mine.some(m=>m&&m.id===r.id))return;
-        const ws=String(r.workflowStatus||r.status||"").toLowerCase();
-        RAW.mine.push({id:r.id,patient:r.patientName||"",group:r.bloodGroup||"",bags:r.bags||1,
-          hospital:r.hospitalName||"",address:r.hospitalAddress||"",area:r.hospitalAddress||"",
-          urgency:r.urgency||"",neededBy:(r.expiresAt||"").slice(0,10),
-          status:ws==="matched"?"matched":(ws==="cancelled"||ws==="rejected"||ws==="resolved")?ws:"approved",
-          createdAt:r.createdAt||"",responders:Array.isArray(r.responders)?r.responders:[]});
-      });
-    }
+    /* Personal applications are loaded only by watchMyProfile/watchMyApplications
+       below.  Never use st.queue or the public shared cache here: either can be
+       incomplete for a donor and neither is a safe source for another user's
+       private history. */
     // donor detection — শুধু UID দিয়ে, phone দিয়ে অন্য user-এর donor লিক হবে না
     const mine=st.donors.find(d=> STORE.account.uid && String(d.ownerUid)===String(STORE.account.uid));
     if(mine){
@@ -2007,6 +1999,12 @@ function initPage() {
   let CUR="home", SUB=null;
   
   function go(id,sub=null,push=true){
+    if(id==="req"&&(sub==="for"||sub==="mine"||sub==="become")){
+      reqTab=sub;
+      /* request tabs are state inside the request screen, not settings
+         sub-screens; keep the existing /doner/req route semantics. */
+      sub=null;
+    }
     CUR=id;SUB=sub;
     $$(".scr").forEach(s=>s.classList.remove("on"));
     if(sub){ $("#s-sub").classList.add("on"); renderSub(sub); }
@@ -2502,6 +2500,9 @@ function initPage() {
   
   /* ══════════ SCREEN: REQUEST ══════════ */
   let reqTab="for";
+  const applicationsLoadingBox=()=>`<div class="card"><div class="empty" aria-live="polite">
+    <div class="sk" style="width:56px;height:56px;margin:0 auto 12px;border-radius:50%"></div>
+    <b>আবেদন লোড হচ্ছে…</b><p>আপনার সর্বশেষ আবেদনগুলো আনা হচ্ছে</p></div></div>`;
   function rReq(){
     const inc=myReqs(),mine=DB().mine;
     $("#s-req").innerHTML=`
@@ -2520,8 +2521,9 @@ function initPage() {
         :emptyBox(ICON.checkC(26),"এখন কোনো জরুরি আবেদন নেই","আপনার গ্রুপের নতুন আবেদন এলে জানানো হবে");
     }else if(reqTab==="mine"){
       el.innerHTML=`<button class="btn red w" style="margin-bottom:13px" data-act="newreq">${ICON.plus(18)} নতুন জরুরি আবেদন</button>`
-        +(mine.length?mine.map(mineCard).join("")
-        :emptyBox(ICON.file(26),"আপনি এখনো কোনো আবেদন করেননি","কারো রক্তের প্রয়োজন হলে এখান থেকে আবেদন করুন"));
+        +(myApplicationsAreLoading()?applicationsLoadingBox()
+        :(mine.length?mine.map(mineCard).join("")
+        :emptyBox(ICON.file(26),"কোনো আবেদন নেই","কারো রক্তের প্রয়োজন হলে এখান থেকে আবেদন করুন")));
     }else{
       el.innerHTML=becomeView();
       /* "আমার প্রোফাইল" — সরাসরি নিজের ডোনার প্রোফাইল পেজ খোলে */
@@ -2543,15 +2545,18 @@ function initPage() {
       <button class="btn gh sm" data-mute="${esc(r.id)}">লুকান</button></div></div>`;
   
   const RS={pending:["a","যাচাই চলছে"],approved:["b","অনুমোদিত"],matched:["b","রক্তদাতা খোঁজা হচ্ছে"],
-    done:["g","সম্পন্ন"],expired:["m","মেয়াদোত্তীর্ণ"],cancelled:["m","বাতিল"],rejected:["r","বাতিল"]};
-  const mineCard=r=>{const[c,t]=RS[r.status]||["m",r.status];
-    const final=r.status==="done"||r.status==="cancelled"||r.status==="rejected";
+    done:["g","সম্পন্ন"],resolved:["g","সম্পন্ন"],expired:["m","মেয়াদোত্তীর্ণ"],
+    cancelled:["m","বাতিল"],rejected:["r","বাতিল"]};
+  const mineCard=r=>{const[c,t]=RS[r.status]||["m",r.status||"যাচাই চলছে"];
+    const responders=Array.isArray(r.responders)?r.responders:[];
+    const responderCount=Math.max(responders.length,Number(r.responderCount)||0);
+    const final=r.status==="done"||r.status==="resolved"||r.status==="expired"||r.status==="cancelled"||r.status==="rejected";
     return `<div class="reqc"><h4>${esc(r.id)} <span class="bg">${esc(r.group)}</span> <span class="pill ${c}">${t}</span></h4>
     <p>${esc(r.patient)} · ${bn(r.bags)} ব্যাগ</p>
     <p>${ICON.hospital(13)} ${esc(r.hospital)} · ${dS(r.neededBy)}</p>
     ${r.rejectNote?`<p class="mut" style="margin-top:6px">বাতিলের কারণ: ${esc(r.rejectNote)}</p>`:""}
-    ${r.responders.length?`<p style="color:var(--grn);font-weight:700">${bn(r.responders.length)} জন সাড়া দিয়েছেন</p>`:""}
-    <div class="a">${r.responders.length?`<button class="btn sm" data-resps="${esc(r.id)}">সাড়াদাতারা</button>`:""}
+    ${responderCount?`<p style="color:var(--grn);font-weight:700">${bn(responderCount)} জন সাড়া দিয়েছেন</p>`:""}
+    <div class="a">${responders.length?`<button class="btn sm" data-resps="${esc(r.id)}">সাড়াদাতারা</button>`:""}
       ${!final?
         `<button class="btn gh sm" data-done="${esc(r.id)}">${ICON.check(14)} সম্পন্ন</button>
          <button class="btn gh sm" data-cancel="${esc(r.id)}">বাতিল</button>`:""}</div></div>`};
@@ -4435,9 +4440,10 @@ function initPage() {
   /* ডোনারের নিজস্ব রেকর্ড (রক্তদান, নিজের আবেদন, বিজ্ঞপ্তি, কার্যক্রম) RTDB-তে —
      ডিভাইস বদলালেও একই তথ্য, এবং অ্যাডমিন প্যানেলও একই উৎস পড়ে। */
   async function pushMyDataToRtdb(){
-    if(!RTDB_UID||RTDB_PULLING)return;
+    const uid=firebaseCurrentUid();
+    if(!uid||uid!==RTDB_UID||RTDB_PULLING)return;
     try{
-      await updateRow(NODES.users, RTDB_UID, {
+      await updateRow(NODES.users, uid, {
         data:{
           donations:RAW.donations||[],
           mine:RAW.mine||[],
@@ -4446,6 +4452,138 @@ function initPage() {
       });
     }catch(e){ console.warn("data push:", e && e.message); }
   }
+  const APPLICATION_TERMINAL_STATUS=new Set(["rejected","cancelled","done","resolved","expired"]);
+
+  function applicationRows(value){
+    if(Array.isArray(value))return value.map((row,i)=>row&&typeof row==="object"?{...row,id:row.id||row.requestId||String(i)}:null).filter(Boolean);
+    if(value&&typeof value==="object")return Object.entries(value).map(([id,row])=>
+      row&&typeof row==="object"?{...row,id:row.id||row.requestId||id}:null).filter(Boolean);
+    return [];
+  }
+  function applicationStatus(row){
+    const status=String(row&&row.status||"").trim().toLowerCase();
+    const workflow=String(row&&row.workflowStatus||"").trim().toLowerCase();
+    const canonical=value=>{
+      if(value==="cancelled"||value==="canceled")return "cancelled";
+      if(value==="rejected")return "rejected";
+      if(value==="resolved"||value==="completed")return "resolved";
+      if(value==="done")return "done";
+      if(value==="expired")return "expired";
+      if(value==="matched")return "matched";
+      if(value==="approved"||value==="searching"||value==="active")return "approved";
+      if(value==="pending"||value==="waiting")return "pending";
+      return "";
+    };
+    /* workflowStatus is the more specific part of an approved request. */
+    return canonical(workflow)||canonical(status)||"pending";
+  }
+  function normalizeApplication(row){
+    const r=row&&typeof row==="object"?row:{};
+    const responders=Array.isArray(r.responders)
+      ?r.responders
+      :(r.responders&&typeof r.responders==="object"?Object.values(r.responders):[]);
+    const responderCount=Array.isArray(r.responders)
+      ?responders.length
+      :Number(r.responders)||Number(r.responderCount)||0;
+    const expires=String(r.neededBy||r.expiresAt||"");
+    return {
+      ...r,
+      id:String(r.id||r.requestId||""),
+      patient:r.patient||r.patientName||"",
+      group:r.group||r.bloodGroup||"",
+      bags:Number(r.bags||r.units||1)||1,
+      urgency:r.urgency||"",
+      hospital:r.hospital||r.hospitalName||"",
+      address:r.address||r.hospitalAddress||r.area||"",
+      area:r.area||r.hospitalAddress||r.address||"",
+      neededBy:expires.slice(0,10),
+      createdAt:r.createdAt||r.at||"",
+      status:applicationStatus(r),
+      responders,
+      responderCount,
+      rejectNote:r.rejectNote||r.rejectionReason||""
+    };
+  }
+  function mergeApplicationStatus(userRow,requestRow){
+    const us=userRow&&userRow.status, rs=requestRow&&requestRow.status;
+    if(!userRow)return rs;
+    if(!requestRow)return us;
+    /* Admin decisions written to users/{uid}/data/mine must not be replaced by
+       an older public request snapshot. */
+    if(APPLICATION_TERMINAL_STATUS.has(us))return us;
+    if(APPLICATION_TERMINAL_STATUS.has(rs))return rs;
+    if(rs==="pending"&&us!=="pending")return us;
+    return rs!=="pending"?rs:us;
+  }
+  function mergeMyApplications(){
+    const byId=new Map();
+    MY_APPLICATION_REQUEST_ROWS.map(normalizeApplication).forEach(row=>{
+      if(row.id)byId.set(row.id,row);
+    });
+    MY_APPLICATION_USER_ROWS.map(normalizeApplication).forEach(userRow=>{
+      if(!userRow.id)return;
+      const requestRow=byId.get(userRow.id);
+      if(!requestRow){byId.set(userRow.id,userRow);return;}
+      const merged={...requestRow};
+      /* The private record contains the complete form/history; retain public
+         fields when an older private record does not have them. */
+      ["patient","group","bags","urgency","hospital","address","area","neededBy","createdAt","rejectNote"].forEach(key=>{
+        if(userRow[key]!==undefined&&userRow[key]!==null&&userRow[key]!=="")merged[key]=userRow[key];
+      });
+      if(userRow.responders.length)merged.responders=userRow.responders;
+      merged.responderCount=Math.max(requestRow.responderCount||0,userRow.responderCount||0,merged.responders.length||0);
+      merged.status=mergeApplicationStatus(userRow,requestRow);
+      byId.set(userRow.id,merged);
+    });
+    RAW.mine=[...byId.values()].sort((a,b)=>{
+      const bt=Date.parse(b.createdAt||"")||0,at=Date.parse(a.createdAt||"")||0;
+      return bt-at;
+    });
+    try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
+    if(CUR==="req"&&!document.querySelector(".sheet"))rReq();
+  }
+  function beginMyApplications(uid){
+    uid=String(uid||"").trim();
+    if(MY_APPLICATION_UID===uid)return;
+    MY_APPLICATION_UID=uid;
+    MY_APPLICATION_USER_READY=false;
+    MY_APPLICATION_REQUESTS_READY=false;
+    MY_APPLICATION_USER_ROWS=[];
+    MY_APPLICATION_REQUEST_ROWS=[];
+    /* Do not let a previous account's local cache paint this screen while the
+       Firebase Auth user's own snapshot is being fetched. */
+    RAW.mine=[];
+  }
+  function setMyApplicationsFromUser(uid,row){
+    if(String(uid||"")!==MY_APPLICATION_UID)return;
+    MY_APPLICATION_USER_ROWS=applicationRows(row&&row.data&&row.data.mine);
+    MY_APPLICATION_USER_READY=true;
+    mergeMyApplications();
+  }
+  function watchMyApplications(uid){
+    if(!uid)return;
+    stopMyApplicationRequests();
+    MY_APPLICATION_REQUESTS_READY=false;
+    stopMyApplicationRequests=watchList(NODES.requests,rows=>{
+      if(String(uid)!==String(firebaseCurrentUid()))return;
+      MY_APPLICATION_REQUEST_ROWS=rows.filter(row=>{
+        const owner=String(row&& (row.ownerUid||row.uid||row.userId||row.requesterUid)||"").trim();
+        return owner===String(uid);
+      });
+      MY_APPLICATION_REQUESTS_READY=true;
+      mergeMyApplications();
+    });
+  }
+  function myApplicationsAreLoading(){
+    return !AUTH_SESSION_READY||!!MY_APPLICATION_UID&&(!MY_APPLICATION_USER_READY||!MY_APPLICATION_REQUESTS_READY);
+  }
+  function firebaseCurrentUid(){
+    try{
+      const shared=initSharedFirebase();
+      return String(shared&&shared.auth&&shared.auth.currentUser&&shared.auth.currentUser.uid||"").trim();
+    }catch(e){return ""}
+  }
+
   function applyRtdbRow(uid, row, authUser){
     const a=STORE.account;
     a.uid=uid;
@@ -4514,8 +4652,9 @@ function initPage() {
     if(row.appliedAt) STORE.donor.appliedAt = String(row.appliedAt||"");
     if(row.cardTheme) STORE.donor.cardTheme = String(row.cardTheme||"green");
     if(row.data&&typeof row.data==="object"){
-      /* notifs আর users/data থেকে লোড হয় না — উৎস এখন notifications/{uid} নোড */
-      ["donations","mine","activity"].forEach(k=>{ if(Array.isArray(row.data[k]))RAW[k]=row.data[k]; });
+      /* `mine` is applied by setMyApplicationsFromUser() so it is always
+         scoped to this Auth UID and merged with the live requests listener. */
+      ["donations","activity"].forEach(k=>{ if(Array.isArray(row.data[k]))RAW[k]=row.data[k]; });
       try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
     }
   }
@@ -4611,25 +4750,28 @@ function initPage() {
   function watchMyProfile(uid, authUser){
     if(!uid)return;
     RTDB_UID=uid;
-    watchRow(NODES.users, uid, async (row)=>{
-      // RTDB তে row না থাকলে কিন্তু local-এ complete profile + donor থাকলে overwrite করি না
-      if(!row && STORE.account.uid === uid && isProfileComplete(STORE.account) && STORE.donor.is) return;
+    beginMyApplications(uid);
+    watchMyApplications(uid);
+    stopMyProfileListener();
+    stopMyProfileListener=watchRow(NODES.users, uid, async (row)=>{
+      /* A late callback from a previous account must never overwrite the
+         current user's application state. */
+      if(String(uid)!==String(firebaseCurrentUid()))return;
       RTDB_PULLING=true;
       applyRtdbRow(uid, row, authUser);
+      setMyApplicationsFromUser(uid,row);
       // users/{uid} এ donor তথ্য না থাকলেও donors/members/queue এ থাকলে UID দিয়ে hydrate
       if(!STORE.donor.is){
         try{ await hydrateDonorFromRtdb(uid); }catch(e){ console.warn("hydrate in watch:", e && e.message); }
       }
-      /* data/mine লোড হওয়ার পর queue/requests-এর সাথে status মিলিয়ে নিই —
-         ফলে "আমার আবেদন" ঠিকমতো লোড হয় (pending/approved/rejected/cancelled) */
-      try{ pullSharedPublic(); }catch(e){ console.warn("resync mine:", e && e.message); }
+      try{ pullSharedPublic(); }catch(e){ console.warn("resync personal data:", e && e.message); }
       persistLocalAccount();
       RTDB_PULLING=false;
       if(!document.querySelector(".sheet")&&!PUBLIC_MODE){ try{ paintTop(); go(CUR,SUB,false); }catch(e){} }
     });
     /* notification storage live update — আলাদা website storage (RTDB-তে নয়);
        RTDB পরিবর্তন → syncNotifsFromData() → এখানে subscriber → সাথে সাথে UI */
-    notifSubscribe(()=>{
+    if(!myApplicationNotifUnsubscribe)myApplicationNotifUnsubscribe=notifSubscribe(()=>{
       paintTop();
       if(npOpen)renderNotifPanel();
     });
@@ -4648,17 +4790,32 @@ function initPage() {
       let authUid = STORE.account.uid || "";
       onAuthStateChanged(shared.auth, async (user)=>{
         if(PUBLIC_MODE)return;
+        AUTH_SESSION_READY=true;
         if(!user){
           authUid="";
+          stopMyApplicationRequests();
+          stopMyProfileListener();
+          MY_APPLICATION_UID="";
+          MY_APPLICATION_USER_READY=false;
+          MY_APPLICATION_REQUESTS_READY=false;
+          MY_APPLICATION_USER_ROWS=[];
+          MY_APPLICATION_REQUEST_ROWS=[];
+          RAW.mine=[];
           setTimeout(()=>{navigateToPage("home")},400);
           return;
         }
         /* শুধু অন্য uid-তে স্যুইচ করলেই cache পরিষ্কার —
            প্রথম লোডে (authUid খালি বা একই uid) আগের সংরক্ষিত তথ্য রাখি। */
         if(authUid && authUid !== user.uid){
+          stopMyApplicationRequests();
+          stopMyProfileListener();
           resetUserCache();
           if(!PUBLIC_MODE){ try{ paintTop(); go(CUR,SUB,false); }catch(e){} }
         }
+        /* The Firebase Auth session, not localStorage, is the identity used for
+           every personal application read.  Clear any cached list before the
+           first RTDB snapshot for this UID arrives. */
+        beginMyApplications(user.uid);
         authUid = user.uid;
         /* Role gate — Admin/Moderator কখনোই Doner Dashboard ব্যবহার করে না;
            তাদের নিজ নিজ প্যানেলে পাঠিয়ে দেওয়া হয় (role আসে RTDB থেকে)। */
@@ -4676,6 +4833,7 @@ function initPage() {
         let row = null;
         try{ row = await loadUserProfile(user.uid); }catch(e){}
         applyRtdbRow(user.uid, row, user);
+        setMyApplicationsFromUser(user.uid,row);
         // users/{uid} এ donor না থাকলেও existing donor record (donors/members/queue) UID দিয়ে detect
         if(!STORE.donor.is){
           try{ await hydrateDonorFromRtdb(user.uid); }catch(e){ console.warn("hydrate on login:", e && e.message); }
