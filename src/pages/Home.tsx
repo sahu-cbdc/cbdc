@@ -3889,7 +3889,10 @@ function initPage() {
       let currentDcardId=null;
       function dcardHTML(d){
         const last= d.lastDonationDate?dateText(d.lastDonationDate):"নতুন দাতা";
-        return `<div class="dcard"><div class="dcard-topbar"><img class="dcard-logo" src="${LOGO_SRC}" alt=""><span>${SITE.name}</span></div><div class="dcard-photo"><img src="${avatarData(d.gender)}" alt=""></div><h3 class="dcard-name">${esc(d.name)}</h3><div class="dcard-group">${esc(d.bloodGroup)}</div><div class="dcard-rows"><div>📍 এলাকা <strong>${esc(d.area)}</strong></div><div>🗓 শেষ রক্তদান <strong>${esc(last)}</strong></div><div>☎ মোবাইল <strong>${esc(d.phone)}</strong></div><div>🪪 কার্ড নং <strong>${esc(d.id)}</strong></div></div><div class="dcard-footer">✓ অনুমোদিত রক্তদাতা • রক্ত দিন, জীবন বাঁচান 🩸</div></div>`;
+        /* প্রোফাইল ছবি — Doner প্যানেলের মতোই RTDB-র photo (ImgBB link) থেকে;
+           না থাকলে বা লোড ব্যর্থ হলে আগের gender-ভিত্তিক avatar-এ fallback */
+        const ph=String(d.photo||d.photoURL||"").trim();
+        return `<div class="dcard"><div class="dcard-topbar"><img class="dcard-logo" src="${LOGO_SRC}" alt=""><span>${SITE.name}</span></div><div class="dcard-photo"><img src="${ph?esc(ph):avatarData(d.gender)}" alt="" data-ph="${avatarData(d.gender)}" onerror="this.onerror=null;this.src=this.dataset.ph"></div><h3 class="dcard-name">${esc(d.name)}</h3><div class="dcard-group">${esc(d.bloodGroup)}</div><div class="dcard-rows"><div>📍 এলাকা <strong>${esc(d.area)}</strong></div><div>🗓 শেষ রক্তদান <strong>${esc(last)}</strong></div><div>☎ মোবাইল <strong>${esc(d.phone)}</strong></div><div>🪪 কার্ড নং <strong>${esc(d.id)}</strong></div></div><div class="dcard-footer">✓ অনুমোদিত রক্তদাতা • রক্ত দিন, জীবন বাঁচান 🩸</div></div>`;
       }
       function openDonorCard(idv){ const d=publicDonors().find(x=>x.id===idv); if(!d)return; currentDcardId=idv; $("#dcardPreview").innerHTML=dcardHTML(d); $("#donorCardModalBg").classList.remove("hidden"); document.body.classList.add("lock"); }
       function closeDonorCard(){ $("#donorCardModalBg").classList.add("hidden"); document.body.classList.remove("lock"); currentDcardId=null; }
@@ -3956,6 +3959,9 @@ function initPage() {
           id: d.id,
           name: d.name || "নাম নেই",
           gender: d.gender || "",
+          /* প্রোফাইল ছবি — Doner প্যানেলের profileView-এর মতোই একই RTDB field
+             (photo, পুরোনো রেকর্ডে photoURL) থেকে */
+          photo: String(d.photo || d.photoURL || "").trim(),
           group: d.bloodGroup || "",
           area: d.area || "",
           dob: d.dob || "",
@@ -3984,7 +3990,8 @@ function initPage() {
         return `
         <div class="pcard">
           <div class="phead2">
-            <img class="pav" src="${avatarData(v.gender)}" alt="">
+            <img class="pav" src="${v.photo?esc(v.photo):avatarData(v.gender)}" alt="" data-ph="${avatarData(v.gender)}"
+              onerror="this.onerror=null;this.src=this.dataset.ph">
             ${v.group?`<span class="pgrp">${esc(v.group)}</span>`:""}
           </div>
           <div class="pnm">
