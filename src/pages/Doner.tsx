@@ -18,13 +18,25 @@ import {
   loadUserProfile,
   isProfileComplete,
 } from "../lib/authx";
-import { getRow, setRow, updateRow, watchRow, watchList, addRow, findBy, listOnce, nowIso, updatePaths, removeRow } from "../lib/rtdb";
+import { getRow, setRow, updateRow, watchRow, addRow, findBy, listOnce, nowIso, updatePaths, removeRow } from "../lib/rtdb";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage } from "../lib/imgbb";
-import { notifyMatchingDonors } from "../lib/notify";
+/* Notification — আলাদা website notification storage (RTDB-তে নয়) */
+import {
+  addNotif,
+  loadNotifs,
+  markNotifRead as storeMarkRead,
+  markAllNotifsRead,
+  unreadNotifs,
+  pruneExpired,
+  subscribe as notifSubscribe,
+  loadSeen,
+  saveSeen,
+  sanitizeKey,
+} from "../lib/notify";
 
 /* ═══════════════════════════════════════════════════════════════════
    CSS — মূল doner.html-এর <style> ব্লক হুবহু কপি
@@ -4087,6 +4099,8 @@ function initPage() {
       account:STORE.account,donor:STORE.donor,privacy:STORE.privacy,notif:STORE.notif,prefs:STORE.prefs,
       security:STORE.security,saved:STORE.saved}))}catch(e){}
     SHARED_PULLING=false;
+    /* RTDB-র এই live পরিবর্তন থেকে notification তৈরি (আলাদা storage-এ) */
+    try{ syncNotifsFromData(); }catch(e){ console.warn("notif sync:", e && e.message); }
   }
   function publishPersonalShared(){
     if(SHARED_PULLING||!window.CBDCShared||!STORE.account.name)return;
@@ -4132,6 +4146,87 @@ function initPage() {
       });
       return st;
     },"doner:personal");
+  }
+  
+  /* ── Notification generation (আলাদা website notification storage) ──
+     RTDB-র live পরিবর্তন দেখে ডোনারের নিজের notification তৈরি হয় — notification
+     নিজে RTDB-তে লেখা হয় না; আলাদা notification storage-এ (localStorage) থাকে
+     এবং ২৪ ঘণ্টা পর সেখান থেকেও মুছে যায়। main RTDB data অক্ষত থাকে। */
+  function syncNotifsFromData(){
+    const uid=String(STORE.account.uid||"").trim();
+    if(!uid)return;
+    const seen=loadSeen();
+    const d=STORE.donor;
+    /* প্রথম সিঙ্ক — শুধু baseline ধরি, পুরোনো অবস্থার notification বানাই না */
+    if(!seen.booted){
+      RAW.mine.forEach(m=>{ if(m&&m.id&&m.status)seen.reqStatus[m.id]=m.status; });
+      DB().incoming.forEach(r=>{ if(r&&r.id)seen.incoming[r.id]=1; });
+      seen.donorStatus=d.status||"";
+      seen.bloodGroup=d.bloodGroup||"";
+      seen.lastDonation=d.lastDonation||"";
+      seen.booted=true;
+      saveSeen(seen);
+      return;
+    }
+    /* ১) আমার জরুরি আবেদনের status পরিবর্তন → অনুমোদিত / বাতিল */
+    const mineIds=new Set();
+    RAW.mine.forEach(m=>{
+      if(!m||!m.id)return;
+      mineIds.add(m.id);
+      const prev=seen.reqStatus[m.id], cur=String(m.status||"");
+      if(cur==="approved"||cur==="matched"){
+        if(prev&&prev!=="approved"&&prev!=="matched"){
+          addNotif({id:"req-appr-"+sanitizeKey(m.id),title:"জরুরি রক্তের আবেদন অনুমোদিত",
+            body:`${m.group||""} · ${m.patient||""} · ${m.hospital||""}`.replace(/^ · | · $/g,"")||"আপনার জরুরি রক্তের আবেদনটি অনুমোদিত হয়েছে।",
+            type:"approval",ref:m.id,go:"req:mine"});
+        }else if(!prev){
+          /* নতুন ডিভাইসে প্রথমবার approved দেখা গেলে — ২৪ ঘণ্টার window-এ জানাই */
+          addNotif({id:"req-appr-"+sanitizeKey(m.id),title:"জরুরি রক্তের আবেদন অনুমোদিত",
+            body:`${m.group||""} · ${m.patient||""} · ${m.hospital||""}`.replace(/^ · | · $/g,"")||"আপনার জরুরি রক্তের আবেদনটি অনুমোদিত হয়েছে।",
+            type:"approval",ref:m.id,go:"req:mine"});
+        }
+      }else if(cur==="rejected"&&prev&&prev!=="rejected"){
+        addNotif({id:"req-rej-"+sanitizeKey(m.id),title:"জরুরি রক্তের আবেদন বাতিল",
+          body:m.rejectNote?`কারণ: ${m.rejectNote}`:`${m.group||""} · ${m.patient||""}`,
+          type:"rejected",ref:m.id,go:"req:mine"});
+      }
+      if(cur)seen.reqStatus[m.id]=cur;
+    });
+    /* ২) নতুন matching জরুরি আবেদন (আমার জন্য) — শুধু Availability ON ডোনার */
+    if(d.is&&d.status==="approved"&&d.available!==false&&d.bloodGroup){
+      DB().incoming.forEach(r=>{
+        if(!r||!r.id)return;
+        if(mineIds.has(r.id))return;               /* নিজের আবেদন নিজেকে emergency notify নয় */
+        if(r.group!==d.bloodGroup)return;
+        if(seen.incoming[r.id])return;
+        seen.incoming[r.id]=1;
+        addNotif({id:"em-"+sanitizeKey(r.id),title:"জরুরি রক্তের প্রয়োজন",
+          body:`আপনার রক্তের গ্রুপ ${d.bloodGroup} এবং একটি জরুরি ${d.bloodGroup} রক্তের আবেদন পাওয়া গেছে। ${[r.hospital,r.area].filter(Boolean).join(" · ")}। বিস্তারিত দেখতে ক্লিক করুন।`,
+          type:"emergency",ref:r.id,go:"req:for"});
+      });
+    }
+    /* ৩) ডোনার আবেদন: pending → approved / rejected */
+    const ds=d.status||"";
+    if(seen.donorStatus==="pending"&&ds==="approved")
+      addNotif({id:"donor-appr",title:"রক্তদাতা আবেদন অনুমোদিত",
+        body:"আপনার ডোনার আবেদন অনুমোদিত হয়েছে। ডোনার ID: "+(d.donorId||""),type:"approval",ref:d.donorId,go:"req:become"});
+    else if(seen.donorStatus==="pending"&&(ds==="rejected"||(ds==="none"&&!d.is)))
+      addNotif({id:"donor-rej",title:"ডোনার আবেদন বাতিল",
+        body:"আপনার রক্তদাতা আবেদনটি বাতিল করা হয়েছে।",type:"rejected",go:"req:become"});
+    if(ds)seen.donorStatus=ds;
+    /* ৪) রক্তের গ্রুপ পরিবর্তন অনুমোদিত — donors record-এর bloodGroup বদলালে */
+    if(d.is&&d.status==="approved"&&seen.bloodGroup&&seen.bloodGroup!==d.bloodGroup&&d.bloodGroup)
+      addNotif({id:"grp-"+sanitizeKey(seen.bloodGroup+"-"+d.bloodGroup),title:"রক্তের গ্রুপ পরিবর্তন অনুমোদিত",
+        body:`${seen.bloodGroup} → ${d.bloodGroup}`,type:"approval",go:"set:donor"});
+    if(d.bloodGroup)seen.bloodGroup=d.bloodGroup;
+    /* ৫) রক্তদান যাচাই — donors record-এর last আমার যাচাইবিহীন রেকর্ডের সাথে মিললে */
+    if(d.lastDonation&&seen.lastDonation&&seen.lastDonation!==d.lastDonation){
+      const hit=RAW.donations.find(x=>x&&x.date===d.lastDonation);
+      if(hit&&!hit.ok)addNotif({id:"dn-"+sanitizeKey(d.lastDonation),title:"রক্তদান যাচাই সম্পন্ন",
+        body:`${dL(d.lastDonation)}${hit.place?" · "+hit.place:""}`,type:"approval",go:"set:adddonation"});
+    }
+    if(d.lastDonation)seen.lastDonation=d.lastDonation;
+    saveSeen(seen);
   }
   
   pullSharedPublic();
@@ -4183,7 +4278,7 @@ function initPage() {
   const dStatus=()=>STORE.donor.status;
   const restLeft=()=>STORE.donor.lastDonation?Math.max(0,90-dayDiff(STORE.donor.lastDonation)):0;
   const myReqs=()=>DB().incoming.filter(r=>r.group===STORE.donor.bloodGroup);
-  const unread=()=>DB().notifs.filter(n=>!n.read).length;
+  const unread=()=>unreadNotifs().length;   /* notification storage (আলাদা, RTDB-তে নয়) */
   const donorPill=()=>{
     if(!isDonor())return "";
     if(dStatus()==="pending")return `<span class="pill a">যাচাই চলছে</span>`;
@@ -5794,10 +5889,8 @@ function initPage() {
       RAW.mine.unshift(m);
       saveData();                            /* localStorage + users/{uid}/data + queue (shared/RTDB) */
       logAct("জরুরি রক্তের আবেদন",m.group+" · "+m.bags+" ব্যাগ","donor");
-      /* একই blood group-এর, Availability ON থাকা ডোনারদের জরুরি notification —
-         RTDB notifications/{uid} নোডে লেখা হয়, ডোনার প্যানেলে live দেখায় */
-      notifyMatchingDonors({id:m.id,group:m.group,hospital:m.hospital,area:m.address},
-        {exceptUid:STORE.account.uid||""});
+      /* matching ডোনারদের notification RTDB-তে লেখা হয় না — আবেদন approve হয়ে
+         live হলে প্রতিটি ডোনারের প্যানেল নিজে নিজে notification তৈরি করে */
       s.close();
       reqTab="mine";
       go("req");
@@ -5901,7 +5994,7 @@ function initPage() {
   /* ── আমার সব তথ্য নামান ── */
   function sheetExport(){
     const data={account:{...STORE.account},donor:{...STORE.donor},
-      donations:RAW.donations,mine:RAW.mine,notifs:RAW.notifs,activity:RAW.activity};
+      donations:RAW.donations,mine:RAW.mine,notifs:loadNotifs(),activity:RAW.activity};
     const s=sheet("আমার সব তথ্য নামান",`
       <div class="note i">${ICON.info(17)}<span>আপনার অ্যাকাউন্ট, ডোনার তথ্য, রক্তদান, আবেদন ও কার্যক্রম JSON/CSV ফাইলে নামাতে পারবেন।</span></div>
       <button class="opt on" data-k="json" style="width:100%;text-align:left"><i class="dot"></i>
@@ -5927,9 +6020,12 @@ function initPage() {
   }
 
   /* ---------- notifications panel ----------
-     RTDB `notifications/{uid}`-ই উৎস — live listener থেকে সাথে সাথে আসে,
-     কোনো hardcoded/demo notification নেই। ২৪ ঘণ্টা পর expiresAt পেরিয়ে গেলে
-     স্বয়ংক্রিয়ভাবে RTDB থেকেও মুছে যায়। */
+     Notification আলাদা website notification storage-এ থাকে (src/lib/notify.ts,
+     localStorage `cbdc.notifications.v1`) — RTDB-তে নয়। RTDB-র live পরিবর্তন
+     দেখে syncNotifsFromData() এখানে notification তৈরি করে, তাই real-time দেখা
+     যায়। ২৪ ঘণ্টা পর notification এই storage থেকেও স্বয়ংক্রিয়ভাবে মুছে যায়
+     (pruneExpired) — main RTDB data অক্ষত। cross-tab-এও live (BroadcastChannel)।
+     কোনো hardcoded/demo notification নেই। */
   let npOpen=false,npPanel=null,npOv=null;
   function notifMeta(n){
     const t=String(n.type||n.t||"info");
@@ -5938,15 +6034,12 @@ function initPage() {
     if(t==="approval")return {ic:ICON.checkC(18),bg:"var(--grn-s)",fg:"var(--grn)"};
     return {ic:ICON.bell(18),bg:"var(--blu-s)",fg:"var(--blu)"};
   }
-  /* একটি notification পড়া হলে RTDB-তেও লিখে দিই — সব ডিভাইসে একই অবস্থা */
+  /* notification পড়া হলে আলাদা storage-এ চিহ্নিত হয় + টার্গেট পেজে নিয়ে যায় */
   function markNotifRead(id){
-    const n=RAW.notifs.find(x=>x.id===id);if(!n)return;
-    if(!n.read){
-      n.read=true;
-      try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
-      const uid=STORE.account.uid||"";
-      if(uid)updateRow(NODES.notifications+"/"+uid,id,{read:true}).catch(e=>console.warn("notif read:",e&&e.message));
-    }
+    const list=loadNotifs();
+    const n=list.find(x=>x.id===id);
+    storeMarkRead(id);
+    if(!n)return;
     const [g,s]=String(n.go||"req:for").split(":");
     /* "req:..." — আবেদন স্ক্রিনের ট্যাব (for/mine/become), আলাদা sub-screen নয় */
     if(g==="req"){reqTab=(s==="become"||s==="mine")?s:"for";go("req");}
@@ -5954,7 +6047,7 @@ function initPage() {
   }
   function renderNotifPanel(){
     if(!npPanel)return;
-    const ns=DB().notifs;
+    const ns=loadNotifs();
     npPanel.querySelector("#nh").innerHTML=
       `<b style="flex:1;font-size:.95rem">বিজ্ঞপ্তি</b>
        ${ns.some(n=>!n.read)?`<button class="btn lnk" id="nall" style="font-size:.75rem">সব পড়া হয়েছে</button>`:""}
@@ -5969,11 +6062,7 @@ function initPage() {
         <p>নতুন কিছু এলে এখানে দেখা যাবে</p></div>`;
     npPanel.querySelector("#nx").onclick=closeNotifs;
     npPanel.querySelector("#nall")&&(npPanel.querySelector("#nall").onclick=()=>{
-      const uid=STORE.account.uid||"";
-      const paths={};
-      RAW.notifs.forEach(n=>{if(!n.read){n.read=true;if(uid&&n.id)paths[NODES.notifications+"/"+uid+"/"+n.id+"/read"]=true;}});
-      if(Object.keys(paths).length)updatePaths(paths).catch(e=>console.warn("notif all read:",e&&e.message));
-      try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
+      markAllNotifsRead();
       closeNotifs();toast("সব পড়া হিসেবে চিহ্নিত","ok");
     });
     npPanel.querySelectorAll("[data-n]").forEach(b=>b.onclick=()=>{markNotifRead(b.dataset.n);closeNotifs()});
@@ -5996,21 +6085,6 @@ function initPage() {
     if(npPanel)npPanel.remove();
     npOpen=false;npPanel=null;npOv=null;
     document.body.style.overflow="";paintTop();
-  }
-  /* ২৪ ঘণ্টা পেরিয়ে যাওয়া notification RTDB থেকেও মুছে ফেলা */
-  function applyNotifRows(rows){
-    const now=Date.now(),kept=[],expired=[];
-    (Array.isArray(rows)?rows:[]).forEach(r=>{
-      if(!r)return;
-      if(r.expiresAt&&new Date(r.expiresAt).getTime()<=now)expired.push(r);
-      else kept.push(r);
-    });
-    const uid=STORE.account.uid||"";
-    expired.forEach(r=>{ if(r.id&&uid)removeRow(NODES.notifications+"/"+uid,r.id).catch(()=>{}); });
-    RAW.notifs=kept;
-    try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
-    paintTop();
-    if(npOpen)renderNotifPanel();
   }
   /* ══════════ ACTIONS ══════════ */
   document.addEventListener("click",async e=>{
@@ -6943,10 +7017,11 @@ function initPage() {
       RTDB_PULLING=false;
       if(!document.querySelector(".sheet")&&!PUBLIC_MODE){ try{ paintTop(); go(CUR,SUB,false); }catch(e){} }
     });
-    /* notifications/{uid} live listener — Admin approve/reject বা জরুরি আবেদনের
-       notification পেজ refresh ছাড়াই সাথে সাথে প্যানেলে দেখা যায় */
-    watchList(NODES.notifications+"/"+uid, rows=>{
-      try{ applyNotifRows(rows); }catch(e){ console.warn("notif watch:", e && e.message); }
+    /* notification storage live update — আলাদা website storage (RTDB-তে নয়);
+       RTDB পরিবর্তন → syncNotifsFromData() → এখানে subscriber → সাথে সাথে UI */
+    notifSubscribe(()=>{
+      paintTop();
+      if(npOpen)renderNotifPanel();
     });
   }
 
@@ -7059,12 +7134,9 @@ function initPage() {
      বুটে খালি cache দেখে বারবার স্বাগতম ফর্ম দেখানো বন্ধ। */
   document.addEventListener("keydown",e=>{if(e.key==="Escape"){
     document.querySelector(".ov")?.click();}});
-  /* ২৪ ঘণ্টা পুরোনো notification স্বয়ংক্রিয় cleanup — RTDB থেকেও মুছে যায় */
-  setInterval(()=>{
-    const uid=STORE.account.uid||"";
-    if(!uid)return;
-    listOnce(NODES.notifications+"/"+uid).then(rows=>{ try{ applyNotifRows(rows); }catch(e){} }).catch(()=>{});
-  }, 30*60*1000);
+  /* ২৪ ঘণ্টা পুরোনো notification স্বয়ংক্রিয় cleanup — আলাদা website
+     notification storage থেকেই মুছে যায় (RTDB-তে কিছু লেখা হয় না) */
+  setInterval(()=>{ try{ pruneExpired(); }catch(e){} }, 30*60*1000);
   
 }
 

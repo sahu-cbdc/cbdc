@@ -123,7 +123,7 @@ metadata** সেভ হয়।
 | `users` | **auth uid** | uid, name, username, email, phone, **dob**, gender, area, photoURL, provider, role, status, createdAt, `data:{donations,mine,notifs,activity}` | owner + staff; `approved` donorStatus admin-only |
 | `admins` | **auth uid** | email, role (`admin`/`moderator`), permissions[], name, username, designation | own read; admin write |
 | `queue` | record id | kind (`donor`/`request`/`donation`), name, group, area, **dob**, phone, … | create খোলা (নতুন আবেদনের জন্য); পড়া/সম্পাদনা staff only |
-| `notifications` | **recipient auth uid** → notif id | toUid, title, body, type (`approval`/`rejected`/`emergency`), ref, go, read, createdAt, **expiresAt** (২৪ ঘণ্টা) | owner read/write; staff read/write; যে-কোনো authenticated user matching donor-কে লিখতে পারে (toUid যাচাইসহ) |
+| *(notification)* | — | Notification **RTDB-তে সংরক্ষিত হয় না** — আলাদা website notification storage (browser localStorage `cbdc.notifications.v1`) | — |
 | `gallery` | image id | title, caption, url (ImgBB link), imageUrl, thumbUrl, status, order | public read; staff write |
 | `notices` | notice id | title, body, audience, status, from, to | public read; staff write |
 | `accounts` | account id | panel/team account records | staff only |
@@ -234,12 +234,16 @@ firebase deploy --only hosting
 - `members` / `requests` / `queue` — নতুন রেকর্ড তৈরি খোলা (রেজিস্ট্রেশন ও ইমারজেন্সি
   আবেদন), কিন্তু পড়া/সম্পাদনা মালিক বা staff ছাড়া বন্ধ।
 - `users/{uid}` — owner read/write; staff full access; `role` ফিল্ড শুধু Admin বদলাতে পারে; `donorStatus:"approved"` শুধু Admin লিখতে পারে।
-- `notifications/{uid}` — **Notification System**: ডোনার আবেদন/রক্তদান/গ্রুপ/জরুরি আবেদনের
-  approve/reject-এ ব্যবহারকারীকে notification যায় (Admin/Moderator approve flow থেকে),
-  এবং জরুরি রক্তের আবেদন তৈরি হলে একই blood group-এর **Availability ON** ডোনারদের
-  matching notification যায়। প্রতিটি notification-এর `expiresAt` = তৈরির ২৪ ঘণ্টা পর;
-  ডোনার প্যানেল expired notification স্বয়ংক্রিয়ভাবে RTDB থেকেও মুছে ফেলে। কোনো
-  hardcoded/demo notification নেই — সবকিছু RTDB-তেই সংরক্ষিত।
+- **Notification System — RTDB-তে নয়:** Notification মূল Firebase Realtime Database-এ
+  সংরক্ষিত হয় না। এগুলো **আলাদা Website Notification Data/Storage**-এ থাকে
+  (browser localStorage, `cbdc.notifications.v1` — `src/lib/notify.ts`)। RTDB শুধু
+  source data দেয়: ডোনার প্যানেল RTDB-র live পরিবর্তন (আবেদন approved/rejected,
+  নতুন matching জরুরি আবেদন, ডোনার আবেদন/গ্রুপ/রক্তদান-যাচাই) দেখে notification
+  তৈরি করে — তাই real-time দেখা যায়, কিন্তু notification নিজে RTDB-তে লেখা হয় না।
+  প্রতিটি notification-এর `expiresAt` = তৈরির ২৪ ঘণ্টা পর; তখন এটি **এই আলাদা
+  storage থেকেও** স্বয়ংক্রিয়ভাবে মুছে যায় (pruneExpired)। ফলে notification
+  auto-clear করলে main RTDB-র Donor/আবেদন/অন্যান্য ডাটার কোনো প্রভাব পড়ে না।
+  কোনো hardcoded/demo notification নেই।
 - `admins/{uid}` — নিজের রেকর্ড পড়া যায়; লেখা শুধু Admin।
 - `accounts` — staff only।
 - `settings` — public read (ImgBB client key), staff write।

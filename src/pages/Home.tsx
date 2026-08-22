@@ -30,7 +30,6 @@ import {
 } from "../lib/authx";
 import { addRow, setRow, updateRow, findBy, getRow, nowIso } from "../lib/rtdb";
 import { NODES } from "../lib/firebase";
-import { notifyMatchingDonors } from "../lib/notify";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, clearFieldError } from "../lib/forms";
 import { ageFromDob, ageText, dobBounds, isValidDob, toBanglaDigits } from "../lib/age";
 import { logoUrl, applyLogo } from "../config/logo";
@@ -4242,12 +4241,8 @@ function initPage() {
               at:createdAt, expiresAt:expiresAtDate.toISOString(), ownerUid:memberUid||""
             });
           }
-          /* সরাসরি লাইভ হলে (auto-approve) সাথে সাথে matching ডোনারদের জরুরি
-             notification — একই blood group, Availability ON, non-suspended */
-          if(autoApproved){
-            notifyMatchingDonors({id:reqId, group:o.bloodGroup, hospital:o.hospitalName, area:o.hospitalAddress},
-              {exceptUid:memberUid||""});
-          }
+          /* Notification RTDB-তে লেখা হয় না — আবেদন live হলে প্রতিটি ডোনারের
+             প্যানেল নিজে নিজে matching notification তৈরি করে (আলাদা storage-এ) */
           form.reset();
           clearFormErrors(form);
           $("#requestAgree").checked = false;

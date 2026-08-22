@@ -1,12 +1,17 @@
 /**
- * Notification System + "আমার আবেদন" status checks:
- *  1. notify lib — sanitizeKey, 24h expiry, emergency matching predicate
- *     (blood group + Availability ON + non-suspended + approved + ownerUid),
- *  2. database.rules.json — notifications node present with owner/staff write,
- *     toUid-validated writes, 24h cleanup friendly (owner delete),
- *  3. Doner panel wiring — RTDB notifications watch, mark-read, 24h prune,
- *     rejected status in "আমার আবেদন", "আমার প্রোফাইল" button wiring,
- *  4. Admin/Moderator wiring — approve/reject notifications + matching donors.
+ * Notification System (আলাদা Website Notification Data/Storage) checks:
+ *  1. notify store — notification RTDB-তে যায় না; আলাদা localStorage
+ *     (`cbdc.notifications.v1`) storage-এ থাকে:
+ *       - add + dedupe by id
+ *       - mark read / all read
+ *       - real-time subscriber (local emit + cross-tab storage/broadcast)
+ *       - ২৪ ঘণ্টা expiry — pruneExpired() ওই storage থেকেও মুছে দেয়
+ *  2. matching predicate — blood group + Availability ON + non-suspended +
+ *     approved + ownerUid (pure)
+ *  3. main RTDB untouched — NODES-এ কোনো notifications নোড নেই,
+ *     database.rules.json-এও নেই; pages-এ কোনো RTDB notification লেখা নেই
+ *  4. Doner wiring — RTDB-র live পরিবর্তন থেকে notification generation
+ *     (আমার আবেদন status, matching জরুরি আবেদন, ডোনার আবেদন, গ্রুপ, রক্তদান)
  *
  * Run with: node scripts/verify-notify.mjs
  */
@@ -56,19 +61,58 @@ const server = await createServer({
   appType: "custom",
   logLevel: "silent",
 });
-const notify = await server.ssrLoadModule("/src/lib/notify.ts");
-
 let failed = false;
 const check = (name, cond, extra = "") => {
   console.log((cond ? "PASS" : "FAIL") + "  " + name + (cond ? "" : "   " + extra));
   if (!cond) failed = true;
 };
 
-/* ── 1. notify lib primitives ── */
-check("sanitizeKey strips unsafe chars", notify.sanitizeKey("REQ-abc 12/##") === "REQ-abc12", notify.sanitizeKey("REQ-abc 12/##"));
-check("sanitizeKey deterministic (dedupe)", notify.sanitizeKey("x") === notify.sanitizeKey("x"));
-const exp = Date.parse(notify.notifExpiry());
-check("notifExpiry is ~24h ahead", exp - Date.now() > 23 * 3600e3 && exp - Date.now() < 25 * 3600e3, String(exp - Date.now()));
+/* ── 0. ২৪ ঘণ্টা auto-clear (storage থেকেও মুছে যায়) — fresh module instance ── */
+const notifA = await server.ssrLoadModule("/src/lib/notify.ts?v=prune");
+localStorage.clear();
+localStorage.setItem("cbdc.notifications.v1", JSON.stringify([
+  { id: "old", title: "পুরোনো", body: "", type: "info", read: false,
+    createdAt: new Date(Date.now() - 25 * 3600e3).toISOString(),
+    expiresAt: new Date(Date.now() - 1 * 3600e3).toISOString() },
+  { id: "fresh", title: "নতুন", body: "", type: "info", read: false,
+    createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 23 * 3600e3).toISOString() },
+]));
+const removed = notifA.pruneExpired();
+check("pruneExpired removes the 24h-expired one", removed === 1, removed);
+const afterPrune = notifA.loadNotifs();
+check("expired notification removed from storage", afterPrune.length === 1 && afterPrune[0].id === "fresh", afterPrune.length);
+const rawPrune = JSON.parse(localStorage.getItem("cbdc.notifications.v1") || "[]");
+check("removed from the notification data itself", rawPrune.length === 1 && rawPrune[0].id === "fresh", rawPrune.length);
+localStorage.clear();
+
+/* ── 1. আলাদা storage basics ── */
+const notify = await server.ssrLoadModule("/src/lib/notify.ts");
+const n1 = notify.addNotif({ id: "em-abc", title: "জরুরি রক্তের প্রয়োজন", body: "O+ আবেদন", type: "emergency", go: "req:for" });
+check("addNotif creates notification", !!n1 && n1.id === "em-abc", n1 && n1.id);
+const list1 = notify.loadNotifs();
+check("notification stored in localStorage (separate)", list1.length === 1 && list1[0].title === "জরুরি রক্তের প্রয়োজন", list1.length);
+const raw = localStorage.getItem("cbdc.notifications.v1");
+check("storage key cbdc.notifications.v1 used", !!raw && raw.includes("em-abc"), raw ? raw.slice(0, 40) : "none");
+
+/* dedupe */
+notify.addNotif({ id: "em-abc", title: "জরুরি রক্তের প্রয়োজন", body: "duplicate", type: "emergency" });
+check("duplicate id overwritten (dedupe)", notify.loadNotifs().length === 1, notify.loadNotifs().length);
+
+/* mark read */
+notify.markNotifRead("em-abc");
+check("markNotifRead persists to storage", notify.loadNotifs()[0].read === true);
+notify.markAllNotifsRead();
+check("markAllNotifsRead works", notify.loadNotifs().every((x) => x.read));
+
+/* real-time subscriber */
+let seen = -1;
+const unsub = notify.subscribe((list) => { seen = list.length; });
+notify.addNotif({ id: "n2", title: "বিজ্ঞপ্তি ২", body: "", type: "info" });
+check("subscriber fires in real-time", seen === 2, seen);
+unsub();
+notify.addNotif({ id: "n3", title: "বিজ্ঞপ্তি ৩", body: "", type: "info" });
+check("unsubscribe stops delivery", seen === 2, seen);
 
 /* ── 2. matching predicate ── */
 const ok = { ownerUid: "u1", bloodGroup: "O+", available: true, status: "approved" };
@@ -78,38 +122,38 @@ check("match: availability OFF skipped", notify.donorMatchesRequest({ ...ok, ava
 check("match: suspended skipped", notify.donorMatchesRequest({ ...ok, suspended: true }, "O+") === false);
 check("match: pending status skipped", notify.donorMatchesRequest({ ...ok, status: "pending" }, "O+") === false);
 check("match: no ownerUid skipped", notify.donorMatchesRequest({ ...ok, ownerUid: "" }, "O+") === false);
-check("match: group fallback field (group)", notify.donorMatchesRequest({ ownerUid: "u2", group: "B+", available: true }, "B+") === true);
+check("match: group fallback field", notify.donorMatchesRequest({ ownerUid: "u2", group: "B+", available: true }, "B+") === true);
 check("match: exceptUid skipped", notify.donorMatchesRequest({ ...ok, ownerUid: "me" }, "O+", { exceptUid: "me" }) === false);
 
-/* ── 3. rules ── */
+/* ── 4. main RTDB untouched ── */
+const firebase = readFileSync(path.join(ROOT, "src/lib/firebase.ts"), "utf8");
+check("NODES has no notifications node", !firebase.includes('notifications: "notifications"'), "");
 const rules = JSON.parse(readFileSync(path.join(ROOT, "database.rules.json"), "utf8"));
-const n = rules.rules.notifications;
-const nid = n && n["$uid"] && n["$uid"]["$nid"];
-check("rules: notifications node exists", !!n && !!n["$uid"], "");
-check("rules: owner can read own notifs", String(n["$uid"][".read"] || "").includes("$uid === auth.uid"), "");
-check("rules: owner can write own notifs", String(nid[".write"] || "").includes("$uid === auth.uid"), "");
-check("rules: matching-donor write allowed (toUid)", String(nid[".write"] || "").includes("newData.child('toUid').val() === $uid"), "");
-check("rules: validate enforces toUid + fields", String(nid[".validate"] || "").includes("toUid") && String(nid[".validate"] || "").includes("expiresAt"), "");
-check("rules: delete exempt from validate (24h cleanup)", String(nid[".validate"] || "").includes("!newData.exists()"), "");
+check("rules have no notifications node", !rules.rules.notifications, "");
+const notifySrc = readFileSync(path.join(ROOT, "src/lib/notify.ts"), "utf8");
+check("notify.ts has no Firebase import", !notifySrc.includes("firebase"), "");
 
-/* ── 4. Doner wiring (source-level) ── */
+/* ── 5. Doner wiring (generation from RTDB changes, storage separate) ── */
 const doner = readFileSync(path.join(ROOT, "src/pages/Doner.tsx"), "utf8");
-check("Doner: RTDB notifications watch", doner.includes('watchList(NODES.notifications+"/"+uid'), "");
-check("Doner: 24h prune (applyNotifRows)", doner.includes("function applyNotifRows"), "");
-check("Doner: mark-read writes back to RTDB", doner.includes('updateRow(NODES.notifications+"/"+uid,id,{read:true})'), "");
-check("Doner: rejected status shown", doner.includes('rejected:["r","বাতিল"]'), "");
-check("Doner: mine synced by ownerUid", doner.includes('String(r.ownerUid||"")!==String(uid)'), "");
-check("Doner: matching-donor notify on new request", doner.includes("notifyMatchingDonors({id:m.id"), "");
-check("Doner: আমার প্রোফাইল button wired", doner.includes('const h=$("#hprof");') && doner.includes('h.onclick=()=>openProfile("me")'), "");
+check("Doner: syncNotifsFromData exists", doner.includes("function syncNotifsFromData"), "");
+check("Doner: no RTDB notification writes", !doner.includes('NODES.notifications'), "");
+check("Doner: subscribe to notification store", doner.includes('notifSubscribe(()=>{'), "");
+check("Doner: pruneExpired periodic cleanup", doner.includes("pruneExpired()"), "");
+check("Doner: emergency matching generation", doner.includes('title:"জরুরি রক্তের প্রয়োজন"'), "");
+check("Doner: approval generation (আমার আবেদন)", doner.includes('title:"জরুরি রক্তের আবেদন অনুমোদিত"'), "");
+check("Doner: rejection generation + reason", doner.includes('title:"জরুরি রক্তের আবেদন বাতিল"') && doner.includes("m.rejectNote"), "");
+check("Doner: donor application approved/rejected", doner.includes('"donor-appr"') && doner.includes('"donor-rej"'), "");
+check("Doner: group change approved", doner.includes('title:"রক্তের গ্রুপ পরিবর্তন অনুমোদিত"'), "");
+check("Doner: donation verified", doner.includes('title:"রক্তদান যাচাই সম্পন্ন"'), "");
+check("Doner: self emergency skipped (mineIds)", doner.includes("mineIds.has(r.id)"), "");
 
-/* ── 5. Admin / Moderator wiring ── */
-for (const f of ["Admin", "Moderator"]) {
+/* Admin/Moderator/Home — no RTDB notification writes */
+for (const f of ["Admin", "Moderator", "Home"]) {
   const src = readFileSync(path.join(ROOT, `src/pages/${f}.tsx`), "utf8");
-  check(`${f}: approval notification (donor)`, src.includes('notifyApproval(q.ownerUid,"রক্তদাতা আবেদন অনুমোদিত"'), "");
-  check(`${f}: rejection notification`, src.includes("notifyRejection(owner"), "");
-  check(`${f}: matching-donor notify on request approve`, src.includes("notifyMatchingDonors({id:q.id"), "");
-  check(`${f}: rejected status persisted to user's mine`, src.includes("markRequestRejected"), "");
+  check(`${f}: no RTDB notification writes`, !src.includes("notifyApproval") && !src.includes("notifyRejection") && !src.includes("notifyMatchingDonors"), "");
 }
+const admin = readFileSync(path.join(ROOT, "src/pages/Admin.tsx"), "utf8");
+check("Admin: rejected status still persisted (main data)", admin.includes("markRequestRejected"), "");
 
 console.log(failed ? "\nSOME CHECKS FAILED" : "\nALL CHECKS PASSED");
 process.exit(failed ? 1 : 0);

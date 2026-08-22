@@ -98,17 +98,6 @@
     "settings": {
       ".read": true,
       ".write": "auth != null && root.child('admins').child(auth.uid).exists()"
-    },
-
-    "notifications": {
-      "$uid": {
-        ".read": "auth != null && ($uid === auth.uid || root.child('admins').child(auth.uid).exists())",
-        ".indexOn": ["createdAt", "type", "read"],
-        "$nid": {
-          ".write": "auth != null && (root.child('admins').child(auth.uid).exists() || $uid === auth.uid || newData.child('toUid').val() === $uid)",
-          ".validate": "!newData.exists() || (newData.hasChildren(['toUid','title','body','type','createdAt','expiresAt','read']) && newData.child('toUid').val() === $uid && newData.child('read').isBoolean() && newData.child('title').isString() && newData.child('body').isString() && newData.child('type').isString() && newData.child('createdAt').isString() && newData.child('expiresAt').isString())"
-        }
-      }
     }
   }
 }
