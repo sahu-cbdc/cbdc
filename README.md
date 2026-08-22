@@ -36,12 +36,19 @@ Build করলে **একটি `index.html` + assets** তৈরি হয়
 
 Cloudflare Workers-এ deploy-এর জন্য `wrangler.jsonc`-এ SPA fallback
 (`not_found_handling: single-page-application`) সেট করা আছে, আর Firebase
-Hosting-এর জন্য `firebase.json`-এ rewrite (`** → /index.html`) আছে। Cloudflare
-Pages/Netlify-এর জন্য build-এ `dist/_redirects` যোগ হয় (`/* → /index.html 200`) —
-তাই `/doner`, `/admin`, `/doner/find`, `/profile/...` যেকোনো nested clean path
+Hosting-এর জন্য `firebase.json`-এ rewrite (`** → /index.html`) আছে — তাই
+`/doner`, `/admin`, `/doner/find`, `/profile/...` যেকোনো nested clean path
 সরাসরি খুললেও (যেমন **Refresh করলে**) `index.html`-ই পরিবেশিত হয় এবং 404/blank
-পেজ আসে না (পুরোনো ভাগ করা লিংকও ভাঙে না)। Nginx/Apache-এ হোস্ট করলে একই ধরনের
-fallback (যেকোনো path → index.html) কনফিগার করতে হবে।
+পেজ আসে না (পুরোনো ভাগ করা লিংকও ভাঙে না)।
+
+> ⚠️ **`_redirects` ফাইল এখানে নেই** — Cloudflare Workers-এর static-asset engine
+> `/* → /index.html 200`-টাইপ `_redirects` rule-কে infinite-loop হিসেবে নাকচ করে
+> দেয় (`Invalid _redirects configuration: Infinite loop detected`)। Workers-এ
+> SPA fallback **শুধু `wrangler.jsonc`-এর `not_found_handling` দিয়েই** কাজ করে,
+> তাই `_redirects` যোগ করা উচিত নয়। শুধুমাত্র যদি Cloudflare **Pages** বা
+> **Netlify**-এ হোস্ট করা হয়, সেক্ষেত্রে ওই প্ল্যাটফর্মে আলাদাভাবে
+> `/* /index.html 200` রুল যোগ করতে হবে। Nginx/Apache-এ হোস্ট করলে একই ধরনের
+> fallback (যেকোনো path → index.html) কনফিগার করতে হবে।
 
 ```bash
 npm run build      # dist/ ফোল্ডার তৈরি
