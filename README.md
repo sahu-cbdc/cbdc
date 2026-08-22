@@ -36,9 +36,11 @@ Build করলে **একটি `index.html` + assets** তৈরি হয়
 
 Cloudflare Workers-এ deploy-এর জন্য `wrangler.jsonc`-এ SPA fallback
 (`not_found_handling: single-page-application`) সেট করা আছে, আর Firebase
-Hosting-এর জন্য `firebase.json`-এ rewrite (`** → /index.html`) আছে — তাই
-`/doner`, `/admin`, `/profile/...` যেকোনো clean path সরাসরি খুললেও `index.html`-ই
-পরিবেশিত হয় (পুরোনো ভাগ করা লিংকও ভাঙে না)। Nginx/Apache-এ হোস্ট করলে একই ধরনের
+Hosting-এর জন্য `firebase.json`-এ rewrite (`** → /index.html`) আছে। Cloudflare
+Pages/Netlify-এর জন্য build-এ `dist/_redirects` যোগ হয় (`/* → /index.html 200`) —
+তাই `/doner`, `/admin`, `/doner/find`, `/profile/...` যেকোনো nested clean path
+সরাসরি খুললেও (যেমন **Refresh করলে**) `index.html`-ই পরিবেশিত হয় এবং 404/blank
+পেজ আসে না (পুরোনো ভাগ করা লিংকও ভাঙে না)। Nginx/Apache-এ হোস্ট করলে একই ধরনের
 fallback (যেকোনো path → index.html) কনফিগার করতে হবে।
 
 ```bash

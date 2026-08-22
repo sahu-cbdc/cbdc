@@ -1,0 +1,11 @@
+# SPA fallback — Cloudflare Pages / Netlify
+# -------------------------------------------
+# Build-এ এটি `dist/_redirects` হিসেবে copy হয়। যেকোনো unmatched path-এ
+# (যেমন /doner, /admin/settings, /doner/find) সরাসরি `index.html`-ই serve
+# হয় — তাই nested page-এ Refresh করলেও 404/blank আসে না এবং একই page
+# আবার load হয়।
+#
+# (Cloudflare Workers-এর static assets-এ `wrangler.jsonc`-এর
+#  `not_found_handling: "single-page-application"` একই কাজ করে।)
+#
+/*    /index.html   200
