@@ -1575,10 +1575,75 @@ function StaticShell() {
                       {"থানা / এলাকা"}
                     </label>
                     <select id="searchArea">
-                      <option value="">{"সকল থানা"}</option>
-                      {SITE.homeAreas.map((area) => (
-                        <option key={area}>{area}</option>
-                      ))}
+                      <option value="">
+                        {"সকল থানা"}
+                      </option>
+                      <option>
+                        {"কোতোয়ালি"}
+                      </option>
+                      <option>
+                        {"চকবাজার"}
+                      </option>
+                      <option>
+                        {"পাঁচলাইশ"}
+                      </option>
+                      <option>
+                        {"খুলশী"}
+                      </option>
+                      <option>
+                        {"বায়েজিদ বোস্তামী"}
+                      </option>
+                      <option>
+                        {"পাহাড়তলী"}
+                      </option>
+                      <option>
+                        {"আকবরশাহ"}
+                      </option>
+                      <option>
+                        {"হালিশহর"}
+                      </option>
+                      <option>
+                        {"ডবলমুরিং"}
+                      </option>
+                      <option>
+                        {"পতেঙ্গা"}
+                      </option>
+                      <option>
+                        {"ইপিজেড"}
+                      </option>
+                      <option>
+                        {"বন্দর"}
+                      </option>
+                      <option>
+                        {"কর্ণফুলী"}
+                      </option>
+                      <option>
+                        {"বাকলিয়া"}
+                      </option>
+                      <option>
+                        {"সদরঘাট"}
+                      </option>
+                      <option>
+                        {"চান্দগাঁও"}
+                      </option>
+                      <option>
+                        {"বান্দরবান সদর"}
+                      </option>
+                      <option>
+                        {"চন্দনাইশ"}
+                      </option>
+                      <option>
+                        {"পটিয়া"}
+                      </option>
+                      <option>
+                        {"কেরানী হাট"}
+                      </option>
+                      <option>
+                        {"লোহাগাড়া"}
+                      </option>
+                      <option>
+                        {"বাজালিয়া"}
+                      </option>
                     </select>
                   </div>
                   <button className="btn btn-green" type="button" id="searchRefresh" title="তালিকা রিফ্রেশ করুন">
@@ -1931,10 +1996,75 @@ function StaticShell() {
                         {"থানা / এলাকা"}
                       </label>
                       <select id="donorArea" name="area" required={true}>
-                        <option value="">{"থানা / এলাকা নির্বাচন করুন"}</option>
-                        {SITE.homeAreas.map((area) => (
-                          <option key={area}>{area}</option>
-                        ))}
+                        <option value="">
+                          {"থানা / এলাকা নির্বাচন করুন"}
+                        </option>
+                        <option>
+                          {"কোতোয়ালি"}
+                        </option>
+                        <option>
+                          {"চকবাজার"}
+                        </option>
+                        <option>
+                          {"পাঁচলাইশ"}
+                        </option>
+                        <option>
+                          {"খুলশী"}
+                        </option>
+                        <option>
+                          {"বায়েজিদ বোস্তামী"}
+                        </option>
+                        <option>
+                          {"পাহাড়তলী"}
+                        </option>
+                        <option>
+                          {"আকবরশাহ"}
+                        </option>
+                        <option>
+                          {"হালিশহর"}
+                        </option>
+                        <option>
+                          {"ডবলমুরিং"}
+                        </option>
+                        <option>
+                          {"পতেঙ্গা"}
+                        </option>
+                        <option>
+                          {"ইপিজেড"}
+                        </option>
+                        <option>
+                          {"বন্দর"}
+                        </option>
+                        <option>
+                          {"কর্ণফুলী"}
+                        </option>
+                        <option>
+                          {"বাকলিয়া"}
+                        </option>
+                        <option>
+                          {"সদরঘাট"}
+                        </option>
+                        <option>
+                          {"চান্দগাঁও"}
+                        </option>
+                        <option>
+                          {"বান্দরবান সদর"}
+                        </option>
+                        <option>
+                          {"চন্দনাইশ"}
+                        </option>
+                        <option>
+                          {"পটিয়া"}
+                        </option>
+                        <option>
+                          {"কেরানী হাট"}
+                        </option>
+                        <option>
+                          {"লোহাগাড়া"}
+                        </option>
+                        <option>
+                          {"বাজালিয়া"}
+                        </option>
                       </select>
                     </div>
                     <div className="field full">
@@ -2884,10 +3014,75 @@ function StaticShell() {
                         {"এলাকা"}
                       </label>
                       <select id="suArea" name="area" required={true}>
-                        <option value="">{"থানা / এলাকা নির্বাচন করুন"}</option>
-                        {SITE.homeAreas.map((area) => (
-                          <option key={area}>{area}</option>
-                        ))}
+                        <option value="">
+                          {"থানা / এলাকা নির্বাচন করুন"}
+                        </option>
+                        <option>
+                          {"কোতোয়ালি"}
+                        </option>
+                        <option>
+                          {"চকবাজার"}
+                        </option>
+                        <option>
+                          {"পাঁচলাইশ"}
+                        </option>
+                        <option>
+                          {"খুলশী"}
+                        </option>
+                        <option>
+                          {"বায়েজিদ বোস্তামী"}
+                        </option>
+                        <option>
+                          {"পাহাড়তলী"}
+                        </option>
+                        <option>
+                          {"আকবরশাহ"}
+                        </option>
+                        <option>
+                          {"হালিশহর"}
+                        </option>
+                        <option>
+                          {"ডবলমুরিং"}
+                        </option>
+                        <option>
+                          {"পতেঙ্গা"}
+                        </option>
+                        <option>
+                          {"ইপিজেড"}
+                        </option>
+                        <option>
+                          {"বন্দর"}
+                        </option>
+                        <option>
+                          {"কর্ণফুলী"}
+                        </option>
+                        <option>
+                          {"বাকলিয়া"}
+                        </option>
+                        <option>
+                          {"সদরঘাট"}
+                        </option>
+                        <option>
+                          {"চান্দগাঁও"}
+                        </option>
+                        <option>
+                          {"বান্দরবান সদর"}
+                        </option>
+                        <option>
+                          {"চন্দনাইশ"}
+                        </option>
+                        <option>
+                          {"পটিয়া"}
+                        </option>
+                        <option>
+                          {"কেরানী হাট"}
+                        </option>
+                        <option>
+                          {"লোহাগাড়া"}
+                        </option>
+                        <option>
+                          {"বাজালিয়া"}
+                        </option>
                       </select>
                     </div>
                     {" "}
