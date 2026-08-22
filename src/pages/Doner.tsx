@@ -4083,7 +4083,7 @@ function initPage() {
     if(mine){
       const wasDonor = STORE.donor.is;
       STORE.donor.is=true;
-      STORE.donor.status="approved";STORE.donor.donorId=mine.id;STORE.donor.bloodGroup=mine.bloodGroup;
+      STORE.donor.status="approved";STORE.donor.donorId=mine.id;STORE.donor.bloodGroup=mine.bloodGroup || STORE.donor.bloodGroup;
       STORE.donor.lastDonation=mine.lastDonationDate||"";
       /* admin-পরিবর্তিত প্রাপ্যতা/WhatsApp পাবলিক রেকর্ড থেকেই সাথে সাথে সিঙ্ক —
          নইলে ডোনারের পরবর্তী save() পুরোনো মান দিয়ে আবার admin-এর পরিবর্তন মুছে দেবে */
@@ -6823,7 +6823,7 @@ function initPage() {
       }
       const id=(donor&&donor.id)||d.donorId;
       if(!id)return;
-      await updatePaths({[NODES.donors+"/"+id]: donorPublicPatch(STORE.account,STORE.donor)});
+      await updateRow(NODES.donors, id, donorPublicPatch(STORE.account,STORE.donor));
     }catch(e){ console.warn("donor public push:", e && e.message); }
   }
   /* ডোনারের নিজস্ব রেকর্ড (রক্তদান, নিজের আবেদন, বিজ্ঞপ্তি, কার্যক্রম) RTDB-তে —
