@@ -31,7 +31,8 @@ import {
 import { addRow, setRow, updateRow, findBy, getRow, nowIso } from "../lib/rtdb";
 import { NODES } from "../lib/firebase";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, clearFieldError } from "../lib/forms";
-import { ageFromDob, ageText, dobBounds, isValidDob, toBanglaDigits } from "../lib/age";
+import { ageFromDob, ageText, resolveAge, dobBounds, isValidDob, toBanglaDigits } from "../lib/age";
+import { downloadDonorCardPng, donorCardStatus } from "../lib/donorCard";
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 
@@ -299,61 +300,62 @@ const pageCss = `    @font-face {
   }
 }
 
-/* ───────── রক্তদাতা প্রোফাইল পেজ (app.html-এর ডিজাইন) ───────── */
+/* ───────── রক্তদাতা প্রোফাইল — Doner Panel-এর সাথে ১০০% একই (scoped #profileBody) ───────── */
 .prof-back{display:inline-flex;align-items:center;gap:6px;margin-bottom:14px;color:var(--muted);font-size:.86rem;font-weight:700;text-decoration:none}
 .prof-back:hover{color:var(--green)}
-.pcard{position:relative;padding:20px 18px 16px;border:1px solid var(--line);border-radius:16px;background:#fff;box-shadow:0 10px 30px rgba(16,43,42,.06)}
-.phead2{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
-.pav{width:78px;height:78px;border-radius:50%;object-fit:cover;background:#eef4f1;border:3px solid #fff;box-shadow:0 4px 14px rgba(16,43,42,.13)}
-.pgrp{display:grid;place-items:center;min-width:52px;height:44px;padding:0 12px;border-radius:12px;color:var(--red);background:#fdecee;font-size:1.05rem;font-weight:900}
-.pnm{margin-top:13px}
-.pnm b{display:inline-flex;align-items:center;gap:6px;color:var(--navy);font-size:1.24rem;font-weight:900;line-height:1.3}
-.pvf{display:inline-grid;place-items:center;width:17px;height:17px;border-radius:50%;color:#fff;background:var(--green);font-size:.62rem;font-weight:900}
-.pnm small{display:block;margin-top:3px;color:var(--muted);font-size:.82rem;letter-spacing:.02em}
-.pchips{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
-.pchip{display:inline-flex;align-items:center;gap:5px;padding:6px 11px;border:1px solid var(--line);border-radius:99px;color:#4a5a55;background:#fbfdfc;font-size:.76rem;font-weight:700;white-space:nowrap}
-.pchip.ok{color:#0d7448;border-color:#bfe6d1;background:#eaf8f0}
-.pchip.rest{color:#a65a10;border-color:#f3ddb9;background:#fff6e8}
-.pacts{display:flex;gap:9px;margin-top:15px}
-.pbtn{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;min-height:44px;padding:0 12px;border:0;border-radius:11px;font-family:inherit;font-size:.88rem;font-weight:800;text-decoration:none;cursor:pointer;transition:filter .15s,transform .15s}
-.pbtn.solid{color:#fff;background:linear-gradient(135deg,#0c9c69,#07855a)}
-.pbtn.solid:hover{filter:brightness(1.06);transform:translateY(-1px)}
-.pbtn.ghost{color:#42534f;background:#fff;border:1px solid var(--line)}
-.pbtn.ghost:hover{background:#f4f9f6;border-color:#bfe0cd}
-.pbtn.off{color:#93a29d;background:#f6f8f7;border:1px solid var(--line);cursor:not-allowed}
-.pstats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
-.pstat{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:14px 8px;border:1px solid var(--line);border-radius:14px;background:#fff;text-align:center}
-.pstat b{color:var(--green);font-size:1.3rem;font-weight:900;line-height:1.2}
-.pstat b.sm{font-size:.94rem}
-.pstat span{color:var(--muted);font-size:.68rem;font-weight:700;line-height:1.35}
-.psec{margin:20px 0 9px;color:var(--muted);font-size:.76rem;font-weight:900;letter-spacing:.05em;text-transform:uppercase}
-.prows{border:1px solid var(--line);border-radius:14px;background:#fff;overflow:hidden}
-.prow{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 16px;border-bottom:1px solid var(--line);font-size:.88rem}
-.prow:last-child{border-bottom:0}
-.prow b{color:var(--navy);font-weight:800}
-.prow span{color:#42534f;font-weight:700;text-align:right;word-break:break-word}
-.prow span.dim{color:#a3afab;font-weight:600}
-.pcardbox{padding:16px;border:1px solid var(--line);border-radius:14px;background:#fff}
-.pcardbox p{margin:0 0 12px;color:var(--muted);font-size:.83rem;line-height:1.6}
-.pdl{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:46px;border:0;border-radius:11px;color:#fff;background:linear-gradient(135deg,#0c9c69,#07855a);font-family:inherit;font-size:.92rem;font-weight:800;cursor:pointer;transition:filter .15s,transform .15s}
-.pdl:hover{filter:brightness(1.06);transform:translateY(-1px)}
-.pdl:disabled{opacity:.6;cursor:progress;transform:none}
-.pnote{margin:14px 0 0;color:var(--muted);font-size:.76rem;text-align:center}
-.pmiss{padding:40px 22px;border:1px dashed #cbdad5;border-radius:16px;background:#fcfefd;text-align:center}
-.pmiss-ic{display:grid;place-items:center;width:54px;height:54px;margin:0 auto 12px;border-radius:50%;background:var(--red-soft);font-size:1.4rem}
-.pmiss b{display:block;color:var(--navy);font-size:1.05rem}
-.pmiss p{margin:6px 0 16px;color:var(--muted);font-size:.86rem}
+#profileBody .pcard{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 8px 22px rgba(15,52,43,.08);overflow:hidden;margin-bottom:12px}
+#profileBody .phead2{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 14px 0}
+#profileBody .pav{width:78px;height:78px;border-radius:50%;object-fit:cover;flex:none;border:3px solid #fff;background:#f1f5f4;box-shadow:0 8px 22px rgba(15,52,43,.08)}
+#profileBody .pnm{padding:9px 14px 0;min-width:0}
+#profileBody .pnm b{display:flex;align-items:center;gap:5px;font-size:1.05rem;font-weight:800;line-height:1.35;word-break:break-word;color:var(--ink)}
+#profileBody .pnm small{display:block;color:var(--muted);font-size:.74rem;margin-top:2px}
+#profileBody .pvf{color:var(--green);display:inline-flex;flex:none}
+#profileBody .pgrp{background:var(--red-soft);color:var(--red);font-weight:800;font-size:1.05rem;padding:7px 13px;border-radius:11px;flex:none}
+#profileBody .pbio{margin:9px 14px 0;font-size:.85rem;color:#42534f;line-height:1.6}
+#profileBody .pchips{display:flex;flex-wrap:wrap;gap:6px;padding:11px 14px 0}
+#profileBody .pchip{display:inline-flex;align-items:center;gap:4px;background:#f1f5f4;border:1px solid var(--line);color:#42534f;font-size:.75rem;font-weight:700;padding:5px 10px;border-radius:99px}
+#profileBody .pchip.ok{background:var(--green-soft);border-color:transparent;color:var(--green)}
+#profileBody .pchip.rest{background:#fff6e8;border-color:transparent;color:#a65a10}
+#profileBody .pchip.m{background:#f1f5f4;border-color:transparent;color:var(--muted)}
+#profileBody .pacts{display:flex;gap:8px;padding:13px 14px 14px}
+#profileBody .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:44px;padding:10px 18px;border-radius:11px;background:var(--green);color:#fff;font-size:.85rem;font-weight:800;transition:.14s;border:1px solid transparent;text-decoration:none}
+#profileBody .btn:hover{background:var(--green-dark)}
+#profileBody .btn:active{transform:scale(.985)}
+#profileBody .btn.sm{min-height:40px;padding:7px 13px;font-size:.77rem;border-radius:9px}
+#profileBody .btn.gh{background:#fff;border-color:var(--line);color:var(--ink)}
+#profileBody .btn.gh:hover{background:#f1f5f4}
+#profileBody .btn.w{width:100%}
+#profileBody .btn.gh.off{color:var(--muted);border-style:dashed}
+#profileBody .btn.gh.off svg{color:var(--muted)}
+#profileBody .btn.gh.off:hover{background:#f1f5f4;border-color:var(--line)}
+#profileBody .pstats{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:2px}
+#profileBody .pstat{background:#fff;border:1px solid var(--line);border-radius:11px;padding:12px 8px;text-align:center;box-shadow:0 8px 22px rgba(15,52,43,.08)}
+#profileBody .pstat b{display:block;font-size:1.15rem;font-weight:800;color:var(--green);line-height:1.25}
+#profileBody .pstat b.sm{font-size:.88rem;line-height:1.45}
+#profileBody .pstat span{display:block;font-size:.7rem;color:var(--muted);margin-top:3px;line-height:1.35}
+#profileBody .sec-t{margin:20px 0 8px;padding:0 2px;font-size:.72rem;font-weight:800;color:var(--muted);letter-spacing:.4px}
+#profileBody .card{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 8px 22px rgba(15,52,43,.08);padding:15px;margin-bottom:12px}
+#profileBody .card.pad0{padding:0;overflow:hidden}
+#profileBody .row{display:flex;align-items:center;gap:11px;width:100%;padding:13px 15px;text-align:left;border-bottom:1px solid var(--line);transition:background .12s}
+#profileBody .row:last-child{border-bottom:0}
+#profileBody .row .tx{flex:1;min-width:0}
+#profileBody .row .tx b{display:block;font-size:.86rem;font-weight:700}
+#profileBody .row .rt{color:var(--muted);font-size:.79rem;display:flex;align-items:center;gap:6px;flex:none}
+#profileBody .mut{color:var(--muted);font-size:.78rem;margin:0}
+#profileBody .empty{padding:44px 20px;text-align:center;color:var(--muted);border:none;background:transparent;display:block;grid-column:auto}
+#profileBody .empty .ic{width:56px;height:56px;margin:0 auto 12px;border-radius:50%;background:#f1f5f4;display:grid;place-items:center;color:var(--muted)}
+#profileBody .empty b{display:block;font-size:.92rem;margin-bottom:4px;color:var(--ink)}
+#profileBody .empty p{margin:0 0 15px;font-size:.79rem;color:var(--muted)}
 @media(max-width:520px){
-  .pcard{padding:17px 15px 14px}
-  .pnm b{font-size:1.12rem}
-  .pstats{gap:7px}
-  .pstat{padding:12px 5px}
-  .pstat b{font-size:1.15rem}
-  .pstat b.sm{font-size:.8rem}
-  .pstat span{font-size:.63rem}
-  .pacts{gap:7px}
-  .pbtn{min-height:42px;padding:0 8px;font-size:.8rem}
-  .prow{padding:13px 14px;font-size:.85rem}
+  #profileBody .pcard{padding:17px 15px 14px}
+  #profileBody .pnm b{font-size:1.12rem}
+  #profileBody .pstats{gap:7px}
+  #profileBody .pstat{padding:12px 5px}
+  #profileBody .pstat b{font-size:1rem}
+  #profileBody .pstat b.sm{font-size:.8rem}
+  #profileBody .pstat span{font-size:.63rem}
+  #profileBody .pacts{gap:7px}
+  #profileBody .pgrp{font-size:.95rem;padding:6px 10px}
 }
 .empty{grid-column:1/-1;padding:32px 18px;border:1px dashed #cbdad5;border-radius:15px;text-align:center;color:var(--muted);background:#fcfefd}.empty-icon{display:grid;place-items:center;width:48px;height:48px;margin:0 auto 8px;border-radius:50%;background:var(--red-soft);font-size:1.3rem}
     /* Emergency board */
@@ -3408,8 +3410,6 @@ function initPage() {
       const donorPhoto = d => String((d && (d.photo || d.photoURL)) || "").trim();
       const donorAvatar = d => donorPhoto(d) || avatarData(d && d.gender);
       const donorAvatarFallback = d => avatarData(d && d.gender);
-      /* ImgBB-র cross-origin ছবি canvas-এ আঁকতে CORS লাগে; ব্যর্থ হলে null। */
-      const loadImgCors = src => new Promise((res, rej) => { const im=new Image(); im.crossOrigin="anonymous"; im.onload=()=>res(im); im.onerror=()=>rej(new Error("cors")); im.src=src; });
       function showAppLoading(){ $("#appMessage").classList.add("hidden"); $("#appLoading").classList.remove("hidden"); $("#appModal").classList.remove("hidden"); document.body.classList.add("lock"); }
       function showAppMessage(msg, err=false, title=null){ $("#appLoading").classList.add("hidden"); $("#appMessage").classList.remove("hidden"); $("#appMsgIcon").className="app-icon "+(err?"err":"ok"); $("#appMsgIcon").textContent=err?"!":"✓"; $("#appMsgTitle").textContent=title || (err?"তথ্য অসম্পূর্ণ":"সফল"); $("#appMsgText").textContent=msg; $("#appModal").classList.remove("hidden"); document.body.classList.add("lock"); }
       $("#appModalClose")?.addEventListener("click", hideAppModal);
@@ -3932,66 +3932,20 @@ function initPage() {
          is absent from the object, so it cannot reach the DOM or the source. */
       $("#dcardClose").addEventListener("click",closeDonorCard);
       $("#donorCardModalBg").addEventListener("click",e=>{ if(e.target.id==="donorCardModalBg") closeDonorCard(); });
-      window.downloadDonorCard = async function(idvOrEl){
-        let idv = typeof idvOrEl === "string" ? idvOrEl : idvOrEl?.dataset?.id;
-        if(!idv && typeof idvOrEl === "object" && idvOrEl?.closest){
-          const btn = idvOrEl.closest(".donor-card")?.querySelector(".download-btn");
-          idv = btn?.dataset?.id;
-        }
-        const d = publicDonors().find(x=>x.id===idv || x.donorId===idv) || publicDonors().find((x, i)=> formatDonorId(x, i)===idv) || publicDonors()[0];
-        if(!d) return;
-        if(window._dcardBusy) return;   // দ্রুত পরপর ক্লিকে ডুপ্লিকেট ঠেকায়
-        window._dcardBusy = true;
-        toast("ডোনার কার্ড ডাউনলোড হচ্ছে...");
-        try{
-        const W=560,H=820,c=document.createElement("canvas"); c.width=W; c.height=H; const x=c.getContext("2d");
-        const rr=(x2,y2,w2,h2,r)=>{x.beginPath();x.moveTo(x2+r,y2);x.arcTo(x2+w2,y2,x2+w2,y2+h2,r);x.arcTo(x2+w2,y2+h2,x2,y2+h2,r);x.arcTo(x2,y2+h2,x2,y2,r);x.arcTo(x2,y2+h2,x2,y2+w2,y2,r);x.closePath();};
-        rr(0,0,W,H,26); x.clip();
-        const g=x.createLinearGradient(0,0,W,H); g.addColorStop(0,"#0c6d4a"); g.addColorStop(1,"#053d2e"); x.fillStyle=g; x.fillRect(0,0,W,H);
-        const font='"SolaimanLipi","Noto Sans Bengali","Hind Siliguri","Nirmala UI",sans-serif';
-        x.textAlign="center";
-        x.fillStyle="#ffffff"; x.font='900 22px '+font; x.fillText(SITE.name, W/2, 62);
-        x.fillStyle="#bdebd6"; x.font='700 14px '+font; x.fillText("CBDC • রক্ত দান কেন্দ্র", W/2, 88);
-        const logo=await loadImg(LOGO_SRC);
-        x.save(); rr(W/2-32,110,64,64,32); x.clip(); x.drawImage(logo,W/2-32,110,64,64); x.restore();
-        /* প্রোফাইল ছবি (RTDB photo/photoURL → ImgBB) আগে; CORS/লোড ব্যর্থ হলে
-           gender-ভিত্তিক placeholder avatar-এ পড়ি — ডোনার প্যানেলের মতোই। */
-        let av=null;
-        if(donorPhoto(d)){
-          try{ av=await loadImgCors(donorPhoto(d)); }catch(e){ av=null; }
-        }
-        if(!av) av=await loadImg(avatarData(d.gender));
-        x.save(); rr(W/2-62,220,124,124,62); x.clip(); x.drawImage(av,W/2-62,220,124,124); x.restore();
-        x.lineWidth=3; x.strokeStyle="#ffffff"; rr(W/2-62,220,124,124,62); x.stroke();
-        x.fillStyle="#ffffff"; x.font='900 30px '+font; x.fillText(String(d.name), W/2, 396);
-        x.fillStyle="#e51f2a"; x.beginPath(); x.arc(W/2,462,52,0,Math.PI*2); x.fill();
-        x.strokeStyle="rgba(255,255,255,.85)"; x.lineWidth=3; x.stroke();
-        x.fillStyle="#ffffff"; x.font='900 30px '+font; x.fillText(String(d.bloodGroup), W/2, 478);
-        const donorCardId = formatDonorId(d, publicDonors().indexOf(d));
-        const rows=[["এলাকা",d.area],["শেষ রক্তদান",d.lastDonationDate?dateText(d.lastDonationDate):"নতুন দাতা"],["মোবাইল",d.phone],["কার্ড নং",donorCardId]];
-        let yy=548; x.font='700 18px '+font;
-        for(const [k,v] of rows){ x.textAlign="left"; x.fillStyle="rgba(255,255,255,.55)"; x.fillText(String(k)+"  :", 66, yy); x.textAlign="right"; x.fillStyle="#ffffff"; x.fillText(String(v), W-66, yy); x.strokeStyle="rgba(255,255,255,.2)"; x.beginPath(); x.moveTo(50,yy+16); x.lineTo(W-50,yy+16); x.stroke(); yy+=44; }
-        x.textAlign="center"; x.fillStyle="#bdebd6"; x.font='700 15px '+font; x.fillText("✓ অনুমোদিত রক্তদাতা • রক্ত দিন, জীবন বাঁচান 🩸", W/2, H-42);
-        /* a non-ASCII download filename is dropped by the browser (the file
-           would arrive as "download"), so build a safe slug from the card id */
-        const slug=String(d.id||d.name||"donor").replace(/[^\x20-\x7E]/g,"")
-          .replace(/\s+/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"") || "CBDC-donor";
-        const a=document.createElement("a"); a.href=c.toDataURL("image/png");
-        a.download=slug+"-DonorCard.png"; a.style.display="none";
-        document.body.appendChild(a); a.click(); setTimeout(()=>a.remove(),1500);
-        }catch(err){
-          console.warn("donor card download:", err);
-          toast("ডোনার কার্ড ডাউনলোড করা যায়নি", true);
-        }finally{
-          setTimeout(()=>{ window._dcardBusy = false; }, 800);
-        }
+            /* ══════════ রক্তদাতা প্রোফাইল পেজ ══════════
+         Doner Panel-এর Donor Profile-এর সাথে হুবহু একই UI/layout/card —
+         একই master donor data (RTDB `donors`) + একই mapping + একই
+         shared download engine (src/lib/donorCard.ts → QR + vCard + PNG)।
+         মেনুতে নেই; শুধু রক্তদাতা তালিকার প্রোফাইল বাটন থেকে খোলে। */
+      /* ছোট SVG icon set — Doner Panel-এর প্রোফাইলের icon-গুলোর মতোই */
+      const P_ICON = {
+        pin:s=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10.5c0 5.6-8 11.5-8 11.5s-8-5.9-8-11.5a8 8 0 0 1 16 0z"/><circle cx="12" cy="10.3" r="2.8"/></svg>`,
+        phone:s=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21.6 16.8v2.7a1.8 1.8 0 0 1-2 1.8 17.9 17.9 0 0 1-7.8-2.8 17.6 17.6 0 0 1-5.4-5.4A17.9 17.9 0 0 1 3.6 5.2a1.8 1.8 0 0 1 1.8-2h2.7a1.8 1.8 0 0 1 1.8 1.5c.1.9.3 1.7.6 2.5a1.8 1.8 0 0 1-.4 1.9l-1.1 1.1a14.4 14.4 0 0 0 5.4 5.4l1.1-1.1a1.8 1.8 0 0 1 1.9-.4c.8.3 1.6.5 2.5.6a1.8 1.8 0 0 1 1.5 1.8z"/></svg>`,
+        chat:s=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9 9 0 0 1-3.8-.8L3 20.8l1.7-5a8.4 8.4 0 0 1-.8-3.8 8.4 8.4 0 0 1 8.4-9 8.4 8.4 0 0 1 8.7 8.5z"/></svg>`,
+        checkC:s=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8.4 12.2l2.5 2.5 4.7-4.7"/></svg>`,
+        down:s=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5v12"/><path d="M7.5 11.5 12 16l4.5-4.5"/><path d="M4 20.5h16"/></svg>`,
+        search:s=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>`,
       };
-      const downloadDonorCard = window.downloadDonorCard;
-  
-      /* ══════════ রক্তদাতা প্রোফাইল পেজ ══════════
-         এটি সাইটের নিজস্ব একটি ভিউ (#profile/ID) — ডোনার নিবন্ধন পেজের মতোই।
-         মেনুতে নেই; শুধু রক্তদাতা তালিকার প্রোফাইল বাটন থেকে খোলে।
-         ডিজাইন ডোনার অ্যাপের প্রোফাইলের অনুরূপ, ডেটা এখানকার নিজস্ব। */
       function profileViewOf(d, index=0){
         const gap = daysSince(d.lastDonationDate);
         const ready = canDonate(d);
@@ -4004,28 +3958,26 @@ function initPage() {
           group: d.bloodGroup || d.group || "",
           area: d.area || "",
           dob: d.dob || "",
-          age: ageText(d) === "—" ? "" : ageText(d),
+          age: resolveAge(d),
           occupation: d.occupation || "",
           phone: d.phone || "",
-          /* WhatsApp গোপন রাখা থাকলে সেটি অবজেক্টেই আসে না — DOM বা সোর্সে পৌঁছাতে পারে না */
-          whatsapp: d.whatsapp ? d.whatsapp : null,
+          /* Doner Panel-এর মতোই: whatsapp চালু থাকলে প্রোফাইলে মেসেজ বাটন দেখায় */
+          whatsapp: d.whatsapp ? String(d.phone || "").trim() : null,
           last: d.lastDonationDate || "",
           joined: d.joined || "",
           donorId: formatDonorId(d, index),
           total,
           ready,
-          rest: (!ready && gap !== null) ? Math.max(0, 90 - gap) : 0
+          avail: d.available !== false,
+          rest: (!ready && gap !== null) ? Math.max(0, 90 - gap) : 0,
+          verified: (d.status || "approved") === "approved",
+          bio: "",
         };
       }
       function profileHTML(v){
-        const chips = [
-          `<span class="pchip ${v.ready?"ok":"rest"}">${v.ready?"✓ রক্তদানে প্রস্তুত":`বিশ্রামে · আর ${bn(v.rest)} দিন`}</span>`,
-          v.area ? `<span class="pchip">📍 ${esc(v.area)}</span>` : "",
-          v.age ? `<span class="pchip">${esc(v.age)}</span>` : "",
-          v.occupation ? `<span class="pchip">${esc(v.occupation)}</span>` : ""
-        ].join("");
         const row = (k, val, dim) =>
-          `<div class="prow"><b>${esc(k)}</b><span class="${dim?"dim":""}">${esc(val)}</span></div>`;
+          `<div class="row"><span class="tx"><b>${esc(k)}</b></span><span class="rt" style="font-size:.83rem;font-weight:700${dim?`;color:var(--muted);font-weight:600`:""}">${esc(val)}</span></div>`;
+        const dateLong = value => value ? new Date(value + "T00:00:00").toLocaleDateString("bn-BD",{year:"numeric",month:"long",day:"numeric"}) : "—";
         return `
         <div class="pcard">
           <div class="phead2">
@@ -4034,17 +3986,22 @@ function initPage() {
             ${v.group?`<span class="pgrp">${esc(v.group)}</span>`:""}
           </div>
           <div class="pnm">
-            <b>${esc(v.name)}<span class="pvf" title="যাচাইকৃত">✓</span></b>
-            ${v.donorId?`<small>${esc(v.donorId)}</small>`:""}
+            <b>${esc(v.name)}${v.verified?`<span class="pvf" title="যাচাইকৃত">${P_ICON.checkC(16)}</span>`:""}</b>
+            ${v.donorId&&v.donorId!=="—"?`<small>${esc(v.donorId)}</small>`:""}
           </div>
-          <div class="pchips">${chips}</div>
+          <div class="pchips">
+            <span class="pchip ${v.ready?"ok":v.avail?"rest":"m"}">${v.ready?"✓ রক্তদানে প্রস্তুত":v.avail?`বিশ্রামে · আর ${bn(v.rest)} দিন`:"প্রাপ্যতা বন্ধ"}</span>
+            ${v.area?`<span class="pchip">${P_ICON.pin(12)} ${esc(v.area)}</span>`:""}
+            ${v.age?`<span class="pchip">${bn(v.age)} বছর</span>`:""}
+            ${v.occupation?`<span class="pchip">${esc(v.occupation)}</span>`:""}
+          </div>
           <div class="pacts">
             ${v.phone
-              ? `<a class="pbtn solid" href="tel:${esc(v.phone)}">☎ কল করুন</a>`
-              : `<button class="pbtn off" type="button" data-pa="nophone">☎ কল করুন</button>`}
+              ? `<a class="btn sm" style="flex:1" href="tel:${esc(v.phone)}">${P_ICON.phone(15)} কল করুন</a>`
+              : `<button class="btn sm" style="flex:1" data-pa="nophone">${P_ICON.phone(15)} কল করুন</button>`}
             ${v.whatsapp
-              ? `<a class="pbtn ghost" href="https://wa.me/88${esc(v.whatsapp)}" target="_blank" rel="noopener">💬 মেসেজ</a>`
-              : `<button class="pbtn off" type="button" data-pa="nowa">💬 মেসেজ</button>`}
+              ? `<a class="btn gh sm" style="flex:1" href="https://wa.me/88${esc(v.whatsapp)}" target="_blank" rel="noopener">${P_ICON.chat(15)} মেসেজ</a>`
+              : `<button class="btn gh sm off" style="flex:1" data-pa="nowa">${P_ICON.chat(15)} মেসেজ</button>`}
           </div>
         </div>
         <div class="pstats">
@@ -4052,45 +4009,65 @@ function initPage() {
           <div class="pstat"><b>${bn(v.total*3)}</b><span>জীবন বাঁচাতে সাহায্য</span></div>
           <div class="pstat"><b class="sm">${v.last?dateShort(v.last):"—"}</b><span>শেষ রক্তদান</span></div>
         </div>
-        <div class="psec">তথ্য</div>
-        <div class="prows">
+        <div class="sec-t">তথ্য</div>
+        <div class="card pad0">
           ${row("রক্তের গ্রুপ", v.group || "দেখানো হয়নি", !v.group)}
           ${row("এলাকা", v.area || "দেখানো হয়নি", !v.area)}
           ${row("মোবাইল", v.phone || "দেওয়া হয়নি", !v.phone)}
-          ${v.joined?row("যুক্ত হয়েছেন", dateText(v.joined)):""}
+          ${v.joined?row("যুক্ত হয়েছেন", dateLong(v.joined)):""}
         </div>
-        <div class="psec">প্রোফাইল কার্ড</div>
-        <div class="pcardbox">
-          <p>এই রক্তদাতার তথ্য ও QR কোড সহ কার্ড ছবি হিসেবে নামান।</p>
-          <button class="pdl" type="button" id="profDl" data-id="${esc(v.id)}">⬇ কার্ড ডাউনলোড</button>
+        <div class="sec-t">প্রোফাইল কার্ড</div>
+        <div class="card">
+          <p class="mut" style="font-size:.82rem;margin:0 0 11px;line-height:1.6">এই রক্তদাতার তথ্য ও QR কোড সহ কার্ড ছবি হিসেবে নামান।</p>
+          <button class="btn w" data-pa="dl">${P_ICON.down(16)} কার্ড ডাউনলোড</button>
         </div>
-        <p class="pnote">শুধু রক্তসংক্রান্ত প্রয়োজনে যোগাযোগ করুন</p>`;
+        <p class="mut" style="text-align:center;font-size:.75rem;margin:14px 0 2px">শুধু রক্তসংক্রান্ত প্রয়োজনে যোগাযোগ করুন</p>`;
+      }
+      /* ডোনার কার্ড PNG — shared engine (Doner Panel-ও একই ব্যবহার করে) */
+      function downloadDonorCardFor(v, d){
+        const subject = {
+          name: v.name || "",
+          bloodGroup: v.group || "",
+          area: v.area || "",
+          phone: v.phone || "",
+          donorId: v.donorId || "",
+          gender: v.gender || "",
+          photo: v.photo || "",
+          ageText: d.dob && ageFromDob(d.dob) !== null ? ageText(d.dob) : "",
+          available: v.avail,
+          lastDonation: v.last || "",
+          theme: "green",
+        };
+        downloadDonorCardPng({
+          subject,
+          status: donorCardStatus(subject),
+          kind: "both",
+          onToast: (msg,k)=>{ toast(msg, k === "er"); },
+        });
       }
       let currentProfId = null;
       function renderProfile(idv){
         const body = $("#profileBody"); if(!body) return;
         const list = publicDonors();
-        const i = list.findIndex(x => x.id === idv || formatDonorId(x, list.indexOf(x)) === idv);
+        const i = list.findIndex(x => x.id === idv || x.donorId === idv || formatDonorId(x, list.indexOf(x)) === idv);
         const d = i >= 0 ? list[i] : null;
         currentProfId = idv;
         if(!d){
-          body.innerHTML = `<div class="pmiss"><div class="pmiss-ic">🔍</div>
+          body.innerHTML = `<div class="card"><div class="empty">
+            <div class="ic">${P_ICON.search(26)}</div>
             <b>প্রোফাইল পাওয়া যায়নি</b>
-            <p>রক্তদাতাটি আর তালিকায় নেই অথবা লিংকটি সঠিক নয়।</p>
-            <a class="btn btn-green" href="${appBase()}donor-search">রক্তদাতা তালিকায় ফিরুন</a></div>`;
+            <p>রক্তদাতাটি আর তালিকায় নেই অথবা লিংকটি সঠিক নয়</p>
+            <a class="btn gh" href="${appBase()}donor-search">রক্তদাতা তালিকায় ফিরুন</a></div></div>`;
           return;
         }
-        body.innerHTML = profileHTML(profileViewOf(d, i));
-        $("#profDl")?.addEventListener("click", async e => {
-          const btn = e.currentTarget;
-          btn.disabled = true;
-          try{ await downloadDonorCard(idv); }
-          finally{ setTimeout(()=>{ btn.disabled = false; }, 900); }
+        const v = profileViewOf(d, i);
+        body.innerHTML = profileHTML(v);
+        body.querySelectorAll("[data-pa]").forEach(b=>b.onclick=()=>{
+          const a=b.dataset.pa;
+          if(a==="dl") downloadDonorCardFor(v, d);
+          if(a==="nophone") toast("এই রক্তদাতা নম্বর গোপন রেখেছেন", true);
+          if(a==="nowa") toast("এই রক্তদাতা WhatsApp-এ যোগাযোগের জন্য নম্বর প্রকাশ করেননি", true);
         });
-        body.querySelector('[data-pa="nowa"]')?.addEventListener("click",
-          ()=>toast("এই রক্তদাতা WhatsApp-এ যোগাযোগের জন্য নম্বর প্রকাশ করেননি", true));
-        body.querySelector('[data-pa="nophone"]')?.addEventListener("click",
-          ()=>toast("এই রক্তদাতা নম্বর প্রকাশ করেননি", true));
       }
       /* তালিকা থেকে প্রোফাইল খোলা — URL-এ পরিষ্কার "/profile/<id>" পাথ বসে
          (কোনো "#" নয়); Back চাপলে আগের ভিউতে ফেরত। */
@@ -4100,6 +4077,15 @@ function initPage() {
         showView("profile");
         renderProfile(idv);
       };
+      window.downloadDonorCard = function(idvOrEl){
+        let idv = typeof idvOrEl === "string" ? idvOrEl : idvOrEl?.dataset?.id;
+        const list = publicDonors();
+        const i = list.findIndex(x => x.id === idv || x.donorId === idv || formatDonorId(x, list.indexOf(x)) === idv);
+        const d = i >= 0 ? list[i] : null;
+        if(!d) return;
+        const v = profileViewOf(d, i);
+        downloadDonorCardFor(v, d);
+      };
       document.addEventListener("click", e=>{
         const a = e.target.closest('a[data-prof="1"]'); if(!a) return;
         e.preventDefault();
@@ -4107,19 +4093,20 @@ function initPage() {
       });
   
       function shareDonorCard(idv){
-        const d=publicDonors().find(x=>x.id===idv); if(!d)return;
-        const text=`🩸 ${d.name} (${d.bloodGroup}) — ${d.area}\n${SITE.name}ের অনুমোদিত রক্তদাতা।\nযোগাযোগ: ${d.phone}`;
+        const d=publicDonors().find(x=>x.id===idv || x.donorId===idv); if(!d)return;
+        const text=`🩸 ${d.name} (${d.bloodGroup || d.group || ""}) — ${d.area}\n${SITE.name}ের অনুমোদিত রক্তদাতা।\nযোগাযোগ: ${d.phone}`;
         if(navigator.share){ navigator.share({title:"ডিজিটাল ডোনার কার্ড",text,url:location.href}).catch(()=>{}); }
         else if(navigator.clipboard){ navigator.clipboard.writeText(text).then(()=>toast("তথ্য কপি হয়েছে")); }
         else toast("শেয়ার করা যাচ্ছে না",true);
       }
-      $("#dcardDownload").addEventListener("click",()=>{ if(currentDcardId) downloadDonorCard(currentDcardId); });
+      $("#dcardDownload").addEventListener("click",()=>{ if(currentDcardId) window.downloadDonorCard(currentDcardId); });
       $("#dcardShare").addEventListener("click",()=>{ if(currentDcardId) shareDonorCard(currentDcardId); });
       // পাবলিক ডোনার কার্ড (openDcard) বাটন হ্যান্ডলার
       document.addEventListener("click", e=>{
         const b = e.target.closest("[data-action='openDcard']"); if(!b) return;
         openDonorCard(b.dataset.id);
       });
+
   
       $("#searchForm").addEventListener("submit",e=>{e.preventDefault();});
       $("#searchGroup").addEventListener("change",()=>{ currentPage = 1; renderSearch(); });

@@ -108,6 +108,7 @@ src/
 │   ├── forms.ts          # ইনলাইন ফর্ম ভ্যালিডেশন (popup নয়)
 │   ├── authx.ts          # Auth, role resolve, password reset
 │   ├── imgbb.ts          # ImgBB image hosting helper (upload → link → DB)
+│   ├── donorCard.ts      # ডোনার কার্ড (QR + vCard + PNG) — Main Website ও Doner Panel-এর একক engine
 │   └── store.ts          # RTDB-backed shared store — মূল data source
 └── pages/
     ├── Home.tsx          # পাবলিক ওয়েবসাইট + লগইন/নিবন্ধন/লগআউট (Firebase Auth)

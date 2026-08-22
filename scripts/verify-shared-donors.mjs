@@ -172,5 +172,21 @@ check("Doner pushDonorRecordToRtdb uses updateRow (merge), not updatePaths",
   /await\s+updateRow\s*\(\s*NODES\.donors,\s*id,\s*donorPublicPatch\(STORE\.account,STORE\.donor\)\s*\)/.test(donerSrc),
   "public donors record must keep admin fields (bloodGroup/status/ownerUid) on donor save");
 
+/* ── 10. এক shared donor-card engine (QR + vCard + PNG) — দুই জায়গাতেই ── */
+const cardSrc = readFileSync(path.join(ROOT, "src/lib/donorCard.ts"), "utf8");
+check("shared donorCard module exists (QR + vCard + PNG engine)", cardSrc.includes("downloadDonorCardPng") && cardSrc.includes("donorVCard") && cardSrc.includes("function qrSVG"), "");
+check("Home imports the shared download engine", homeSrc.includes('import { downloadDonorCardPng, donorCardStatus } from "../lib/donorCard"'), "");
+check("Doner imports the shared engine (qrSVG + download)", donerSrc.includes('import { qrSVG, downloadDonorCardPng } from "../lib/donorCard"'), "");
+check("Doner dlCard delegates to shared downloadDonorCardPng", donerSrc.includes("await downloadDonorCardPng({"), "");
+check("Home profile download uses shared engine (no separate logic)", homeSrc.includes("downloadDonorCardPng({") && homeSrc.includes("donorCardStatus(subject)"), "");
+check("no old canvas-based download logic left in Home", !homeSrc.includes("window.downloadDonorCard = async function"), "");
+/* ── 11. Home profile markup = Doner Panel-এর rProfile structure ── */
+check("Home profile uses Doner-style pcard/phead2/pav/pgrp", homeSrc.includes("class=\"pcard\"") && homeSrc.includes("class=\"phead2\"") && homeSrc.includes("class=\"pav\"") && homeSrc.includes("class=\"pgrp\""), "");
+check("Home profile info section uses .sec-t + .card.pad0 + .row (Doner-style)", homeSrc.includes("class=\"sec-t\"") && homeSrc.includes("class=\"card pad0\"") && homeSrc.includes("class=\"row\""), "");
+check("Home profile download button = data-pa=\"dl\" (Doner-style)", homeSrc.includes('data-pa="dl"') && homeSrc.includes("কার্ড ডাউনলোড"), "");
+check("Home profile stats = Doner-style pstat (মোট রক্তদান / জীবন / শেষ রক্তদান)", homeSrc.includes("মোট রক্তদান") && homeSrc.includes("জীবন বাঁচাতে সাহায্য") && homeSrc.includes("শেষ রক্তদান"), "");
+check("Home profile shows donor photo in .pav", homeSrc.includes("v.photo || avatarData(v.gender)"), "");
+check("Home profile fallback age uses resolveAge (dob-derived)", homeSrc.includes("age: resolveAge(d)"), "");
+
 console.log(failed ? "\nSOME CHECKS FAILED" : "\nALL CHECKS PASSED");
 process.exit(failed ? 1 : 0);
