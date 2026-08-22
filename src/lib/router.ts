@@ -182,7 +182,15 @@ export function resolveBootPage(): PageName {
   } catch {
     /* ignore */
   }
-  if (!page) page = currentPage();
+  if (!page) {
+    // A plain visit to the site root should always open the public website.
+    // Previously the last panel kept in sessionStorage could make "/" boot a
+    // lazy-loaded dashboard and show an unnecessary "লোড হচ্ছে…" screen.
+    const path = window.location.pathname || "/";
+    const atBase = path === BASE || (BASE.endsWith("/") && path + "/" === BASE);
+    const plainRoot = atBase && !window.location.hash && !new URLSearchParams(window.location.search).get("uid");
+    page = plainRoot ? "home" : currentPage();
+  }
   try {
     sessionStorage.setItem(SESSION_KEY, page);
   } catch {

@@ -508,10 +508,10 @@ export interface ResolvedRole {
   staff: Record<string, any> | null;
 }
 
-/** RTDB-র role লেখা (super/mod ইত্যাদি) অ্যাপের তিনটি role-এ মেলানো। */
+/** RTDB-র role লেখা অ্যাপের তিনটি role-এ মেলানো: admin / moderator / donor। */
 function normaliseRole(raw: unknown): AppRole | null {
   const r = String(raw || "").toLowerCase();
-  if (r === "admin" || r === "super" || r === "superadmin") return "admin";
+  if (r === "admin") return "admin";
   if (r === "moderator" || r === "mod") return "moderator";
   if (r === "donor" || r === "user" || r === "member") return "donor";
   return null;
