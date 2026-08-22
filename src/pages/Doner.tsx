@@ -18,12 +18,13 @@ import {
   loadUserProfile,
   isProfileComplete,
 } from "../lib/authx";
-import { getRow, setRow, updateRow, watchRow, addRow, findBy, listOnce, nowIso, updatePaths, removeRow } from "../lib/rtdb";
+import { getRow, setRow, updateRow, watchRow, watchList, addRow, findBy, listOnce, nowIso, updatePaths, removeRow } from "../lib/rtdb";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage } from "../lib/imgbb";
+import { notifyMatchingDonors } from "../lib/notify";
 
 /* ═══════════════════════════════════════════════════════════════════
    CSS — মূল doner.html-এর <style> ব্লক হুবহু কপি
@@ -4025,11 +4026,46 @@ function initPage() {
     const st=CBDCShared.load();
     RAW.donors=st.donors.filter(d=>d.status!=="pending"&&!d.suspended).map(CBDCShared.toDonerDonor);
     RAW.incoming=st.requests.filter(r=>r.status!=="cancelled"&&r.status!=="resolved").map(requestForDoner);
+    /* আমার আবেদন — UID অনুযায়ী RTDB (users/{uid}/data/mine + queue/requests) থেকে
+       একীভূত: Pending (queue), Approved/Matched (requests), Rejected/Cancelled
+       (users/{uid}/data/mine-এ admin-লিখিত status) — প্রতিটি অবস্থা সঠিক দেখায় */
+    const uid=String(STORE.account.uid||"").trim();
+    const liveById={};st.requests.forEach(r=>{if(r&&r.id)liveById[r.id]=r});
+    const pendById={};st.queue.filter(q=>q&&q.kind==="request").forEach(q=>{if(q.id)pendById[q.id]=q});
     RAW.mine.forEach(m=>{
-      const live=st.requests.find(r=>r.id===m.id),pending=st.queue.find(q=>q.kind==="request"&&q.id===m.id);
-      if(live){m.status=live.workflowStatus==="matched"?"matched":"approved";m.responders=Array.isArray(live.responders)?live.responders:[]}
-      else if(pending)m.status="pending";
+      if(!m||!m.id)return;
+      const live=liveById[m.id];
+      if(live){
+        const ws=String(live.workflowStatus||live.status||"").toLowerCase();
+        m.status = ws==="matched"?"matched"
+          :(ws==="cancelled"||ws==="rejected"||ws==="resolved")?ws
+          :"approved";
+        m.responders=Array.isArray(live.responders)?live.responders:[];
+      }else if(pendById[m.id]){
+        /* queue-তে pending থাকলে pending; কিন্তু admin-লিখিত rejected/cancelled
+           status-কে queue-র অস্থায়ী উপস্থিতি আবার pending দেখাবে না */
+        if(m.status!=="rejected"&&m.status!=="cancelled")m.status="pending";
+      }else if(m.status!=="rejected"&&m.status!=="cancelled"&&m.status!=="done"){
+        /* live/queue-তে নেই — পুরোনো pending আবেদন (ধরে রাখা, কিন্তু queue-তে
+           নেই মানে admin বাতিল করেছে → rejected হিসেবে দেখাই না; pendingই থাকে
+           যতক্ষণ না admin-এর সিদ্ধান্ত users/{uid}/data/mine-এ লেখা হয়) */
+      }
     });
+    /* RTDB `requests`-এ আমার UID-তে থাকা আবেদনগুলো data/mine-এ না থাকলে যোগ করি —
+       নতুন ডিভাইসে log in করলেও "আমার আবেদন" লোড হবে */
+    if(uid){
+      st.requests.forEach(r=>{
+        if(!r||!r.id)return;
+        if(String(r.ownerUid||"")!==String(uid))return;
+        if(RAW.mine.some(m=>m&&m.id===r.id))return;
+        const ws=String(r.workflowStatus||r.status||"").toLowerCase();
+        RAW.mine.push({id:r.id,patient:r.patientName||"",group:r.bloodGroup||"",bags:r.bags||1,
+          hospital:r.hospitalName||"",address:r.hospitalAddress||"",area:r.hospitalAddress||"",
+          urgency:r.urgency||"",neededBy:(r.expiresAt||"").slice(0,10),
+          status:ws==="matched"?"matched":(ws==="cancelled"||ws==="rejected"||ws==="resolved")?ws:"approved",
+          createdAt:r.createdAt||"",responders:Array.isArray(r.responders)?r.responders:[]});
+      });
+    }
     // donor detection — শুধু UID দিয়ে, phone দিয়ে অন্য user-এর donor লিক হবে না
     const mine=st.donors.find(d=> STORE.account.uid && String(d.ownerUid)===String(STORE.account.uid));
     if(mine){
@@ -4082,8 +4118,11 @@ function initPage() {
             hospital:m.hospital,area:m.address||a.area,phone:a.phone,requester:a.name,ownerUid:owner,
             at:m.createdAt||new Date().toISOString(),expiresAt:m.neededBy?m.neededBy+"T23:59:59":""};
           qi<0?st.queue.unshift(q):st.queue[qi]={...st.queue[qi],...q};
-        }else if(m.status==="cancelled"||m.status==="done"){
-          if(qi>=0)st.queue.splice(qi,1);if(ri>=0)st.requests.splice(ri,1);
+        }else{
+          /* pending ছাড়া সব অবস্থা (approved/matched/cancelled/done/rejected) —
+             queue থেকে বাদ; বাতিল/সম্পন্ন হলে requests থেকেও বাদ (resurrect নয়) */
+          if(qi>=0)st.queue.splice(qi,1);
+          if((m.status==="cancelled"||m.status==="done"||m.status==="rejected")&&ri>=0)st.requests.splice(ri,1);
         }
       });
       RAW.donations.filter(x=>!x.ok).forEach((x,i)=>{
@@ -4671,6 +4710,9 @@ function initPage() {
         :emptyBox(ICON.file(26),"আপনি এখনো কোনো আবেদন করেননি","কারো রক্তের প্রয়োজন হলে এখান থেকে আবেদন করুন"));
     }else{
       el.innerHTML=becomeView();
+      /* "আমার প্রোফাইল" — সরাসরি নিজের ডোনার প্রোফাইল পেজ খোলে */
+      const h=$("#hprof");
+      if(h)h.onclick=()=>openProfile("me");
     }
   }
   const emptyBox=(ic,t,p,act,btn)=>`<div class="card"><div class="empty"><div class="ic">${ic}</div>
@@ -4686,15 +4728,17 @@ function initPage() {
       <button class="btn gh sm" data-resp="${esc(r.id)}" style="color:var(--grn)">${ICON.check(14)} সাড়া দিন</button>
       <button class="btn gh sm" data-mute="${esc(r.id)}">লুকান</button></div></div>`;
   
-  const RS={pending:["a","যাচাই চলছে"],approved:["b","প্রকাশিত"],matched:["b","রক্তদাতা খোঁজা হচ্ছে"],
-    done:["g","সম্পন্ন"],expired:["m","মেয়াদোত্তীর্ণ"],cancelled:["m","বাতিল"]};
+  const RS={pending:["a","যাচাই চলছে"],approved:["b","অনুমোদিত"],matched:["b","রক্তদাতা খোঁজা হচ্ছে"],
+    done:["g","সম্পন্ন"],expired:["m","মেয়াদোত্তীর্ণ"],cancelled:["m","বাতিল"],rejected:["r","বাতিল"]};
   const mineCard=r=>{const[c,t]=RS[r.status]||["m",r.status];
+    const final=r.status==="done"||r.status==="cancelled"||r.status==="rejected";
     return `<div class="reqc"><h4>${esc(r.id)} <span class="bg">${esc(r.group)}</span> <span class="pill ${c}">${t}</span></h4>
     <p>${esc(r.patient)} · ${bn(r.bags)} ব্যাগ</p>
     <p>${ICON.hospital(13)} ${esc(r.hospital)} · ${dS(r.neededBy)}</p>
+    ${r.rejectNote?`<p class="mut" style="margin-top:6px">বাতিলের কারণ: ${esc(r.rejectNote)}</p>`:""}
     ${r.responders.length?`<p style="color:var(--grn);font-weight:700">${bn(r.responders.length)} জন সাড়া দিয়েছেন</p>`:""}
     <div class="a">${r.responders.length?`<button class="btn sm" data-resps="${esc(r.id)}">সাড়াদাতারা</button>`:""}
-      ${r.status!=="done"&&r.status!=="cancelled"?
+      ${!final?
         `<button class="btn gh sm" data-done="${esc(r.id)}">${ICON.check(14)} সম্পন্ন</button>
          <button class="btn gh sm" data-cancel="${esc(r.id)}">বাতিল</button>`:""}</div></div>`};
   
@@ -5750,6 +5794,10 @@ function initPage() {
       RAW.mine.unshift(m);
       saveData();                            /* localStorage + users/{uid}/data + queue (shared/RTDB) */
       logAct("জরুরি রক্তের আবেদন",m.group+" · "+m.bags+" ব্যাগ","donor");
+      /* একই blood group-এর, Availability ON থাকা ডোনারদের জরুরি notification —
+         RTDB notifications/{uid} নোডে লেখা হয়, ডোনার প্যানেলে live দেখায় */
+      notifyMatchingDonors({id:m.id,group:m.group,hospital:m.hospital,area:m.address},
+        {exceptUid:STORE.account.uid||""});
       s.close();
       reqTab="mine";
       go("req");
@@ -5878,35 +5926,92 @@ function initPage() {
     };
   }
 
-  /* ---------- notifications panel ---------- */
-  let npOpen=false;
+  /* ---------- notifications panel ----------
+     RTDB `notifications/{uid}`-ই উৎস — live listener থেকে সাথে সাথে আসে,
+     কোনো hardcoded/demo notification নেই। ২৪ ঘণ্টা পর expiresAt পেরিয়ে গেলে
+     স্বয়ংক্রিয়ভাবে RTDB থেকেও মুছে যায়। */
+  let npOpen=false,npPanel=null,npOv=null;
+  function notifMeta(n){
+    const t=String(n.type||n.t||"info");
+    if(t==="emergency")return {ic:ICON.warn(18),bg:"var(--red-s)",fg:"var(--red)"};
+    if(t==="rejected")return {ic:ICON.x(18),bg:"var(--red-s)",fg:"var(--red)"};
+    if(t==="approval")return {ic:ICON.checkC(18),bg:"var(--grn-s)",fg:"var(--grn)"};
+    return {ic:ICON.bell(18),bg:"var(--blu-s)",fg:"var(--blu)"};
+  }
+  /* একটি notification পড়া হলে RTDB-তেও লিখে দিই — সব ডিভাইসে একই অবস্থা */
+  function markNotifRead(id){
+    const n=RAW.notifs.find(x=>x.id===id);if(!n)return;
+    if(!n.read){
+      n.read=true;
+      try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
+      const uid=STORE.account.uid||"";
+      if(uid)updateRow(NODES.notifications+"/"+uid,id,{read:true}).catch(e=>console.warn("notif read:",e&&e.message));
+    }
+    const [g,s]=String(n.go||"req:for").split(":");
+    /* "req:..." — আবেদন স্ক্রিনের ট্যাব (for/mine/become), আলাদা sub-screen নয় */
+    if(g==="req"){reqTab=(s==="become"||s==="mine")?s:"for";go("req");}
+    else if(g)go(g,s||null);
+  }
+  function renderNotifPanel(){
+    if(!npPanel)return;
+    const ns=DB().notifs;
+    npPanel.querySelector("#nh").innerHTML=
+      `<b style="flex:1;font-size:.95rem">বিজ্ঞপ্তি</b>
+       ${ns.some(n=>!n.read)?`<button class="btn lnk" id="nall" style="font-size:.75rem">সব পড়া হয়েছে</button>`:""}
+       <button class="x" id="nx" aria-label="বন্ধ">${ICON.x(19)}</button>`;
+    npPanel.querySelector("#nlist").innerHTML=ns.length?ns.map(n=>{
+      const m=notifMeta(n);
+      return `<button class="nitem ${n.read?"":"un"}" data-n="${n.id}">
+        <span class="ic" style="background:${m.bg};color:${m.fg}">${m.ic}</span>
+        <span style="flex:1;min-width:0"><b>${esc(n.title)}</b><small>${esc(n.body)} · ${esc(n.time||timeAgo(n.createdAt))}</small></span></button>`;
+    }).join("")
+      :`<div class="empty"><div class="ic">${ICON.bell(26)}</div><b>কোনো বিজ্ঞপ্তি নেই</b>
+        <p>নতুন কিছু এলে এখানে দেখা যাবে</p></div>`;
+    npPanel.querySelector("#nx").onclick=closeNotifs;
+    npPanel.querySelector("#nall")&&(npPanel.querySelector("#nall").onclick=()=>{
+      const uid=STORE.account.uid||"";
+      const paths={};
+      RAW.notifs.forEach(n=>{if(!n.read){n.read=true;if(uid&&n.id)paths[NODES.notifications+"/"+uid+"/"+n.id+"/read"]=true;}});
+      if(Object.keys(paths).length)updatePaths(paths).catch(e=>console.warn("notif all read:",e&&e.message));
+      try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
+      closeNotifs();toast("সব পড়া হিসেবে চিহ্নিত","ok");
+    });
+    npPanel.querySelectorAll("[data-n]").forEach(b=>b.onclick=()=>{markNotifRead(b.dataset.n);closeNotifs()});
+    paintTop();
+  }
   function openNotifs(){
     if(npOpen)return;npOpen=true;
-    const ns=DB().notifs;
     const ov=document.createElement("div");ov.className="ov";
     const p=document.createElement("div");p.className="npanel";
-    p.innerHTML=`<div class="hd" style="display:flex;align-items:center;gap:10px;padding:13px 15px;
-        border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--card);z-index:2">
-        <b style="flex:1;font-size:.95rem">বিজ্ঞপ্তি</b>
-        ${ns.some(n=>!n.read)?`<button class="btn lnk" id="nall" style="font-size:.75rem">সব পড়া হয়েছে</button>`:""}
-        <button class="x" id="nx" aria-label="বন্ধ">${ICON.x(19)}</button></div>
-      ${ns.length?ns.map(n=>`<button class="nitem ${n.read?"":"un"}" data-n="${n.id}">
-        <span class="ic" style="background:${n.t==="emergency"?"var(--red-s)":n.t==="security"?"var(--blu-s)":"var(--grn-s)"};
-          color:${n.t==="emergency"?"var(--red)":n.t==="security"?"var(--blu)":"var(--grn)"}">
-          ${n.t==="emergency"?ICON.warn(18):n.t==="security"?ICON.shield(18):ICON.drop(18)}</span>
-        <span style="flex:1;min-width:0"><b>${esc(n.title)}</b><small>${esc(n.body)} · ${esc(n.time)}</small></span></button>`).join("")
-        :`<div class="empty"><div class="ic">${ICON.bell(26)}</div><b>কোনো বিজ্ঞপ্তি নেই</b>
-          <p>নতুন কিছু এলে এখানে দেখা যাবে</p></div>`}`;
+    p.innerHTML=`<div class="hd" id="nh" style="display:flex;align-items:center;gap:10px;padding:13px 15px;
+        border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--card);z-index:2"></div>
+      <div id="nlist"></div>`;
     document.body.append(ov,p);document.body.style.overflow="hidden";
-    const close=()=>{ov.remove();p.remove();npOpen=false;document.body.style.overflow="";paintTop()};
-    ov.onclick=close;p.querySelector("#nx").onclick=close;
-    p.querySelector("#nall")&&(p.querySelector("#nall").onclick=()=>{RAW.notifs.forEach(n=>n.read=true);close();toast("সব পড়া হিসেবে চিহ্নিত","ok")});
-    p.querySelectorAll("[data-n]").forEach(b=>b.onclick=()=>{
-      const n=RAW.notifs.find(x=>x.id==b.dataset.n);n.read=true;close();
-      const [g,s]=String(n.go).split(":");go(g,s||null);
-    });
+    npOv=ov;npPanel=p;
+    ov.onclick=closeNotifs;
+    renderNotifPanel();
   }
-  
+  function closeNotifs(){
+    if(npOv)npOv.remove();
+    if(npPanel)npPanel.remove();
+    npOpen=false;npPanel=null;npOv=null;
+    document.body.style.overflow="";paintTop();
+  }
+  /* ২৪ ঘণ্টা পেরিয়ে যাওয়া notification RTDB থেকেও মুছে ফেলা */
+  function applyNotifRows(rows){
+    const now=Date.now(),kept=[],expired=[];
+    (Array.isArray(rows)?rows:[]).forEach(r=>{
+      if(!r)return;
+      if(r.expiresAt&&new Date(r.expiresAt).getTime()<=now)expired.push(r);
+      else kept.push(r);
+    });
+    const uid=STORE.account.uid||"";
+    expired.forEach(r=>{ if(r.id&&uid)removeRow(NODES.notifications+"/"+uid,r.id).catch(()=>{}); });
+    RAW.notifs=kept;
+    try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
+    paintTop();
+    if(npOpen)renderNotifPanel();
+  }
   /* ══════════ ACTIONS ══════════ */
   document.addEventListener("click",async e=>{
     const sub=e.target.closest("[data-sub]");
@@ -6656,7 +6761,6 @@ function initPage() {
         data:{
           donations:RAW.donations||[],
           mine:RAW.mine||[],
-          notifs:(RAW.notifs||[]).slice(0,100),
           activity:(RAW.activity||[]).slice(0,100)
         }
       });
@@ -6730,7 +6834,8 @@ function initPage() {
     if(row.appliedAt) STORE.donor.appliedAt = String(row.appliedAt||"");
     if(row.cardTheme) STORE.donor.cardTheme = String(row.cardTheme||"green");
     if(row.data&&typeof row.data==="object"){
-      ["donations","mine","notifs","activity"].forEach(k=>{ if(Array.isArray(row.data[k]))RAW[k]=row.data[k]; });
+      /* notifs আর users/data থেকে লোড হয় না — উৎস এখন notifications/{uid} নোড */
+      ["donations","mine","activity"].forEach(k=>{ if(Array.isArray(row.data[k]))RAW[k]=row.data[k]; });
       try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
     }
   }
@@ -6831,9 +6936,17 @@ function initPage() {
       if(!STORE.donor.is){
         try{ await hydrateDonorFromRtdb(uid); }catch(e){ console.warn("hydrate in watch:", e && e.message); }
       }
+      /* data/mine লোড হওয়ার পর queue/requests-এর সাথে status মিলিয়ে নিই —
+         ফলে "আমার আবেদন" ঠিকমতো লোড হয় (pending/approved/rejected/cancelled) */
+      try{ pullSharedPublic(); }catch(e){ console.warn("resync mine:", e && e.message); }
       persistLocalAccount();
       RTDB_PULLING=false;
       if(!document.querySelector(".sheet")&&!PUBLIC_MODE){ try{ paintTop(); go(CUR,SUB,false); }catch(e){} }
+    });
+    /* notifications/{uid} live listener — Admin approve/reject বা জরুরি আবেদনের
+       notification পেজ refresh ছাড়াই সাথে সাথে প্যানেলে দেখা যায় */
+    watchList(NODES.notifications+"/"+uid, rows=>{
+      try{ applyNotifRows(rows); }catch(e){ console.warn("notif watch:", e && e.message); }
     });
   }
 
@@ -6946,6 +7059,12 @@ function initPage() {
      বুটে খালি cache দেখে বারবার স্বাগতম ফর্ম দেখানো বন্ধ। */
   document.addEventListener("keydown",e=>{if(e.key==="Escape"){
     document.querySelector(".ov")?.click();}});
+  /* ২৪ ঘণ্টা পুরোনো notification স্বয়ংক্রিয় cleanup — RTDB থেকেও মুছে যায় */
+  setInterval(()=>{
+    const uid=STORE.account.uid||"";
+    if(!uid)return;
+    listOnce(NODES.notifications+"/"+uid).then(rows=>{ try{ applyNotifRows(rows); }catch(e){} }).catch(()=>{});
+  }, 30*60*1000);
   
 }
 

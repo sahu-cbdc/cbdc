@@ -30,6 +30,7 @@ import {
 } from "../lib/authx";
 import { addRow, setRow, updateRow, findBy, getRow, nowIso } from "../lib/rtdb";
 import { NODES } from "../lib/firebase";
+import { notifyMatchingDonors } from "../lib/notify";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, clearFieldError } from "../lib/forms";
 import { ageFromDob, ageText, dobBounds, isValidDob, toBanglaDigits } from "../lib/age";
 import { logoUrl, applyLogo } from "../config/logo";
@@ -3591,7 +3592,7 @@ function initPage() {
           ${esc(d.name)}
         </div>
         <div class="donor-status">
-          ✓ রক্তদানে প্রস্তুত
+          ${d.available === false ? "প্রাপ্যতা বন্ধ" : "✓ রক্তদানে প্রস্তুত"}
         </div>
         <div class="details">
           <div>📍 এলাকা: <strong>${esc(d.area)}</strong></div>
@@ -4228,16 +4229,24 @@ function initPage() {
           if(!fbReady) throw new Error("ডাটাবেস সংযোগ নেই।");
           /* RTDB-তে লেখা — approved হলে সরাসরি লাইভ বোর্ডে, না হলে queue-তে।
              দুই ক্ষেত্রেই listener-এর কল্যাণে সব জায়গায় সঙ্গে সঙ্গে দেখা যায়। */
+          const memberUid = (()=>{ try{ return localStorage.getItem("cbdcMemberUid")||""; }catch(e){ return ""; } })();
           const reqId = await addRow(NODES.requests, {
-            ...o, status:newStatus, createdAt, expiresAt: expiresAtDate.toISOString()
+            ...o, status:newStatus, createdAt, expiresAt: expiresAtDate.toISOString(),
+            ownerUid: memberUid||""
           });
           if(!autoApproved){
             await setRow(NODES.queue, reqId, {
               kind:"request", requestId:reqId, patient:o.patientName, group:o.bloodGroup, bags:o.bags,
               urgency:o.urgency, hospital:o.hospitalName, area:o.hospitalAddress, phone:o.phone,
               requester:o.requesterName, whatsapp:o.whatsapp||"", description:o.description||"",
-              at:createdAt, expiresAt:expiresAtDate.toISOString()
+              at:createdAt, expiresAt:expiresAtDate.toISOString(), ownerUid:memberUid||""
             });
+          }
+          /* সরাসরি লাইভ হলে (auto-approve) সাথে সাথে matching ডোনারদের জরুরি
+             notification — একই blood group, Availability ON, non-suspended */
+          if(autoApproved){
+            notifyMatchingDonors({id:reqId, group:o.bloodGroup, hospital:o.hospitalName, area:o.hospitalAddress},
+              {exceptUid:memberUid||""});
           }
           form.reset();
           clearFormErrors(form);

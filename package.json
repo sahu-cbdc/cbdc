@@ -10,7 +10,8 @@
     "smoke": "node scripts/smoke.mjs",
     "verify-become": "node scripts/verify-become.mjs",
     "verify-profile": "node scripts/verify-profile-photo.mjs",
-    "verify-realtime": "node scripts/verify-realtime-donors.mjs"
+    "verify-realtime": "node scripts/verify-realtime-donors.mjs",
+    "verify-notify": "node scripts/verify-notify.mjs"
   },
   "dependencies": {
     "firebase": "^11.10.0",
