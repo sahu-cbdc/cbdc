@@ -17,6 +17,7 @@ import {
   photoForUid,
   loadUserProfile,
   isProfileComplete,
+  requestPasswordReset,
 } from "../lib/authx";
 import { getRow, setRow, updateRow, watchRow, addRow, findBy, listOnce, nowIso, updatePaths, removeRow } from "../lib/rtdb";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
@@ -708,6 +709,17 @@ function initPage() {
   "তথ্য নামান, অ্যাকাউন্ট মুছুন":"Download data, delete account",
   "পাসওয়ার্ড ভুলে গেছেন?":"Forgot password?",
   "ইমেইল বা মোবাইলে OTP পাঠানো হবে":"An OTP will be sent to your email or phone",
+  "অ্যাকাউন্টের ইমেইলে রিসেট লিংক পাঠানো হবে":"A reset link will be sent to your account email",
+  "রিসেট লিংক পাঠানো হয়েছে":"Reset link sent",
+  "পাসওয়ার্ড রিসেট লিংক":"Password reset link",
+  "আপনার অ্যাকাউন্টের ইমেইলে পাসওয়ার্ড রিসেট লিংক পাঠানো হয়েছে।":"A password reset link has been sent to your account email.",
+  "ইমেইল খুলে লিংকে ক্লিক করে নতুন পাসওয়ার্ড সেট করুন।":"Open the email and click the link to set a new password.",
+  "ইমেইল খুলে লিংকে ক্লিক করে নতুন পাসওয়ার্ড সেট করুন। ইমেইল না পেলে স্প্যাম ফোল্ডার দেখুন।":"Open the email and click the link to set a new password. If you don't see it, check your spam folder.",
+  "অনুগ্রহ করে একটু অপেক্ষা করুন…":"Please wait a moment…",
+  "লিংক পাঠানো যায়নি":"Could not send the link",
+  "লিংক পাঠানো হচ্ছে…":"Sending link…",
+  "আবার পাঠান":"Send again",
+  "এই অ্যাকাউন্টে ইমেইল নেই":"This account has no email",
   "OTP চাওয়া হয়েছে":"OTP requested",
   "OTP পাঠানো হয়েছে":"OTP sent",
   "সঠিক ইমেইল ঠিকানা দিন":"Enter a valid email address",
@@ -4942,7 +4954,7 @@ function initPage() {
     P.security=()=>`
       <div class="card pad0">
         ${sRow("পাসওয়ার্ড","সর্বশেষ "+dL(STORE.security.passwordChangedAt),"editPass")}
-        ${sRow("পাসওয়ার্ড ভুলে গেছেন?","ইমেইল বা মোবাইলে OTP পাঠানো হবে","forgotPass")}
+        ${sRow("পাসওয়ার্ড ভুলে গেছেন?","অ্যাকাউন্টের ইমেইলে রিসেট লিংক পাঠানো হবে","forgotPass")}
       </div>
       <div class="sec-t">লগইন সুরক্ষা</div>
       <div class="card pad0">
@@ -6505,7 +6517,7 @@ function initPage() {
     return s;
   }
   
-  /* ---------- forgot password (OTP verification) ---------- */
+  /* ---------- forgot password ---------- */
   /* Firebase Authentication — change password (re-auth + updatePassword) */
   async function donorChangePassword(currentPassword,newPassword){
     const shared=initSharedFirebase();
@@ -6518,10 +6530,95 @@ function initPage() {
     await reauthenticateWithCredential(user,cred);
     await updatePassword(user,newPassword);
   }
-  /* পাসওয়ার্ড ভুলে গেলে — সাইটের আলাদা full-page UI (/forgot-password)।
-     সেখান থেকেই Firebase-এর built-in reset link পাঠানো হয়; কোনো custom OTP নেই। */
+  /* পাসওয়ার্ড ভুলে গেলে — ইউজার ইতিমধ্যে লগইন করা, তাই আলাদা full-page UI-তে
+     ইমেইল চাওয়া হয় না। Firebase Auth-এর অ্যাকাউন্ট ইমেইলে সরাসরি reset link
+     পাঠিয়ে ছোট confirmation sheet দেখানো হয়। */
+  function maskEmail(em){
+    const s=String(em||"").trim();
+    const at=s.indexOf("@");
+    if(at<1)return s;
+    const u=s.slice(0,at), d=s.slice(at+1);
+    const show=u.length<=2?u[0]+"*":u.slice(0,2)+"*".repeat(Math.min(u.length-2,4));
+    return show+"@"+d;
+  }
   function sheetForgot(){
-    try{ window.location.assign(appBase()+"forgot-password"); }catch(e){ navigateToPage("home"); }
+    const shared=initSharedFirebase();
+    const user=shared.auth && shared.auth.currentUser;
+    const email=String((user&&user.email)||STORE.account.email||"").trim().toLowerCase();
+    if(!email||!mailOK(email)){
+      toast("এই অ্যাকাউন্টে ইমেইল নেই","er");
+      return;
+    }
+    const s=sheet("পাসওয়ার্ড রিসেট লিংক",`
+      <div id="fg_body" style="text-align:center;padding:8px 0 2px">
+        <div style="width:64px;height:64px;margin:0 auto 14px;border-radius:50%;background:var(--grn-s);
+          color:var(--grn);display:grid;place-items:center;box-shadow:inset 0 0 0 1px rgba(8,122,75,.12)">
+          ${ICON.mail(28)}
+        </div>
+        <b id="fg_title" style="display:block;font-size:.95rem;margin-bottom:6px">লিংক পাঠানো হচ্ছে…</b>
+        <p id="fg_desc" class="mut" style="font-size:.82rem;line-height:1.7;margin:0 0 12px">
+          <span data-noi18n>${esc(maskEmail(email))}</span>
+        </p>
+        <div id="fg_note" class="note i" style="text-align:left;margin:0">
+          ${ICON.info(16)}
+          <span>অনুগ্রহ করে একটু অপেক্ষা করুন…</span>
+        </div>
+      </div>`,
+      `<button class="btn" data-close style="flex:1" id="fg_ok" disabled>বুঝেছি</button>`);
+    const setState=(kind,msg)=>{
+      const title=s.q("#fg_title"), desc=s.q("#fg_desc"), note=s.q("#fg_note"), ok=s.q("#fg_ok");
+      if(kind==="ok"){
+        title.textContent="রিসেট লিংক পাঠানো হয়েছে";
+        desc.innerHTML=`আপনার অ্যাকাউন্টের ইমেইলে পাসওয়ার্ড রিসেট লিংক পাঠানো হয়েছে।<br>
+          <b data-noi18n style="color:var(--ink);font-weight:800">${esc(maskEmail(email))}</b>`;
+        note.className="note g";
+        note.style.textAlign="left";
+        note.style.margin="0";
+        note.innerHTML=`${ICON.checkC(16)}
+          <span>ইমেইল খুলে লিংকে ক্লিক করে নতুন পাসওয়ার্ড সেট করুন। ইমেইল না পেলে স্প্যাম ফোল্ডার দেখুন।</span>`;
+        if(ok){ok.disabled=false;ok.textContent="বুঝেছি";}
+        s.q(".ft").innerHTML=`
+          <button class="btn gh" id="fg_again" style="flex:1">আবার পাঠান</button>
+          <button class="btn" data-close style="flex:1">বুঝেছি</button>`;
+        s.q("#fg_again").onclick=()=>send(true);
+      }else if(kind==="er"){
+        title.textContent="লিংক পাঠানো যায়নি";
+        desc.innerHTML=`<span data-noi18n>${esc(maskEmail(email))}</span>`;
+        note.className="note r";
+        note.style.textAlign="left";
+        note.style.margin="0";
+        note.innerHTML=`${ICON.warn(16)}<span>${esc(msg||"আবার চেষ্টা করুন।")}</span>`;
+        s.q(".ft").innerHTML=`
+          <button class="btn gh" data-close style="flex:1">বন্ধ</button>
+          <button class="btn" id="fg_again" style="flex:1">আবার পাঠান</button>`;
+        s.q("#fg_again").onclick=()=>send(true);
+      }else{
+        title.textContent="লিংক পাঠানো হচ্ছে…";
+        desc.innerHTML=`<span data-noi18n>${esc(maskEmail(email))}</span>`;
+        note.className="note i";
+        note.style.textAlign="left";
+        note.style.margin="0";
+        note.innerHTML=`${ICON.info(16)}<span>অনুগ্রহ করে একটু অপেক্ষা করুন…</span>`;
+        if(ok){ok.disabled=true;}
+      }
+    };
+    let busy=false;
+    async function send(again){
+      if(busy)return;busy=true;
+      setState("load");
+      try{
+        await requestPasswordReset(shared.auth, email);
+        logAct(again?"পাসওয়ার্ড রিসেট লিংক আবার পাঠানো":"পাসওয়ার্ড রিসেট লিংক পাঠানো",
+          maskEmail(email),"security");
+        setState("ok");
+        toast("রিসেট লিংক পাঠানো হয়েছে","ok");
+      }catch(err){
+        const msg=authErrorMessage(err,{fallback:"রিসেট লিংক পাঠানো যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।"});
+        setState("er", msg);
+        toast(msg,"er");
+      }finally{busy=false}
+    }
+    send(false);
   }
 
   /* ---------- REAL account deletion ----------
