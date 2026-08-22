@@ -4060,13 +4060,9 @@ function initPage() {
           phone:a.phone,whatsapp:d.whatsapp||"",ownerUid:owner,at:new Date().toISOString()};
         oldQ<0?st.queue.unshift(q):st.queue[oldQ]={...st.queue[oldQ],...q};
       }else if(oldQ>=0)st.queue.splice(oldQ,1);
-      if(d.is&&d.status==="approved"){
-        const me={uid:owner,donorId:d.donorId,id:d.donorId,name:dv("name"),group:d.bloodGroup,gender:dv("gender"),
-          dob:dv("dob"),phone:dv("phone"),area:dv("area"),whatsapp:d.whatsapp||dv("phone"),lastDonation:d.lastDonation,
-          totalDonations:RAW.donations.filter(x=>x.ok).length,joined:a.joined,verified:true,ownerUid:owner};
-        const di=st.donors.findIndex(x=>x.id===d.donorId||x.ownerUid===owner);const c=CBDCShared.fromDonerDonor(me);
-        di<0?st.donors.unshift(c):st.donors[di]={...st.donors[di],...c};
-      }
+      /* Approved donor records are created only from Admin/Moderator approval.
+         The Doner panel may submit/update a pending request, but it must never
+         add itself to the public donors list. */
       RAW.mine.forEach(m=>{
         const qi=st.queue.findIndex(q=>q.kind==="request"&&q.id===m.id);
         const ri=st.requests.findIndex(r=>r.id===m.id);
@@ -6421,9 +6417,10 @@ function initPage() {
         phone:a.phone||"", dob:a.dob||"", gender:a.gender||"", area:a.area||"",
         address:a.address||"", photoURL:a.photo||"", joined:a.joined||""
       };
-      // donor fields — শুধু donor হলে লিখি, না হলে existing RTDB donorStatus overwrite না হয়
+      // donor fields — user can only create/update pending application metadata.
+      // "approved" is admin-controlled and comes from donors/{id}, not from users/{uid}.
       if(d.is && d.status && d.status!=="none"){
-        payload.donorStatus = d.status;
+        if(d.status!=="approved") payload.donorStatus = d.status;
         payload.bloodGroup = d.bloodGroup||"";
         payload.donorId = d.donorId||"";
         payload.lastDonation = d.lastDonation||"";
@@ -6489,7 +6486,10 @@ function initPage() {
     if(_bg) STORE.donor.bloodGroup=_bg;
     if(_dId) STORE.donor.donorId=_dId;
     if(_dStatus && _dStatus!=="none"){
-      STORE.donor.is=true; STORE.donor.status=_dStatus;
+      // users/{uid} is user-writable, so never trust it as proof of approval.
+      // Real approval is detected only from an approved donors/{id} record in
+      // hydrateDonorFromRtdb(). Until then the application remains pending.
+      STORE.donor.is=true; STORE.donor.status=_dStatus==="approved"?"pending":_dStatus;
     } else if(_bg && _dId){
       // bloodGroup + donorId থাকলে অন্তত pending — হিস্টোরিক ডেটার জন্য fallback
       STORE.donor.is=true; if(STORE.donor.status==="none") STORE.donor.status="pending";

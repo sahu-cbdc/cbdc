@@ -1710,7 +1710,7 @@ function initPage() {
   "তথ্য কপি করুন":"Copy details",
   "এই প্রোফাইল নামান":"Download this profile",
   "মুছে ফেলুন":"Delete",
-  "শুধু সুপার অ্যাডমিন পারেন":"Super admin only",
+  "শুধু অ্যাডমিন পারেন":"Admin only",
   "যাচাইকৃত করুন":"Mark as verified",
   "যাচাই বাতিল":"Remove verification",
   "স্থগিত করুন":"Suspend",
@@ -1828,7 +1828,7 @@ function initPage() {
   "ডিভাইস বের করা হয়েছে":"Device signed out",
   "টিমে আমার প্রোফাইল":"My profile in the team",
   "টিম তালিকায় আমাকে দেখান":"Show me in the team list",
-  "বন্ধ করলে শুধু সুপার অ্যাডমিন দেখবেন":"When off, only super admins can see you",
+  "বন্ধ করলে শুধু অ্যাডমিন দেখবেন":"When off, only admins can see you",
   "রক্তের গ্রুপ দেখান":"Show blood group",
   "মোবাইল নম্বর কে দেখবে":"Who can see my mobile",
   "ইমেইল কে দেখবে":"Who can see my email",
@@ -1862,7 +1862,6 @@ function initPage() {
   "এই ডিভাইস থেকে বের হন":"Sign out on this device",
   "আমার সেটিংস রিসেট":"Reset my settings",
   "প্রোফাইল ডিফল্ট অবস্থায় ফিরবে":"Your profile returns to its defaults",
-  "সুপার অ্যাডমিন":"Super Admin",
   "অ্যাডমিন":"Admin",
   "মডারেটর":"Moderator",
   "টি অনুমতি":"permissions",
@@ -1876,7 +1875,7 @@ function initPage() {
   "শীঘ্রই আসছে":"Coming soon",
   "আপনার অনুমতি নেই":"You do not have permission",
   "এই অংশে আপনার অনুমতি নেই":"You do not have permission for this section",
-  "প্রয়োজন হলে সুপার অ্যাডমিনকে বলুন":"Ask a super admin if you need it",
+  "প্রয়োজন হলে অ্যাডমিনকে বলুন":"Ask an admin if you need it",
   "শুধু দেখার অনুমতি":"View-only access",
   "আপনার শুধু দেখার অনুমতি আছে।":"You have view-only access.",
   "রিসেট হয়েছে":"Reset complete",
@@ -1934,7 +1933,7 @@ function initPage() {
   "দ্রুত বদল — বিস্তারিত পছন্দে":"Quick switch — full options in Preferences",
   "নিজের আবেদন নিজে অনুমোদন করা যায় না":"You cannot approve your own application",
   "নিজের ভূমিকা নিজে বাড়ানো যায় না":"You cannot raise your own role",
-  "শেষ সুপার অ্যাডমিনকে সরানো যায় না":"The last super admin cannot be removed",
+  "নিজের অ্যাডমিন অ্যাক্সেস নিজে সরানো যায় না":"You cannot remove your own admin access",
   "অডিট লগ একবার লেখা হলে বদলানো যায় না":"Audit entries cannot be changed once written",
   "ফোন নম্বর দেখলে তা লগে থেকে যায়":"Revealing a phone number is always logged",
   "ওয়েবসাইটের হোমপেজে ব্যানার হিসেবে":"As a banner on the website homepage",
@@ -2074,8 +2073,8 @@ function initPage() {
   
   /* full sentences that must never be assembled from fragments */
   Object.assign(DICT_EN,{
-  "ভূমিকা ডেটাবেজ থেকে নির্ধারিত হয় — নিজে বদলানো যায় না। কিছু দরকার হলে সুপার অ্যাডমিনকে বলুন।":
-    "Your role is set from the database and cannot be changed by you. Ask a super admin if you need more access.",
+  "ভূমিকা ডেটাবেজ থেকে নির্ধারিত হয় — নিজে বদলানো যায় না। কিছু দরকার হলে অ্যাডমিনকে বলুন।":
+    "Your role is set from the database and cannot be changed by you. Ask an admin if you need more access.",
   "আসল সিস্টেমে ভূমিকা ডেটাবেজ থেকে আসবে। এখন পরীক্ষার জন্য বদলে দেখতে পারেন।":
     "In the real system the role comes from the database. Switch it here to test the panel.",
   "রক্তদাতা, অপেক্ষমাণ আবেদন ও চলমান আবেদন — সব একসাথে খোঁজা হবে।":
@@ -2109,8 +2108,8 @@ function initPage() {
   
   /* last pass — long notes, exact strings */
   Object.assign(DICT_EN,{
-  "অ্যাডমিন অ্যাকাউন্ট নিজে থেকে মুছে ফেলা যায় না — শেষ সুপার অ্যাডমিন হারিয়ে গেলে পুরো সিস্টেম আটকে যাবে। সুপার অ্যাডমিনকে বলুন।":
-    "An admin account cannot delete itself — losing the last super admin would lock the whole system. Ask a super admin.",
+  "অ্যাডমিন অ্যাকাউন্ট নিজে থেকে মুছে ফেলা যায় না — শেষ অ্যাডমিন হারিয়ে গেলে পুরো সিস্টেম আটকে যাবে। অ্যাডমিনকে বলুন।":
+    "An admin account cannot delete itself — losing the last admin would lock the whole system. Ask an admin.",
   "এই সেটিংস আপনার নিজের তথ্যের জন্য — টিমের অন্য সদস্য ও পাবলিক তালিকায় কী দেখা যাবে তা ঠিক করে।":
     "These settings cover your own details — they control what teammates and the public list can see.",
   "অ্যাডমিন হিসেবে আপনি যা যা করেন তা":"Everything you do as an admin",
@@ -2120,7 +2119,7 @@ function initPage() {
     "Devices currently signed in to your account. If you see anything unfamiliar, sign it out immediately.",
   "ভূমিকা ডেটাবেজ থেকে নির্ধারিত হয় — নিজে বদলানো যায় না।":
     "Your role is set from the database and cannot be changed by you.",
-  "কিছু দরকার হলে সুপার অ্যাডমিনকে বলুন।":"Ask a super admin if you need more access.",
+  "কিছু দরকার হলে অ্যাডমিনকে বলুন।":"Ask an admin if you need more access.",
   "শাহাদাত আহমেদ":"Shahadat Ahmed","শাহাদাত":"Shahadat"
   });
   DICT_KEYS.length=0;
@@ -2153,11 +2152,11 @@ function initPage() {
   "প্যানেল থেকে বের হয়েছেন":"Left the panel",
   "যাকে অ্যাক্সেস দেবেন তার অ্যাকাউন্ট আগে থেকেই থাকতে হবে। নাম, ইউজারনেম বা ইমেইল দিয়ে খুঁজুন।":
     "The person must already have an account. Search by name, username or email.",
-  "সুপার অ্যাডমিন ভূমিকা শুধু ডেটাবেজ থেকে দেওয়া হয়":"Super admin is granted from the database only",
+  "অ্যাডমিন ভূমিকা Admin Panel থেকে নিয়ন্ত্রিত হয়":"Admin role is controlled from the Admin Panel",
   "প্রতিটি পরিবর্তন কারণসহ অডিট লগে থাকে":"Every change is logged with its reason",
-  "সুপার অ্যাডমিনের ভূমিকা এখান থেকে বদলানো যায় না।":"A super admin's role cannot be changed from here.",
-  "ইনিই একমাত্র সুপার অ্যাডমিন — নামালে সিস্টেম নিয়ন্ত্রণহীন হয়ে যাবে।":
-    "This is the only super admin — demoting them would leave the system without an owner.",
+  "নিজের ভূমিকা এখান থেকে বদলানো যায় না।":"Your own role cannot be changed from here.",
+  "নিজের অ্যাডমিন অ্যাক্সেস নিজে পরিবর্তন করা যাবে না।":
+    "You cannot change your own admin access from here.",
   "ডোনার আইডি":"Donor ID"
   });
   DICT_KEYS.length=0;
@@ -2289,16 +2288,18 @@ function initPage() {
   };
   const PERMS=Object.values(PERM_GROUPS).flat();
   const ROLES={
-    super:{label:"সুপার অ্যাডমিন",icon:"👑",perms:PERMS.slice()},
-    admin:{label:"অ্যাডমিন",icon:"🛡️",perms:PERMS.filter(p=>!["team.manage","access.manage","settings.manage"].includes(p))},
+    admin:{label:"অ্যাডমিন",icon:"🛡️",perms:PERMS.slice()},
     /* A moderator exists to clear the pending queue — nothing else.
        They may read a donor's details while judging an application
        (the review sheet), but cannot browse or manage the donor list. */
-    mod:{label:"মডারেটর",icon:"🔧",perms:["donor.approve","donation.verify","contact.reveal",
+    mod:{label:"মডারেটর",icon:"🔧",perms:["donation.verify","contact.reveal",
       "request.view","request.approve","group.approve","report.resolve"]}
   };
   let ME={uid:"",name:"",role:PANEL.role};
-  const myPerms=()=>new Set((ME.permissions&&ME.permissions.length)?ME.permissions:ROLES[ME.role].perms);
+  const myPerms=()=>{
+    if(ME.role==="admin") return new Set(PERMS);
+    return new Set((ME.permissions&&ME.permissions.length)?ME.permissions:ROLES[ME.role].perms);
+  };
   const can=p=>myPerms().has(p);
   
   /* ══════════ BLOOD COMPATIBILITY ══════════ */
@@ -2545,7 +2546,7 @@ function initPage() {
   const ptitle=(t,s)=>`<h2 class="ptitle">${esc(t)}${s?`<small>${esc(s)}</small>`:""}</h2>`;
   const emptyBox=(ic,t,p,btn)=>`<div class="empty"><div class="ic">${SI[ic](26)}</div><b>${esc(t)}</b>
     ${p?`<p>${esc(p)}</p>`:""}${btn||""}</div>`;
-  const noPerm=()=>`<div class="card">${emptyBox("lock","এই অংশে আপনার অনুমতি নেই","প্রয়োজন হলে সুপার অ্যাডমিনকে বলুন")}</div>`;
+  const noPerm=()=>`<div class="card">${emptyBox("lock","এই অংশে আপনার অনুমতি নেই","প্রয়োজন হলে অ্যাডমিনকে বলুন")}</div>`;
   const statusPill=s=>({searching:`<span class="pill b">ডোনার খোঁজা হচ্ছে</span>`,
     matched:`<span class="pill g">ডোনার পাওয়া গেছে</span>`,done:`<span class="pill m">সম্পন্ন</span>`}[s]||"");
   function bloodBars(){
@@ -2764,7 +2765,7 @@ function initPage() {
         "These settings cover your own details — they control what teammates and the public list can see.")}</span></div>
       <div class="sec-t">টিমে আমার প্রোফাইল</div>
       <div class="card pad0">
-        ${tgRow("টিম তালিকায় আমাকে দেখান","বন্ধ করলে শুধু সুপার অ্যাডমিন দেখবেন","privacy.showInTeam")}
+        ${tgRow("টিম তালিকায় আমাকে দেখান","বন্ধ করলে শুধু অ্যাডমিন দেখবেন","privacy.showInTeam")}
         ${ME.isDonor?tgRow("রক্তের গ্রুপ দেখান","","privacy.showBlood"):""}
       </div>
       <div class="sec-t">যোগাযোগ</div>
@@ -2859,8 +2860,8 @@ function initPage() {
           background:var(--grn-s);color:var(--grn);font-size:1.1rem">${ROLES[ME.role].icon}</span>
           <div class="i"><b>${esc(ME.name)}</b><small>${ROLES[ME.role].label} · ${tp(bn(mine.size)+"টি অনুমতি",mine.size+" permissions")}</small></div></div>
         <p class="hint2" style="margin-top:10px" data-noi18n>${tp(
-          "ভূমিকা ডেটাবেজ থেকে নির্ধারিত হয় — নিজে বদলানো যায় না। কিছু দরকার হলে সুপার অ্যাডমিনকে বলুন।",
-          "Your role is set from the database and cannot be changed by you. Ask a super admin if you need more access.")}</p></div>
+          "ভূমিকা ডেটাবেজ থেকে নির্ধারিত হয় — নিজে বদলানো যায় না। কিছু দরকার হলে অ্যাডমিনকে বলুন।",
+          "Your role is set from the database and cannot be changed by you. Ask an admin if you need more access.")}</p></div>
       ${Object.entries(PERM_GROUPS).map(([g,ps])=>`
         <div class="sec-t">${esc(g)}</div>
         <div class="card pad0">${ps.map(p=>`<div class="row">
@@ -2892,8 +2893,8 @@ function initPage() {
           <span class="rt">${SI.right(17)}</span></button>
       </div>
       <div class="note w" data-noi18n>${SI.warn(17)}<span>${tp(
-        "অ্যাডমিন অ্যাকাউন্ট নিজে থেকে মুছে ফেলা যায় না — শেষ সুপার অ্যাডমিন হারিয়ে গেলে পুরো সিস্টেম আটকে যাবে। সুপার অ্যাডমিনকে বলুন।",
-        "An admin account cannot delete itself — losing the last super admin would lock the whole system. Ask a super admin.")}</span></div>`;
+        "অ্যাডমিন অ্যাকাউন্ট নিজে থেকে মুছে ফেলা যায় না — শেষ অ্যাডমিন হারিয়ে গেলে পুরো সিস্টেম আটকে যাবে। অ্যাডমিনকে বলুন।",
+        "An admin account cannot delete itself — losing the last admin would lock the whole system. Ask an admin.")}</span></div>`;
     bindMe(el,"manage");
   };
   
@@ -3131,16 +3132,15 @@ function initPage() {
     try{ window.location.assign(appBase()+"forgot-password"); }catch(e){ navigateToPage("home"); }
   }
   /* ---------- delete my own admin account ----------
-     A staff account is never deleted silently: the last super admin must stay,
+     A staff account is never deleted silently: the last admin must stay,
      and every request is written to the audit trail for the rest of the team. */
   function sheetDeleteMe(){
-    const supers=DB.accounts?DB.accounts.filter(a=>a.role==="super").length:1;
-    const lastSuper=ME.role==="super"&&supers<=1;
+    const isAdminAccount=ME.role==="admin";
     const s=sheet("অ্যাকাউন্ট মুছে ফেলুন",
-      lastSuper
-      ? `<div class="note r">${SI.warn(17)}<span>আপনিই <b>একমাত্র সুপার অ্যাডমিন</b>।
+      isAdminAccount
+      ? `<div class="note r">${SI.warn(17)}<span>আপনি <b>অ্যাডমিন</b>।
           আপনার অ্যাকাউন্ট মুছে ফেললে পুরো সিস্টেম নিয়ন্ত্রণহীন হয়ে যাবে।
-          আগে অন্য কাউকে সুপার অ্যাডমিন করুন, তারপর মুছুন।</span></div>`
+          নিজের অ্যাডমিন অ্যাক্সেস নিজে মুছতে পারবেন না।</span></div>`
       : `<div class="note r">${SI.warn(17)}<span>অনুরোধ করার পর <b>২৪ ঘণ্টার মধ্যে</b> অ্যাকাউন্ট এবং
           অ্যাকাউন্টের সাথে সম্পর্কিত সকল ডাটা মুছে যাবে। এটি ফেরানো যাবে না।</span></div>
         <b style="display:block;margin:14px 0 6px;font-size:.86rem">যা মুছে যাবে</b>
@@ -3151,10 +3151,10 @@ function initPage() {
           কারণ এগুলো ক্লাবের কাজের রেকর্ডের অংশ</p>
         <div class="f"><label>নিশ্চিত করতে <b style="color:var(--red)">মুছে ফেলুন</b> লিখুন</label>
           <input id="dmt" autocapitalize="off"></div>`,
-      lastSuper
+      isAdminAccount
       ? `<button class="btn" data-close style="flex:1">বুঝেছি</button>`
       : `<button class="btn gh" data-close>বাতিল</button><button class="btn red" id="dmok">অনুরোধ পাঠান</button>`);
-    if(lastSuper)return;
+    if(isAdminAccount)return;
     s.q("#dmok").onclick=()=>{
       if(s.q("#dmt").value.trim()!=="মুছে ফেলুন")return toast('হুবহু "মুছে ফেলুন" লিখুন',"er");
       logMe("অ্যাকাউন্ট মুছে ফেলার অনুরোধ","২৪ ঘণ্টার মধ্যে কার্যকর","security");
@@ -3357,7 +3357,11 @@ function initPage() {
         ["রিপোর্ট",q.proof?"সংযুক্ত":"নেই"]],
       report:[["জানিয়েছেন",q.name],["ধরন",q.type],["বিবরণ",q.text]]
     }[q.kind];
-    const may=can("donor.approve")||can("request.approve");
+    const may = q.kind==="donor" ? can("donor.approve")
+      : q.kind==="request" ? can("request.approve")
+      : q.kind==="donation" ? can("donation.verify")
+      : q.kind==="group" ? can("group.approve")
+      : can("report.resolve");
     const s=sheet(k.t,`
       <div class="per"><span class="bg2" style="width:44px;height:44px;border-radius:12px">${q.group||SI[k.ic](20)}</span>
         <div class="i"><b>${esc(q.name||q.patient)}</b><small>${q.id} · ${timeAgo(q.at)}</small></div></div>
@@ -3402,9 +3406,18 @@ function initPage() {
   function decide(id,ok,note,quiet){
     const i=DB.queue.findIndex(x=>x.id===id);if(i<0)return;
     const q=DB.queue[i];
-    if(q.kind==="donor"&&ok)DB.donors.unshift({id:q.donorId||("CBDC-2026-"+pad(DB.donors.length+1)),
-      name:q.name,group:q.group,area:q.area,phone:q.phone,whatsapp:q.whatsapp||q.phone,gender:q.gender,dob:q.dob||"",last:q.last,
-      ownerUid:q.ownerUid||"",available:true,verified:true,suspended:false,joined:iso(now()),donations:q.last?1:0});
+    if(q.kind==="donor"&&ok){
+      const approvedDonorId = q.donorId || ("CBDC-2026-"+pad(DB.donors.length+1));
+      DB.donors.unshift({id:approvedDonorId,
+        name:q.name,group:q.group,area:q.area,phone:q.phone,whatsapp:q.whatsapp||q.phone,gender:q.gender,dob:q.dob||"",last:q.last,
+        ownerUid:q.ownerUid||"",available:true,verified:true,suspended:false,joined:iso(now()),donations:q.last?1:0});
+      if(q.ownerUid){
+        updateRow(NODES.users, q.ownerUid, {donorStatus:"approved", donorId:approvedDonorId, bloodGroup:q.group||""})
+          .catch(e=>console.warn("donor approve user:",e&&e.message));
+        if(q.memberId) updateRow(NODES.members, q.memberId, {status:"approved", donorId:approvedDonorId})
+          .catch(e=>console.warn("donor approve member:",e&&e.message));
+      }
+    }
     if(q.kind==="donation"&&ok){const d=DB.donors.find(x=>x.name===q.name);
       if(d){d.donations++;if(!d.last||q.date>d.last)d.last=q.date}}
     if(q.kind==="request"&&ok)DB.live.unshift({id:q.id,patient:q.patient,group:q.group,bags:q.bags,
@@ -3726,7 +3739,7 @@ function initPage() {
       <div class="card"><ul class="wl">
         <li>নিজের আবেদন নিজে অনুমোদন করা যায় না</li>
         <li>নিজের ভূমিকা নিজে বাড়ানো যায় না</li>
-        <li>শেষ সুপার অ্যাডমিনকে সরানো যায় না</li>
+        <li>নিজের অ্যাডমিন অ্যাক্সেস নিজে সরানো যায় না</li>
         <li>অডিট লগ একবার লেখা হলে বদলানো যায় না</li>
         <li>ফোন নম্বর দেখলে তা লগে থেকে যায়</li></ul></div>`
     +`<div class="sec-t">আপনার অনুমতি</div>
@@ -3739,6 +3752,7 @@ function initPage() {
   };
   function roleSheet(uid){
     const t=DB.team.find(x=>x.uid===uid);if(!t)return;
+    t.role=t.role==="admin"?"admin":(t.role==="moderator"||t.role==="mod")?"mod":"mod";
     const isMe=uid===ME.uid;
     let pick=t.role;
     const s=sheet("ভূমিকা ও অনুমতি",`
@@ -3756,8 +3770,6 @@ function initPage() {
       if(isMe)return;
       s.querySelectorAll("#rl button").forEach(x=>x.classList.remove("on"));b.classList.add("on");pick=b.dataset.r});
     s.q("#rl_ok")&&(s.q("#rl_ok").onclick=()=>{
-      if(t.role==="super"&&pick!=="super"&&DB.team.filter(x=>x.role==="super").length<2)
-        return toast("শেষ সুপার অ্যাডমিনকে সরানো যাবে না","er");
       t.role=pick;logAudit("ভূমিকা পরিবর্তন",t.name+" → "+ROLES[pick].label,"team");
       persist();s.close();renderSub("team");toast("ভূমিকা হালনাগাদ হয়েছে","ok")});
   }
@@ -4008,7 +4020,7 @@ function initPage() {
           <span class="tx"><b>এই প্রোফাইল নামান</b><small>CSV ফাইল</small></span></button>`:""}
         ${ROLES[ME.role].perms.includes("team.manage")?`<button class="row" data-m="del">
           <span class="ic" style="background:var(--red-s);color:var(--red)">${SI.trash(18)}</span>
-          <span class="tx"><b style="color:var(--red-d)">মুছে ফেলুন</b><small>শুধু সুপার অ্যাডমিন পারেন</small></span></button>`:""}
+          <span class="tx"><b style="color:var(--red-d)">মুছে ফেলুন</b><small>শুধু অ্যাডমিন পারেন</small></span></button>`:""}
       </div>`,`<button class="btn gh w" data-close>বন্ধ</button>`);
       s.querySelectorAll("[data-m]").forEach(b=>b.onclick=async()=>{
         const m=b.dataset.m;s.close();
@@ -4057,15 +4069,13 @@ function initPage() {
   /* ══════════════════════════════════════════════════════════════
      ACCESS & ROLES  —  grant panel access to an existing account
   
-     Only a super admin reaches this page. It lists every account in the
-     system (team members and ordinary users alike), searchable by name,
-     @username or email, and lets one be promoted or demoted.
+     Admin reaches this page. It lists every account in the system (team
+     members and ordinary users alike), searchable by name, @username or email,
+     and lets one be promoted or demoted.
   
      Deliberate rules, all enforced here and echoed in the audit log:
        • you cannot change your own role
-       • the last super admin can never be demoted
-       • "super admin" is NOT grantable from the UI — it comes from the
-         database only, so a compromised session cannot mint peers
+       • admin is the highest role and has full access
        • a reason is mandatory and travels into the audit trail
        • the exact powers of the new role are shown BEFORE confirming
      ══════════════════════════════════════════════════════════════ */
@@ -4080,24 +4090,23 @@ function initPage() {
   if(!Array.isArray(DB.accounts))DB.accounts=[];
 
   
-  const ROLE_ORDER=["user","mod","admin","super"];
+  const ROLE_ORDER=["user","mod","admin"];
   const ROLE_META={
-    user:{label:"সাধারণ ব্যবহারকারী",icon:"🩸",desc:"শুধু ডোনার অ্যাপ ব্যবহার করতে পারবেন"},
+    user:{label:"ডোনার",icon:"🩸",desc:"Doner Panel ব্যবহার করতে পারবেন"},
     mod:{label:"মডারেটর",icon:"🔧",desc:"অপেক্ষমাণ আবেদন যাচাই ও অনুমোদন করবেন"},
-    admin:{label:"অ্যাডমিন",icon:"🛡️",desc:"ওয়েবসাইট ও রক্তদাতা ব্যবস্থাপনা করবেন"},
-    super:{label:"সুপার অ্যাডমিন",icon:"👑",desc:"সবকিছু — ভূমিকা দেওয়াসহ"}
+    admin:{label:"অ্যাডমিন",icon:"🛡️",desc:"Full Access — পুরো website ও Admin Panel control করবেন"}
   };
-  /* super admin is intentionally absent: it is granted from the database */
   const GRANTABLE=["user","mod","admin"];
-  const roleLabel=r=>(ROLE_META[r]||{}).label||r;
-  const roleIcon=r=>(ROLE_META[r]||{}).icon||"🩸";
-  const isStaff=r=>r&&r!=="user";
-  const superCount=()=>DB.accounts.filter(a=>a.role==="super").length;
+  const normRole=r=>{r=String(r||"user").toLowerCase();return r==="admin"?"admin":(r==="moderator"||r==="mod")?"mod":"user"};
+  const roleLabel=r=>(ROLE_META[normRole(r)]||{}).label||r;
+  const roleIcon=r=>(ROLE_META[normRole(r)]||{}).icon||"🩸";
+  const isStaff=r=>{r=normRole(r);return r&&r!=="user"};
   
   let acFilter="all", acQuery="";
   
   SUBP.access=el=>{
     if(!can("access.manage"))return el.innerHTML=noPerm();
+    DB.accounts.forEach(a=>{a.role=normRole(a.role)});
     const q=acQuery.trim().toLowerCase();
     let list=DB.accounts.filter(a=>{
       if(acFilter==="staff"&&!isStaff(a.role))return false;
@@ -4129,15 +4138,14 @@ function initPage() {
             >${roleIcon(a.role)}</span>
           <span class="tx"><b>${esc(a.name)}${a.uid===ME.uid?tp(" (আপনি)"," (you)"):""}</b>
             <small>@${esc(a.username)} · ${esc(a.email)}</small></span>
-          <span class="tag ${a.role==="super"?"a":isStaff(a.role)?"g":""}">${roleLabel(a.role)}</span>
+          <span class="tag ${isStaff(a.role)?"g":""}">${roleLabel(a.role)}</span>
         </button>`).join("")}</div>`
       : `<div class="card">${emptyBox("search","কেউ মেলেনি",
           "অন্য নাম, ইউজারনেম বা ইমেইল দিয়ে চেষ্টা করুন")}</div>`)
     +`<div class="sec-t">নিয়ম</div>
       <div class="card"><ul class="wl">
         <li>${tp("নিজের ভূমিকা নিজে বদলানো যায় না","You cannot change your own role")}</li>
-        <li>${tp("শেষ সুপার অ্যাডমিনকে নামানো যায় না","The last super admin cannot be demoted")}</li>
-        <li>${tp("সুপার অ্যাডমিন ভূমিকা শুধু ডেটাবেজ থেকে দেওয়া হয়","Super admin is granted from the database only")}</li>
+        <li>${tp("অ্যাডমিনের কাছে Full Access থাকবে","Admin has full access")}</li>
         <li>${tp("প্রতিটি পরিবর্তন কারণসহ অডিট লগে থাকে","Every change is logged with its reason")}</li>
       </ul></div>`;
   
@@ -4162,8 +4170,8 @@ function initPage() {
   
   function accessSheet(uid){
     const a=DB.accounts.find(x=>x.uid===uid);if(!a)return;
+    a.role=normRole(a.role);
     const isMe=uid===ME.uid;
-    const lastSuper=a.role==="super"&&superCount()<2;
     const donor=a.donorId?DB.donors.find(d=>d.id===a.donorId):null;
     let pick=a.role;
   
@@ -4183,22 +4191,16 @@ function initPage() {
       ${isMe?`<div class="note w" data-noi18n>${SI.warn(17)}<span>${tp(
           "নিরাপত্তার জন্য নিজের ভূমিকা নিজে বদলানো যায় না।",
           "For safety you cannot change your own role.")}</span></div>`:""}
-      ${lastSuper&&!isMe?`<div class="note w" data-noi18n>${SI.warn(17)}<span>${tp(
-          "ইনিই একমাত্র সুপার অ্যাডমিন — নামালে সিস্টেম নিয়ন্ত্রণহীন হয়ে যাবে।",
-          "This is the only super admin — demoting them would leave the system without an owner.")}</span></div>`:""}
-      ${a.role==="super"?`<p class="hint2" style="margin-top:10px">${tp(
-        "সুপার অ্যাডমিনের ভূমিকা এখান থেকে বদলানো যায় না।",
-        "A super admin's role cannot be changed from here.")}</p>`:`
-        <div class="sec-t">নতুন ভূমিকা</div>
+      <div class="sec-t">নতুন ভূমিকা</div>
         <div class="strip wrap chips" id="acr">${GRANTABLE.map(r=>
           `<button data-r="${r}" class="${pick===r?"on":""}" ${isMe?"disabled":""}
             >${ROLE_META[r].icon} ${ROLE_META[r].label}</button>`).join("")}</div>
         <div id="acpw"></div>
         <div class="sec-t">কারণ <i style="color:var(--red)">*</i></div>
-        <textarea id="acwhy" rows="2" ${isMe?"disabled":""}></textarea>`}`;
+        <textarea id="acwhy" rows="2" ${isMe?"disabled":""}></textarea>`;
   
     const s=sheet("অ্যাক্সেস ও ভূমিকা",body(),
-      (isMe||a.role==="super")
+      isMe
         ? `<button class="btn gh w" data-close>বন্ধ</button>`
         : `<button class="btn gh" data-close>বাতিল</button>
            <button class="btn" id="acok">${SI.key(15)} সংরক্ষণ</button>`);
@@ -4231,8 +4233,6 @@ function initPage() {
       if(pick===a.role)return toast(tp("ভূমিকা বদলানো হয়নি","Role unchanged"));
       const why=(s.q("#acwhy").value||"").trim();
       if(why.length<4)return toast(tp("কারণ লিখতে হবে","A reason is required"),"er");
-      if(a.role==="super"&&superCount()<2)
-        return toast(tp("শেষ সুপার অ্যাডমিনকে নামানো যাবে না","The last super admin cannot be demoted"),"er");
       const grant=isStaff(pick);
       if(!await confirmS({
         title:grant?tp("অ্যাক্সেস দেবেন?","Grant access?"):tp("অ্যাক্সেস তুলে নেবেন?","Revoke access?"),
@@ -4243,6 +4243,16 @@ function initPage() {
   
       const before=a.role;
       a.role=pick;
+      const staffRole = pick === "admin" ? "admin" : pick === "mod" ? "moderator" : "donor";
+      if(grant){
+        setRow(NODES.admins, a.uid, {
+          uid:a.uid, email:a.email||"", name:a.name||"", username:a.username||"",
+          role:staffRole, permissions:pick==="admin"?PERMS:ROLES.mod.perms, updatedAt:nowIso()
+        }).catch(e=>console.warn("role grant:",e&&e.message));
+      }else{
+        removeRow(NODES.admins, a.uid).catch(e=>console.warn("role revoke:",e&&e.message));
+      }
+      updateRow(NODES.users, a.uid, {role:staffRole}).catch(e=>console.warn("user role update:",e&&e.message));
       /* keep the team list in step: staff appear there, users do not */
       const tIdx=DB.team.findIndex(t=>t.uid===a.uid);
       if(isStaff(pick)){
@@ -4637,7 +4647,7 @@ function initPage() {
           }catch(e){console.warn("role lookup:",e&&e.message)}
 
           const target=panelForRole(resolved.role);          // doner | moderator | admin
-          const here=PANEL.id==="super"?"admin":"moderator";
+          const here=PANEL.id;
           if(target!==here){
             /* এই প্যানেলে ঢোকার অনুমতি নেই — নিজের dashboard-এ পাঠানো হচ্ছে */
             navigateToPage(target);
@@ -4653,7 +4663,7 @@ function initPage() {
           ME.permissions=Array.isArray(staff.permissions)?staff.permissions:null;
           /* RTDB-তে লেখা role → প্যানেলের অভ্যন্তরীণ role */
           const raw=String(staff.role||"").toLowerCase();
-          ME.role=PANEL.id==="super"?(raw==="admin"?"admin":"super"):"mod";
+          ME.role=PANEL.id==="admin"?"admin":"mod";
           if(user.photoURL)ME.photo=ME.photo||user.photoURL;
           saveMe();
           applyLogo(document);

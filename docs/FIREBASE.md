@@ -116,11 +116,11 @@ metadata** সেভ হয়।
 
 | Node | Key | Fields | Access |
 | --- | --- | --- | --- |
-| `donors` | donor id (`CBDC-2026-XXXX`) | name, bloodGroup, gender, **dob**, phone, whatsapp, area, lastDonationDate, donations, totalDonations, status, available, verified, suspended, joined, occupation, ownerUid, photo (ImgBB URL) | public read; staff/owner write |
+| `donors` | donor id (`CBDC-2026-XXXX`) | name, bloodGroup, gender, **dob**, phone, whatsapp, area, lastDonationDate, donations, totalDonations, status, available, verified, suspended, joined, occupation, ownerUid, photo (ImgBB URL) | public read; **admin write only** |
 | `requests` | push id | patientName, bloodGroup, bags, urgency, status, workflowStatus, hospitalName, hospitalAddress, requesterName, phone, whatsapp, **patientDob**, createdAt, expiresAt, responders | anyone can create; public read; staff manage |
 | `members` | push id | donor sign-up application (status `pending`, **dob**) | anyone can create; owner/staff read |
-| `users` | **auth uid** | uid, name, username, email, phone, **dob**, gender, area, photoURL, provider, role, status, createdAt, `data:{donations,mine,notifs,activity}` | owner + staff |
-| `admins` | **auth uid** | email, role (`admin`/`super`/`moderator`/`mod`), permissions[], name, username, designation | own read; super admin write |
+| `users` | **auth uid** | uid, name, username, email, phone, **dob**, gender, area, photoURL, provider, role, status, createdAt, `data:{donations,mine,notifs,activity}` | owner + staff; `approved` donorStatus admin-only |
+| `admins` | **auth uid** | email, role (`admin`/`moderator`), permissions[], name, username, designation | own read; admin write |
 | `queue` | record id | kind (`donor`/`request`/`donation`), name, group, area, **dob**, phone, … | create খোলা (নতুন আবেদনের জন্য); পড়া/সম্পাদনা staff only |
 | `gallery` | image id | title, caption, url (ImgBB link), imageUrl, thumbUrl, status, order | public read; staff write |
 | `notices` | notice id | title, body, audience, status, from, to | public read; staff write |
@@ -138,7 +138,7 @@ metadata** সেভ হয়।
 
 | কাজ | Implementation |
 | --- | --- |
-| Register (email/password) | `createUserWithEmailAndPassword` + RTDB `users/{uid}`, `members`, `queue`-এ লেখা |
+| Register (email/password) | `createUserWithEmailAndPassword` + RTDB `users/{uid}`; donor application আলাদা ভাবে Doner Panel থেকে pending queue-এ যায় |
 | Register (Google) | `signInWithPopup` + GoogleAuthProvider |
 | Login | `signInWithEmailAndPassword` (username/phone দিলে RTDB `users` থেকে email resolve) |
 | Logout | `signOut` (Home-এর লগইন গেট + Doner `doLogout`) |
@@ -157,11 +157,13 @@ role নির্ধারণের **একমাত্র জায়গা**
 `users` node-এ `role:"admin"` লেখা থাকলেও তা **গ্রাহ্য নয়** — `admins`-ই একমাত্র
 কর্তৃপক্ষ (নিরাপত্তা)।
 
+Website-এ role শুধুমাত্র ৩টি: **Admin** (Full Access), **Moderator**, **Doner**। আলাদা কোনো Super Admin role নেই।
+
 **কে কোথায় যাবে** — `panelForRole()`:
 
 | RTDB role | পেজ |
 | --- | --- |
-| `admin` / `super` | `/admin` — Admin Panel |
+| `admin` | `/admin` — Admin Panel (Full Access) |
 | `moderator` / `mod` | `/moderator` — Moderator Panel |
 | অন্য সব (`donor`) | `/doner` — Doner Dashboard |
 
@@ -170,9 +172,16 @@ role নির্ধারণের **একমাত্র জায়গা**
 - প্রতিটি প্যানেল boot-এ নিজেই আবার যাচাই করে: ভুল প্যানেলে ঢুকলে ব্যবহারকারীকে
   তার নিজের dashboard-এ সরিয়ে দেওয়া হয়। **Admin/Moderator কখনোই সাধারণ Doner
   dashboard ব্যবহার করে না**, এবং উল্টোটাও নয়।
-- **Permission**: প্যানেলের `can()` আগে `ME.permissions` (RTDB `admins`-এর array)
-  দেখে, না থাকলে role-ভিত্তিক default map (`ROLES`)।
+- **Permission**: Admin সব permission পায়। Moderator সীমিত moderation কাজ করতে পারে;
+  donor application approve করে public `donors` node-এ যোগ করার ক্ষমতা শুধু Admin-এর।
 - Security Rules-এও একই যাচাই আছে (দেখুন `database.rules.json`)।
+
+### Donor application flow
+
+1. নতুন account তৈরি/login করলে user শুধু Doner role-এ থাকে — auto donor হয় না।
+2. Doner Panel → “রক্তদাতা হিসেবে যুক্ত হন” থেকে আবেদন করলে সেটি `queue`-এ `pending` থাকে।
+3. Admin approve করলে তবেই `donors/{donorId}` তৈরি হয় এবং public donor list-এ দেখা যায়।
+4. `users/{uid}/donorStatus` user নিজে `approved` করতে পারে না; Security Rules-এ এটি Admin-only।
 
 ### Staff account তৈরি
 
@@ -182,7 +191,7 @@ Firebase Console → Authentication-এ user তৈরি করুন, তা�
 admins/<auth-uid>
 {
   "email": "staff@cbdc.org",
-  "role": "admin",            // "admin" | "super" | "moderator" | "mod"
+  "role": "admin",            // "admin" | "moderator" | "mod"
   "permissions": [],           // ঐচ্ছিক — না দিলে role-ভিত্তিক ডিফল্ট
   "name": "শাহাদাত আহমেদ",
   "username": "shahadat",
@@ -213,8 +222,8 @@ firebase deploy --only hosting
 - `donors` / `requests` / `gallery` / `notices` — public read (পাবলিক ওয়েবসাইটের জন্য)।
 - `members` / `requests` / `queue` — নতুন রেকর্ড তৈরি খোলা (রেজিস্ট্রেশন ও ইমারজেন্সি
   আবেদন), কিন্তু পড়া/সম্পাদনা মালিক বা staff ছাড়া বন্ধ।
-- `users/{uid}` — owner read/write; staff full access; `role` ফিল্ড শুধু staff বদলাতে পারে।
-- `admins/{uid}` — নিজের রেকর্ড পড়া যায়; লেখা শুধু super admin।
+- `users/{uid}` — owner read/write; staff full access; `role` ফিল্ড শুধু Admin বদলাতে পারে; `donorStatus:"approved"` শুধু Admin লিখতে পারে।
+- `admins/{uid}` — নিজের রেকর্ড পড়া যায়; লেখা শুধু Admin।
 - `accounts` — staff only।
 - `settings` — public read (ImgBB client key), staff write।
 - `.indexOn` — যেসব ফিল্ডে খোঁজা হয় (`email`, `username`, `phone`, `status` …) সেগুলোতে
