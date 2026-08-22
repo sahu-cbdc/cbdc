@@ -3449,13 +3449,14 @@ function initPage() {
       /* প্যানেল লিংক — clean path URL ("/admin" ইত্যাদি; src/lib/router.ts) */
       function dashPage(role){ return role==="admin" ? pagePath("admin") : role==="moderator" ? pagePath("moderator") : appBase(); }
       // RTDB `admins/{uid}`-এর role ফিল্ড বদলালেই ব্যবহারকারীর প্যানেল বদলে যায় (real-time)
-      // ইতিমধ্যে লগইন করা থাকলে লগইন ভিউতে "ড্যাশবোর্ডে যান" কার্ড দেখায়
+      /* শুধু Login ভিউ খোলার সময়ই run করা হয় (Home boot থেকে কখনোই না) —
+         নাহলে লগইন থাকা অবস্থায় Main Website/Home-এ গেলেই আবার Panel-এ
+         auto-redirect (loop) হয়ে যেত। Login-এর সময় role-based redirect
+         আগের মতোই কাজ করে (`routeClick` → dashboard/login + finishLogin)। */
       function renderLoginGate(){
         const role = sessionStorage.getItem("cbdcUserRole");
         const box = $("#alreadyBox"), card = $("#loginBox");
         if(!box || !card) return;
-        /* ইতিমধ্যে লগইন করা থাকলে "✅ লগইন সক্রিয় আছে" আলাদা পেজ আর দেখানো হয় না —
-           role অনুযায়ী সরাসরি নিজ নিজ প্যানেলে পাঠানো হয় (আইটেম ৯)। */
         if(sessionStorage.getItem("cbdcAdmin")==="1" && (role==="admin"||role==="moderator")){
           try{ navigateToPage(role==="admin"?"admin":"moderator"); }catch(e){}
           return;
@@ -5119,7 +5120,10 @@ function initPage() {
       setLogo();
       if(window.CBDCShared)CBDCShared.subscribe(()=>{ renderPublic(); renderGallery(); });
       initFirebase().then(()=>{
-        renderPublic(); renderGallery(); renderLoginGate(); renderAuthState();
+        /* Home/root বুট-এ কোনো লগইন-গেট redirect নয় — ব্যবহারকারী Panel থেকে
+           সরাসরি Main Website-এ ফিরে আসতে পারবে। Role redirect শুধু Login ভিউ ও
+           Login সফলের সময় হয় (routeClick/finishLogin)। */
+        renderPublic(); renderGallery(); renderAuthState();
         try{
           const pending = getPendingGoogleProfile();
           if(pending && auth && auth.currentUser && auth.currentUser.uid === pending.uid){
