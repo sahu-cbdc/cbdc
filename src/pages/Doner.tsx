@@ -18,12 +18,25 @@ import {
   loadUserProfile,
   isProfileComplete,
 } from "../lib/authx";
-import { getRow, setRow, updateRow, watchRow, addRow, findBy, listOnce, nowIso, updatePaths } from "../lib/rtdb";
+import { getRow, setRow, updateRow, watchRow, addRow, findBy, listOnce, nowIso, updatePaths, removeRow } from "../lib/rtdb";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage } from "../lib/imgbb";
+/* Notification — আলাদা website notification storage (RTDB-তে নয়) */
+import {
+  addNotif,
+  loadNotifs,
+  markNotifRead as storeMarkRead,
+  markAllNotifsRead,
+  unreadNotifs,
+  pruneExpired,
+  subscribe as notifSubscribe,
+  loadSeen,
+  saveSeen,
+  sanitizeKey,
+} from "../lib/notify";
 
 /* ═══════════════════════════════════════════════════════════════════
    CSS — মূল doner.html-এর <style> ব্লক হুবহু কপি
@@ -440,6 +453,7 @@ button.row:hover,a.row:hover{background:var(--card2)}
 .dc-name{margin-top:2px;color:#172e27;font-size:20px;font-weight:800;line-height:1.2}
 .dc-st{margin-top:3px;color:#168158;font-size:13px;font-weight:700}
 .dc-st.rest{color:#a5720c}
+.dc-st.off{color:#7c8a84}
 .dc-meta{display:grid;gap:5px;margin-top:10px;color:#5d6d67;font-size:13.5px}
 .dc-meta div{display:flex;align-items:center;gap:6px}
 .dc-meta svg{opacity:.62;flex:none}
@@ -3918,6 +3932,9 @@ function initPage() {
     if(!SHARED_PULLING)queueMicrotask(publishPersonalShared);
     /* একই তথ্য আলাদা করে দ্বিতীয়বার লিখতে হয় না — এখান থেকেই RTDB-তে যায় */
     if(typeof pushAccountToRtdb==="function")queueMicrotask(()=>pushAccountToRtdb());
+    /* অনুমোদিত ডোনার হলে পাবলিক রেকর্ডও (donors/{id}) সাথে সাথে update —
+       মেইন ওয়েবসাইটের তালিকা/কার্ড/প্রোফাইলে রিয়েল-টাইমে দেখা যায় */
+    if(typeof pushDonorRecordToRtdb==="function")queueMicrotask(()=>pushDonorRecordToRtdb());
   }
   function load(){try{const d=JSON.parse(localStorage.getItem(LS)||"{}");
     if(d.account)Object.assign(STORE.account,d.account);
@@ -4021,11 +4038,46 @@ function initPage() {
     const st=CBDCShared.load();
     RAW.donors=st.donors.filter(d=>d.status!=="pending"&&!d.suspended).map(CBDCShared.toDonerDonor);
     RAW.incoming=st.requests.filter(r=>r.status!=="cancelled"&&r.status!=="resolved").map(requestForDoner);
+    /* আমার আবেদন — UID অনুযায়ী RTDB (users/{uid}/data/mine + queue/requests) থেকে
+       একীভূত: Pending (queue), Approved/Matched (requests), Rejected/Cancelled
+       (users/{uid}/data/mine-এ admin-লিখিত status) — প্রতিটি অবস্থা সঠিক দেখায় */
+    const uid=String(STORE.account.uid||"").trim();
+    const liveById={};st.requests.forEach(r=>{if(r&&r.id)liveById[r.id]=r});
+    const pendById={};st.queue.filter(q=>q&&q.kind==="request").forEach(q=>{if(q.id)pendById[q.id]=q});
     RAW.mine.forEach(m=>{
-      const live=st.requests.find(r=>r.id===m.id),pending=st.queue.find(q=>q.kind==="request"&&q.id===m.id);
-      if(live){m.status=live.workflowStatus==="matched"?"matched":"approved";m.responders=Array.isArray(live.responders)?live.responders:[]}
-      else if(pending)m.status="pending";
+      if(!m||!m.id)return;
+      const live=liveById[m.id];
+      if(live){
+        const ws=String(live.workflowStatus||live.status||"").toLowerCase();
+        m.status = ws==="matched"?"matched"
+          :(ws==="cancelled"||ws==="rejected"||ws==="resolved")?ws
+          :"approved";
+        m.responders=Array.isArray(live.responders)?live.responders:[];
+      }else if(pendById[m.id]){
+        /* queue-তে pending থাকলে pending; কিন্তু admin-লিখিত rejected/cancelled
+           status-কে queue-র অস্থায়ী উপস্থিতি আবার pending দেখাবে না */
+        if(m.status!=="rejected"&&m.status!=="cancelled")m.status="pending";
+      }else if(m.status!=="rejected"&&m.status!=="cancelled"&&m.status!=="done"){
+        /* live/queue-তে নেই — পুরোনো pending আবেদন (ধরে রাখা, কিন্তু queue-তে
+           নেই মানে admin বাতিল করেছে → rejected হিসেবে দেখাই না; pendingই থাকে
+           যতক্ষণ না admin-এর সিদ্ধান্ত users/{uid}/data/mine-এ লেখা হয়) */
+      }
     });
+    /* RTDB `requests`-এ আমার UID-তে থাকা আবেদনগুলো data/mine-এ না থাকলে যোগ করি —
+       নতুন ডিভাইসে log in করলেও "আমার আবেদন" লোড হবে */
+    if(uid){
+      st.requests.forEach(r=>{
+        if(!r||!r.id)return;
+        if(String(r.ownerUid||"")!==String(uid))return;
+        if(RAW.mine.some(m=>m&&m.id===r.id))return;
+        const ws=String(r.workflowStatus||r.status||"").toLowerCase();
+        RAW.mine.push({id:r.id,patient:r.patientName||"",group:r.bloodGroup||"",bags:r.bags||1,
+          hospital:r.hospitalName||"",address:r.hospitalAddress||"",area:r.hospitalAddress||"",
+          urgency:r.urgency||"",neededBy:(r.expiresAt||"").slice(0,10),
+          status:ws==="matched"?"matched":(ws==="cancelled"||ws==="rejected"||ws==="resolved")?ws:"approved",
+          createdAt:r.createdAt||"",responders:Array.isArray(r.responders)?r.responders:[]});
+      });
+    }
     // donor detection — শুধু UID দিয়ে, phone দিয়ে অন্য user-এর donor লিক হবে না
     const mine=st.donors.find(d=> STORE.account.uid && String(d.ownerUid)===String(STORE.account.uid));
     if(mine){
@@ -4033,6 +4085,10 @@ function initPage() {
       STORE.donor.is=true;
       STORE.donor.status="approved";STORE.donor.donorId=mine.id;STORE.donor.bloodGroup=mine.bloodGroup;
       STORE.donor.lastDonation=mine.lastDonationDate||"";
+      /* admin-পরিবর্তিত প্রাপ্যতা/WhatsApp পাবলিক রেকর্ড থেকেই সাথে সাথে সিঙ্ক —
+         নইলে ডোনারের পরবর্তী save() পুরোনো মান দিয়ে আবার admin-এর পরিবর্তন মুছে দেবে */
+      if(mine.available!==undefined)STORE.donor.available=!!mine.available;
+      if(typeof mine.whatsapp==="string")STORE.donor.whatsapp=mine.whatsapp;
       if(!wasDonor){
         try{ persistLocalAccount(); }catch(e){}
         // RTDB-তে একীভূত — duplicate profile নয়, একই UID তে sync
@@ -4043,6 +4099,8 @@ function initPage() {
       account:STORE.account,donor:STORE.donor,privacy:STORE.privacy,notif:STORE.notif,prefs:STORE.prefs,
       security:STORE.security,saved:STORE.saved}))}catch(e){}
     SHARED_PULLING=false;
+    /* RTDB-র এই live পরিবর্তন থেকে notification তৈরি (আলাদা storage-এ) */
+    try{ syncNotifsFromData(); }catch(e){ console.warn("notif sync:", e && e.message); }
   }
   function publishPersonalShared(){
     if(SHARED_PULLING||!window.CBDCShared||!STORE.account.name)return;
@@ -4060,7 +4118,7 @@ function initPage() {
       if(d.is&&d.status==="pending"){
         const q={kind:"donor",id:qid,donorId:d.donorId,name:a.name,group:d.bloodGroup,area:a.area,
           dob:d.ov.dob||a.dob||"",health:d.health||"",last:d.lastDonation||"",gender:a.gender,
-          phone:a.phone,whatsapp:d.whatsapp||"",ownerUid:owner,at:new Date().toISOString()};
+          phone:a.phone,whatsapp:d.whatsapp||"",photo:a.photo||"",ownerUid:owner,at:new Date().toISOString()};
         oldQ<0?st.queue.unshift(q):st.queue[oldQ]={...st.queue[oldQ],...q};
       }else if(oldQ>=0)st.queue.splice(oldQ,1);
       /* Approved donor records are created only from Admin/Moderator approval.
@@ -4074,8 +4132,11 @@ function initPage() {
             hospital:m.hospital,area:m.address||a.area,phone:a.phone,requester:a.name,ownerUid:owner,
             at:m.createdAt||new Date().toISOString(),expiresAt:m.neededBy?m.neededBy+"T23:59:59":""};
           qi<0?st.queue.unshift(q):st.queue[qi]={...st.queue[qi],...q};
-        }else if(m.status==="cancelled"||m.status==="done"){
-          if(qi>=0)st.queue.splice(qi,1);if(ri>=0)st.requests.splice(ri,1);
+        }else{
+          /* pending ছাড়া সব অবস্থা (approved/matched/cancelled/done/rejected) —
+             queue থেকে বাদ; বাতিল/সম্পন্ন হলে requests থেকেও বাদ (resurrect নয়) */
+          if(qi>=0)st.queue.splice(qi,1);
+          if((m.status==="cancelled"||m.status==="done"||m.status==="rejected")&&ri>=0)st.requests.splice(ri,1);
         }
       });
       RAW.donations.filter(x=>!x.ok).forEach((x,i)=>{
@@ -4085,6 +4146,87 @@ function initPage() {
       });
       return st;
     },"doner:personal");
+  }
+  
+  /* ── Notification generation (আলাদা website notification storage) ──
+     RTDB-র live পরিবর্তন দেখে ডোনারের নিজের notification তৈরি হয় — notification
+     নিজে RTDB-তে লেখা হয় না; আলাদা notification storage-এ (localStorage) থাকে
+     এবং ২৪ ঘণ্টা পর সেখান থেকেও মুছে যায়। main RTDB data অক্ষত থাকে। */
+  function syncNotifsFromData(){
+    const uid=String(STORE.account.uid||"").trim();
+    if(!uid)return;
+    const seen=loadSeen();
+    const d=STORE.donor;
+    /* প্রথম সিঙ্ক — শুধু baseline ধরি, পুরোনো অবস্থার notification বানাই না */
+    if(!seen.booted){
+      RAW.mine.forEach(m=>{ if(m&&m.id&&m.status)seen.reqStatus[m.id]=m.status; });
+      DB().incoming.forEach(r=>{ if(r&&r.id)seen.incoming[r.id]=1; });
+      seen.donorStatus=d.status||"";
+      seen.bloodGroup=d.bloodGroup||"";
+      seen.lastDonation=d.lastDonation||"";
+      seen.booted=true;
+      saveSeen(seen);
+      return;
+    }
+    /* ১) আমার জরুরি আবেদনের status পরিবর্তন → অনুমোদিত / বাতিল */
+    const mineIds=new Set();
+    RAW.mine.forEach(m=>{
+      if(!m||!m.id)return;
+      mineIds.add(m.id);
+      const prev=seen.reqStatus[m.id], cur=String(m.status||"");
+      if(cur==="approved"||cur==="matched"){
+        if(prev&&prev!=="approved"&&prev!=="matched"){
+          addNotif({id:"req-appr-"+sanitizeKey(m.id),title:"জরুরি রক্তের আবেদন অনুমোদিত",
+            body:`${m.group||""} · ${m.patient||""} · ${m.hospital||""}`.replace(/^ · | · $/g,"")||"আপনার জরুরি রক্তের আবেদনটি অনুমোদিত হয়েছে।",
+            type:"approval",ref:m.id,go:"req:mine"});
+        }else if(!prev){
+          /* নতুন ডিভাইসে প্রথমবার approved দেখা গেলে — ২৪ ঘণ্টার window-এ জানাই */
+          addNotif({id:"req-appr-"+sanitizeKey(m.id),title:"জরুরি রক্তের আবেদন অনুমোদিত",
+            body:`${m.group||""} · ${m.patient||""} · ${m.hospital||""}`.replace(/^ · | · $/g,"")||"আপনার জরুরি রক্তের আবেদনটি অনুমোদিত হয়েছে।",
+            type:"approval",ref:m.id,go:"req:mine"});
+        }
+      }else if(cur==="rejected"&&prev&&prev!=="rejected"){
+        addNotif({id:"req-rej-"+sanitizeKey(m.id),title:"জরুরি রক্তের আবেদন বাতিল",
+          body:m.rejectNote?`কারণ: ${m.rejectNote}`:`${m.group||""} · ${m.patient||""}`,
+          type:"rejected",ref:m.id,go:"req:mine"});
+      }
+      if(cur)seen.reqStatus[m.id]=cur;
+    });
+    /* ২) নতুন matching জরুরি আবেদন (আমার জন্য) — শুধু Availability ON ডোনার */
+    if(d.is&&d.status==="approved"&&d.available!==false&&d.bloodGroup){
+      DB().incoming.forEach(r=>{
+        if(!r||!r.id)return;
+        if(mineIds.has(r.id))return;               /* নিজের আবেদন নিজেকে emergency notify নয় */
+        if(r.group!==d.bloodGroup)return;
+        if(seen.incoming[r.id])return;
+        seen.incoming[r.id]=1;
+        addNotif({id:"em-"+sanitizeKey(r.id),title:"জরুরি রক্তের প্রয়োজন",
+          body:`আপনার রক্তের গ্রুপ ${d.bloodGroup} এবং একটি জরুরি ${d.bloodGroup} রক্তের আবেদন পাওয়া গেছে। ${[r.hospital,r.area].filter(Boolean).join(" · ")}। বিস্তারিত দেখতে ক্লিক করুন।`,
+          type:"emergency",ref:r.id,go:"req:for"});
+      });
+    }
+    /* ৩) ডোনার আবেদন: pending → approved / rejected */
+    const ds=d.status||"";
+    if(seen.donorStatus==="pending"&&ds==="approved")
+      addNotif({id:"donor-appr",title:"রক্তদাতা আবেদন অনুমোদিত",
+        body:"আপনার ডোনার আবেদন অনুমোদিত হয়েছে। ডোনার ID: "+(d.donorId||""),type:"approval",ref:d.donorId,go:"req:become"});
+    else if(seen.donorStatus==="pending"&&(ds==="rejected"||(ds==="none"&&!d.is)))
+      addNotif({id:"donor-rej",title:"ডোনার আবেদন বাতিল",
+        body:"আপনার রক্তদাতা আবেদনটি বাতিল করা হয়েছে।",type:"rejected",go:"req:become"});
+    if(ds)seen.donorStatus=ds;
+    /* ৪) রক্তের গ্রুপ পরিবর্তন অনুমোদিত — donors record-এর bloodGroup বদলালে */
+    if(d.is&&d.status==="approved"&&seen.bloodGroup&&seen.bloodGroup!==d.bloodGroup&&d.bloodGroup)
+      addNotif({id:"grp-"+sanitizeKey(seen.bloodGroup+"-"+d.bloodGroup),title:"রক্তের গ্রুপ পরিবর্তন অনুমোদিত",
+        body:`${seen.bloodGroup} → ${d.bloodGroup}`,type:"approval",go:"set:donor"});
+    if(d.bloodGroup)seen.bloodGroup=d.bloodGroup;
+    /* ৫) রক্তদান যাচাই — donors record-এর last আমার যাচাইবিহীন রেকর্ডের সাথে মিললে */
+    if(d.lastDonation&&seen.lastDonation&&seen.lastDonation!==d.lastDonation){
+      const hit=RAW.donations.find(x=>x&&x.date===d.lastDonation);
+      if(hit&&!hit.ok)addNotif({id:"dn-"+sanitizeKey(d.lastDonation),title:"রক্তদান যাচাই সম্পন্ন",
+        body:`${dL(d.lastDonation)}${hit.place?" · "+hit.place:""}`,type:"approval",go:"set:adddonation"});
+    }
+    if(d.lastDonation)seen.lastDonation=d.lastDonation;
+    saveSeen(seen);
   }
   
   pullSharedPublic();
@@ -4136,7 +4278,7 @@ function initPage() {
   const dStatus=()=>STORE.donor.status;
   const restLeft=()=>STORE.donor.lastDonation?Math.max(0,90-dayDiff(STORE.donor.lastDonation)):0;
   const myReqs=()=>DB().incoming.filter(r=>r.group===STORE.donor.bloodGroup);
-  const unread=()=>DB().notifs.filter(n=>!n.read).length;
+  const unread=()=>unreadNotifs().length;   /* notification storage (আলাদা, RTDB-তে নয়) */
   const donorPill=()=>{
     if(!isDonor())return "";
     if(dStatus()==="pending")return `<span class="pill a">যাচাই চলছে</span>`;
@@ -4334,7 +4476,7 @@ function initPage() {
       <div class="sk" style="height:11px;width:65%"></div></div></div>`).join("")}</div>`;
     await sleep(340);
     const rows=DB().donors.filter(d=>(!findQ.g||d.group===findQ.g)&&(!findQ.a||d.area===findQ.a)
-      &&(!findQ.ready||donorReady(d)));
+      &&(!findQ.ready||(donorReady(d)&&d.available!==false)));
     box.innerHTML=rows.length?`
       <div style="display:flex;align-items:center;margin:4px 4px 10px">
         <b style="font-size:.85rem;flex:1">${tp(`${bn(rows.length)} জন রক্তদাতা পাওয়া গেছে`,`${rows.length} donor${rows.length!==1?"s":""} found`)}</b>
@@ -4365,7 +4507,8 @@ function initPage() {
     /* readiness is derived from the rest period, never stored — and the list
        honours the same privacy rules as the profile screen, so a hidden
        number can never leak through the search results */
-    const ready=donorReady(d);
+    const avail=d.available!==false;
+    const ready=donorReady(d)&&avail;
     const pv=d.privacy||{};
     const phone=d.phone;                       /* always shown */
     const wa=pv.showWhatsapp!==false?phone:"";
@@ -4374,8 +4517,8 @@ function initPage() {
         <div>
           <div class="dc-id">${esc(id)}</div>
           <div class="dc-name">${esc(d.name)}</div>
-          <div class="dc-st ${ready?"":"rest"}">${ready?"✓ রক্তদানে প্রস্তুত"
-            :`বিশ্রামে · আর ${bn(donorRest(d))} দিন`}</div>
+          <div class="dc-st ${ready?"":avail?"rest":"off"}">${ready?"✓ রক্তদানে প্রস্তুত"
+            :avail?`বিশ্রামে · আর ${bn(donorRest(d))} দিন`:"প্রাপ্যতা বন্ধ"}</div>
           <div class="dc-meta">
             <div>${ICON.pin(13)} এলাকা: <strong>${esc(d.area)}</strong></div>
             <div>${ICON.phone(13)} যোগাযোগ: <strong>${esc(phone)}</strong></div>
@@ -4434,6 +4577,7 @@ function initPage() {
       occupation:a.occupation||"", phone:ov.phone||a.phone, whatsapp:!!d.whatsapp,
       lastDonation:d.lastDonation, totalDonations:DB().donations.length,
       joined:a.joined||"", verified:d.status==="approved", bio:a.bio||"",
+      available:STORE.donor.available!==false,
       privacy:{showArea:STORE.privacy.showArea,
                showGroup:STORE.privacy.showGroup,showWhatsapp:STORE.privacy.showWhatsapp}
     };
@@ -4448,7 +4592,7 @@ function initPage() {
     const show=k=>mine||pv[k]!==false;
     return {
       mine, raw:d,
-      name:d.name, photo:d.photo, gender:d.gender, donorId:d.donorId,
+      name:d.name, photo:d.photo||d.photoURL||"", gender:d.gender, donorId:d.donorId,
       verified:d.verified, bio:d.bio||"",
       group:show("showGroup")&&d.group?d.group:null,
       area:show("showArea")&&d.area?d.area:null,
@@ -4460,7 +4604,8 @@ function initPage() {
       whatsapp:(pv.showWhatsapp!==false&&(d.whatsappNo||d.phone))?(d.whatsappNo||d.phone):null,
       total:d.totalDonations||0,
       last:d.lastDonation||"",
-      ready:donorReady(d), rest:donorRest(d),
+      ready:donorReady(d)&&d.available!==false, avail:d.available!==false,
+      rest:donorRest(d),
       joined:d.joined||""
     };
   }
@@ -4536,7 +4681,7 @@ function initPage() {
     if(!v)return;
     if(v.mine){CARD_FOR=null;sheetDownload();return}
     CARD_FOR={name:v.name,gender:v.raw.gender,area:v.area,phone:v.phone,
-      photo:v.raw.photo||"",donorId:v.donorId,group:v.group,
+      photo:v.photo||"",donorId:v.donorId,group:v.group,
       age:v.age,lastDonation:v.last};
     const s=sheetDownload();
     /* whichever way the sheet closes, the subject must go back to me */
@@ -4558,7 +4703,8 @@ function initPage() {
     el.innerHTML=`
       <div class="pcard">
         <div class="phead2">
-          <img class="pav" src="${AV(v.gender,v.photo)}" alt="">
+          <img class="pav" src="${AV(v.gender,v.photo)}" alt="" data-ph="${AV(v.gender,"")}"
+            onerror="this.onerror=null;this.src=this.dataset.ph">
           ${v.group?`<span class="pgrp">${esc(v.group)}</span>`:""}
         </div>
         <div class="pnm">
@@ -4567,8 +4713,8 @@ function initPage() {
         </div>
         ${v.bio?`<p class="pbio">${esc(v.bio)}</p>`:""}
         <div class="pchips">
-          <span class="pchip ${v.ready?"ok":"rest"}">${v.ready?"✓ রক্তদানে প্রস্তুত"
-            :`বিশ্রামে · আর ${bn(v.rest)} দিন`}</span>
+          <span class="pchip ${v.ready?"ok":v.avail?"rest":"m"}">${v.ready?"✓ রক্তদানে প্রস্তুত"
+            :v.avail?`বিশ্রামে · আর ${bn(v.rest)} দিন`:"প্রাপ্যতা বন্ধ"}</span>
           ${v.area?`<span class="pchip">${ICON.pin(12)} ${esc(v.area)}</span>`:""}
           ${v.age?`<span class="pchip">${bn(v.age)} বছর</span>`:""}
           ${v.occupation?`<span class="pchip">${esc(v.occupation)}</span>`:""}
@@ -4659,6 +4805,9 @@ function initPage() {
         :emptyBox(ICON.file(26),"আপনি এখনো কোনো আবেদন করেননি","কারো রক্তের প্রয়োজন হলে এখান থেকে আবেদন করুন"));
     }else{
       el.innerHTML=becomeView();
+      /* "আমার প্রোফাইল" — সরাসরি নিজের ডোনার প্রোফাইল পেজ খোলে */
+      const h=$("#hprof");
+      if(h)h.onclick=()=>openProfile("me");
     }
   }
   const emptyBox=(ic,t,p,act,btn)=>`<div class="card"><div class="empty"><div class="ic">${ic}</div>
@@ -4674,15 +4823,17 @@ function initPage() {
       <button class="btn gh sm" data-resp="${esc(r.id)}" style="color:var(--grn)">${ICON.check(14)} সাড়া দিন</button>
       <button class="btn gh sm" data-mute="${esc(r.id)}">লুকান</button></div></div>`;
   
-  const RS={pending:["a","যাচাই চলছে"],approved:["b","প্রকাশিত"],matched:["b","রক্তদাতা খোঁজা হচ্ছে"],
-    done:["g","সম্পন্ন"],expired:["m","মেয়াদোত্তীর্ণ"],cancelled:["m","বাতিল"]};
+  const RS={pending:["a","যাচাই চলছে"],approved:["b","অনুমোদিত"],matched:["b","রক্তদাতা খোঁজা হচ্ছে"],
+    done:["g","সম্পন্ন"],expired:["m","মেয়াদোত্তীর্ণ"],cancelled:["m","বাতিল"],rejected:["r","বাতিল"]};
   const mineCard=r=>{const[c,t]=RS[r.status]||["m",r.status];
+    const final=r.status==="done"||r.status==="cancelled"||r.status==="rejected";
     return `<div class="reqc"><h4>${esc(r.id)} <span class="bg">${esc(r.group)}</span> <span class="pill ${c}">${t}</span></h4>
     <p>${esc(r.patient)} · ${bn(r.bags)} ব্যাগ</p>
     <p>${ICON.hospital(13)} ${esc(r.hospital)} · ${dS(r.neededBy)}</p>
+    ${r.rejectNote?`<p class="mut" style="margin-top:6px">বাতিলের কারণ: ${esc(r.rejectNote)}</p>`:""}
     ${r.responders.length?`<p style="color:var(--grn);font-weight:700">${bn(r.responders.length)} জন সাড়া দিয়েছেন</p>`:""}
     <div class="a">${r.responders.length?`<button class="btn sm" data-resps="${esc(r.id)}">সাড়াদাতারা</button>`:""}
-      ${r.status!=="done"&&r.status!=="cancelled"?
+      ${!final?
         `<button class="btn gh sm" data-done="${esc(r.id)}">${ICON.check(14)} সম্পন্ন</button>
          <button class="btn gh sm" data-cancel="${esc(r.id)}">বাতিল</button>`:""}</div></div>`};
   
@@ -4741,7 +4892,8 @@ function initPage() {
     $("#s-set").innerHTML=`
       <h2 class="ptitle">সেটিংস</h2>
       <button class="card" style="display:block;width:100%;text-align:left" data-sub="account">
-        <div class="per lg"><img src="${AV(a.gender,a.photo)}" alt="">
+        <div class="per lg"><img src="${AV(a.gender,a.photo)}" alt="" data-ph="${AV(a.gender,"")}"
+          onerror="this.onerror=null;this.src=this.dataset.ph">
           <div class="i"><b style="font-size:.95rem">${esc(a.name)}</b>
             <small>${a.username?"@"+esc(a.username):"প্রোফাইল সম্পূর্ণ করুন"}</small><small>${esc(a.email||"")}</small></div>
           <span style="color:var(--mut)">${ICON.right(19)}</span></div></button>
@@ -4765,7 +4917,8 @@ function initPage() {
   
     P.account=()=>`
       <div class="card" style="text-align:center">
-        <img src="${AV(a.gender,a.photo)}" style="width:88px;height:88px;border-radius:50%;object-fit:cover;margin-bottom:11px">
+        <img src="${AV(a.gender,a.photo)}" style="width:88px;height:88px;border-radius:50%;object-fit:cover;margin-bottom:11px"
+          alt="" data-ph="${AV(a.gender,"")}" onerror="this.onerror=null;this.src=this.dataset.ph">
         <div style="display:flex;gap:8px;justify-content:center">
           <button class="btn gh sm" data-act="photo">${ICON.cam(15)} ছবি বদলান</button>
           ${a.photo?`<button class="btn gh sm" data-act="photoRm">সরান</button>`:""}</div>
@@ -5736,6 +5889,8 @@ function initPage() {
       RAW.mine.unshift(m);
       saveData();                            /* localStorage + users/{uid}/data + queue (shared/RTDB) */
       logAct("জরুরি রক্তের আবেদন",m.group+" · "+m.bags+" ব্যাগ","donor");
+      /* matching ডোনারদের notification RTDB-তে লেখা হয় না — আবেদন approve হয়ে
+         live হলে প্রতিটি ডোনারের প্যানেল নিজে নিজে notification তৈরি করে */
       s.close();
       reqTab="mine";
       go("req");
@@ -5839,7 +5994,7 @@ function initPage() {
   /* ── আমার সব তথ্য নামান ── */
   function sheetExport(){
     const data={account:{...STORE.account},donor:{...STORE.donor},
-      donations:RAW.donations,mine:RAW.mine,notifs:RAW.notifs,activity:RAW.activity};
+      donations:RAW.donations,mine:RAW.mine,notifs:loadNotifs(),activity:RAW.activity};
     const s=sheet("আমার সব তথ্য নামান",`
       <div class="note i">${ICON.info(17)}<span>আপনার অ্যাকাউন্ট, ডোনার তথ্য, রক্তদান, আবেদন ও কার্যক্রম JSON/CSV ফাইলে নামাতে পারবেন।</span></div>
       <button class="opt on" data-k="json" style="width:100%;text-align:left"><i class="dot"></i>
@@ -5864,35 +6019,73 @@ function initPage() {
     };
   }
 
-  /* ---------- notifications panel ---------- */
-  let npOpen=false;
+  /* ---------- notifications panel ----------
+     Notification আলাদা website notification storage-এ থাকে (src/lib/notify.ts,
+     localStorage `cbdc.notifications.v1`) — RTDB-তে নয়। RTDB-র live পরিবর্তন
+     দেখে syncNotifsFromData() এখানে notification তৈরি করে, তাই real-time দেখা
+     যায়। ২৪ ঘণ্টা পর notification এই storage থেকেও স্বয়ংক্রিয়ভাবে মুছে যায়
+     (pruneExpired) — main RTDB data অক্ষত। cross-tab-এও live (BroadcastChannel)।
+     কোনো hardcoded/demo notification নেই। */
+  let npOpen=false,npPanel=null,npOv=null;
+  function notifMeta(n){
+    const t=String(n.type||n.t||"info");
+    if(t==="emergency")return {ic:ICON.warn(18),bg:"var(--red-s)",fg:"var(--red)"};
+    if(t==="rejected")return {ic:ICON.x(18),bg:"var(--red-s)",fg:"var(--red)"};
+    if(t==="approval")return {ic:ICON.checkC(18),bg:"var(--grn-s)",fg:"var(--grn)"};
+    return {ic:ICON.bell(18),bg:"var(--blu-s)",fg:"var(--blu)"};
+  }
+  /* notification পড়া হলে আলাদা storage-এ চিহ্নিত হয় + টার্গেট পেজে নিয়ে যায় */
+  function markNotifRead(id){
+    const list=loadNotifs();
+    const n=list.find(x=>x.id===id);
+    storeMarkRead(id);
+    if(!n)return;
+    const [g,s]=String(n.go||"req:for").split(":");
+    /* "req:..." — আবেদন স্ক্রিনের ট্যাব (for/mine/become), আলাদা sub-screen নয় */
+    if(g==="req"){reqTab=(s==="become"||s==="mine")?s:"for";go("req");}
+    else if(g)go(g,s||null);
+  }
+  function renderNotifPanel(){
+    if(!npPanel)return;
+    const ns=loadNotifs();
+    npPanel.querySelector("#nh").innerHTML=
+      `<b style="flex:1;font-size:.95rem">বিজ্ঞপ্তি</b>
+       ${ns.some(n=>!n.read)?`<button class="btn lnk" id="nall" style="font-size:.75rem">সব পড়া হয়েছে</button>`:""}
+       <button class="x" id="nx" aria-label="বন্ধ">${ICON.x(19)}</button>`;
+    npPanel.querySelector("#nlist").innerHTML=ns.length?ns.map(n=>{
+      const m=notifMeta(n);
+      return `<button class="nitem ${n.read?"":"un"}" data-n="${n.id}">
+        <span class="ic" style="background:${m.bg};color:${m.fg}">${m.ic}</span>
+        <span style="flex:1;min-width:0"><b>${esc(n.title)}</b><small>${esc(n.body)} · ${esc(n.time||timeAgo(n.createdAt))}</small></span></button>`;
+    }).join("")
+      :`<div class="empty"><div class="ic">${ICON.bell(26)}</div><b>কোনো বিজ্ঞপ্তি নেই</b>
+        <p>নতুন কিছু এলে এখানে দেখা যাবে</p></div>`;
+    npPanel.querySelector("#nx").onclick=closeNotifs;
+    npPanel.querySelector("#nall")&&(npPanel.querySelector("#nall").onclick=()=>{
+      markAllNotifsRead();
+      closeNotifs();toast("সব পড়া হিসেবে চিহ্নিত","ok");
+    });
+    npPanel.querySelectorAll("[data-n]").forEach(b=>b.onclick=()=>{markNotifRead(b.dataset.n);closeNotifs()});
+    paintTop();
+  }
   function openNotifs(){
     if(npOpen)return;npOpen=true;
-    const ns=DB().notifs;
     const ov=document.createElement("div");ov.className="ov";
     const p=document.createElement("div");p.className="npanel";
-    p.innerHTML=`<div class="hd" style="display:flex;align-items:center;gap:10px;padding:13px 15px;
-        border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--card);z-index:2">
-        <b style="flex:1;font-size:.95rem">বিজ্ঞপ্তি</b>
-        ${ns.some(n=>!n.read)?`<button class="btn lnk" id="nall" style="font-size:.75rem">সব পড়া হয়েছে</button>`:""}
-        <button class="x" id="nx" aria-label="বন্ধ">${ICON.x(19)}</button></div>
-      ${ns.length?ns.map(n=>`<button class="nitem ${n.read?"":"un"}" data-n="${n.id}">
-        <span class="ic" style="background:${n.t==="emergency"?"var(--red-s)":n.t==="security"?"var(--blu-s)":"var(--grn-s)"};
-          color:${n.t==="emergency"?"var(--red)":n.t==="security"?"var(--blu)":"var(--grn)"}">
-          ${n.t==="emergency"?ICON.warn(18):n.t==="security"?ICON.shield(18):ICON.drop(18)}</span>
-        <span style="flex:1;min-width:0"><b>${esc(n.title)}</b><small>${esc(n.body)} · ${esc(n.time)}</small></span></button>`).join("")
-        :`<div class="empty"><div class="ic">${ICON.bell(26)}</div><b>কোনো বিজ্ঞপ্তি নেই</b>
-          <p>নতুন কিছু এলে এখানে দেখা যাবে</p></div>`}`;
+    p.innerHTML=`<div class="hd" id="nh" style="display:flex;align-items:center;gap:10px;padding:13px 15px;
+        border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--card);z-index:2"></div>
+      <div id="nlist"></div>`;
     document.body.append(ov,p);document.body.style.overflow="hidden";
-    const close=()=>{ov.remove();p.remove();npOpen=false;document.body.style.overflow="";paintTop()};
-    ov.onclick=close;p.querySelector("#nx").onclick=close;
-    p.querySelector("#nall")&&(p.querySelector("#nall").onclick=()=>{RAW.notifs.forEach(n=>n.read=true);close();toast("সব পড়া হিসেবে চিহ্নিত","ok")});
-    p.querySelectorAll("[data-n]").forEach(b=>b.onclick=()=>{
-      const n=RAW.notifs.find(x=>x.id==b.dataset.n);n.read=true;close();
-      const [g,s]=String(n.go).split(":");go(g,s||null);
-    });
+    npOv=ov;npPanel=p;
+    ov.onclick=closeNotifs;
+    renderNotifPanel();
   }
-  
+  function closeNotifs(){
+    if(npOv)npOv.remove();
+    if(npPanel)npPanel.remove();
+    npOpen=false;npPanel=null;npOv=null;
+    document.body.style.overflow="";paintTop();
+  }
   /* ══════════ ACTIONS ══════════ */
   document.addEventListener("click",async e=>{
     const sub=e.target.closest("[data-sub]");
@@ -5961,7 +6154,23 @@ function initPage() {
         toast("সব তথ্য অ্যাকাউন্ট থেকে নেওয়া হবে","ok")}break;
       case "leaveDonor":if(await confirmS({title:"ডোনার তালিকা থেকে সরে যাবেন?",
         desc:"অ্যাকাউন্ট থাকবে, শুধু ডোনার তথ্য ও কার্ড সরে যাবে। চাইলে আবার যুক্ত হতে পারবেন।",ok:"সরে যান",danger:true})){
-        STORE.donor.is=false;STORE.donor.status="none";save();logAct("ডোনার তালিকা থেকে সরে গেছেন","");go("set","donor");toast("সরে গেছেন")}break;
+        const leftId=STORE.donor.donorId||"";
+        STORE.donor.is=false;STORE.donor.status="none";save();
+        /* নিজের পাবলিক রেকর্ড RTDB থেকে মুছে দিলে সাথে সাথে সব জায়গা থেকে সরে যায় */
+        if(leftId){
+          (async()=>{
+            try{
+              let rec=null;
+              try{ rec=await findBy(NODES.donors,"ownerUid",STORE.account.uid||""); }catch(e){}
+              if(!rec){
+                const all=await listOnce(NODES.donors);
+                rec=all.find(x=>String(x.id||"")===String(leftId)||String(x.ownerUid||"")===String(STORE.account.uid||""));
+              }
+              if(rec&&rec.id)await removeRow(NODES.donors,rec.id);
+            }catch(e){ console.warn("leave donor remove:",e&&e.message); }
+          })();
+        }
+        logAct("ডোনার তালিকা থেকে সরে গেছেন","");go("set","donor");toast("সরে গেছেন")}break;
       case "withdraw":if(await confirmS({title:"আবেদন প্রত্যাহার করবেন?",desc:"পরে আবার আবেদন করতে পারবেন।",ok:"প্রত্যাহার",danger:true})){
         STORE.donor.is=false;STORE.donor.status="none";save();
         if(CUR==="become"){reqTab="become";go("req");}else{rReq();}
@@ -6596,6 +6805,27 @@ function initPage() {
       await updateRow(NODES.users, RTDB_UID, payload);
     }catch(e){ console.warn("profile push:", e && e.message); }
   }
+  /* অনুমোদিত ডোনারের পাবলিক রেকর্ড (donors/{id}) — নিজের তথ্য বদলালে সাথে সাথে
+     RTDB-তে update হয়, আর RTDB থেকে store-এর live listener-এর মাধ্যমে মেইন
+     ওয়েবসাইট ও ডোনার প্যানেলের সব জায়গায় (তালিকা/কার্ড/প্রোফাইল) সাথে সাথে
+     দেখা যায় — কোনো refresh লাগে না। bloodGroup/verified/suspended/donations
+     ইত্যাদি admin-নিয়ন্ত্রিত ফিল্ড লেখা হয় না (rules-ও রক্ষা করে)। */
+  async function pushDonorRecordToRtdb(){
+    if(!RTDB_UID||RTDB_PULLING)return;
+    const d=STORE.donor;
+    if(!d.is||d.status!=="approved"||!d.donorId)return;
+    try{
+      let donor=null;
+      try{ donor=await findBy(NODES.donors,"ownerUid",RTDB_UID); }catch(e){}
+      if(!donor){
+        const all=await listOnce(NODES.donors);
+        donor=all.find(x=>String(x.ownerUid||"")===String(RTDB_UID)||String(x.id||"")===String(d.donorId));
+      }
+      const id=(donor&&donor.id)||d.donorId;
+      if(!id)return;
+      await updatePaths({[NODES.donors+"/"+id]: donorPublicPatch(STORE.account,STORE.donor)});
+    }catch(e){ console.warn("donor public push:", e && e.message); }
+  }
   /* ডোনারের নিজস্ব রেকর্ড (রক্তদান, নিজের আবেদন, বিজ্ঞপ্তি, কার্যক্রম) RTDB-তে —
      ডিভাইস বদলালেও একই তথ্য, এবং অ্যাডমিন প্যানেলও একই উৎস পড়ে। */
   async function pushMyDataToRtdb(){
@@ -6605,7 +6835,6 @@ function initPage() {
         data:{
           donations:RAW.donations||[],
           mine:RAW.mine||[],
-          notifs:(RAW.notifs||[]).slice(0,100),
           activity:(RAW.activity||[]).slice(0,100)
         }
       });
@@ -6679,7 +6908,8 @@ function initPage() {
     if(row.appliedAt) STORE.donor.appliedAt = String(row.appliedAt||"");
     if(row.cardTheme) STORE.donor.cardTheme = String(row.cardTheme||"green");
     if(row.data&&typeof row.data==="object"){
-      ["donations","mine","notifs","activity"].forEach(k=>{ if(Array.isArray(row.data[k]))RAW[k]=row.data[k]; });
+      /* notifs আর users/data থেকে লোড হয় না — উৎস এখন notifications/{uid} নোড */
+      ["donations","mine","activity"].forEach(k=>{ if(Array.isArray(row.data[k]))RAW[k]=row.data[k]; });
       try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
     }
   }
@@ -6780,9 +7010,18 @@ function initPage() {
       if(!STORE.donor.is){
         try{ await hydrateDonorFromRtdb(uid); }catch(e){ console.warn("hydrate in watch:", e && e.message); }
       }
+      /* data/mine লোড হওয়ার পর queue/requests-এর সাথে status মিলিয়ে নিই —
+         ফলে "আমার আবেদন" ঠিকমতো লোড হয় (pending/approved/rejected/cancelled) */
+      try{ pullSharedPublic(); }catch(e){ console.warn("resync mine:", e && e.message); }
       persistLocalAccount();
       RTDB_PULLING=false;
       if(!document.querySelector(".sheet")&&!PUBLIC_MODE){ try{ paintTop(); go(CUR,SUB,false); }catch(e){} }
+    });
+    /* notification storage live update — আলাদা website storage (RTDB-তে নয়);
+       RTDB পরিবর্তন → syncNotifsFromData() → এখানে subscriber → সাথে সাথে UI */
+    notifSubscribe(()=>{
+      paintTop();
+      if(npOpen)renderNotifPanel();
     });
   }
 
@@ -6872,12 +7111,32 @@ function initPage() {
   if(window.CBDCShared)CBDCShared.subscribe((st,meta)=>{
     if(meta&&meta.source==="doner:personal")return;
     pullSharedPublic();
-    if(!document.querySelector(".sheet")&&!PUBLIC_MODE)go(CUR,SUB,false);
+    if(PUBLIC_MODE){
+      /* public profile link (?uid=…) — ডোনার/অ্যাডমিন তথ্য বদলালে পেজ রিলোড ছাড়াই
+         updated প্রোফাইল দেখায় (RTDB live listener থেকে) */
+      try{
+        const uid=new URLSearchParams(location.search).get("uid");
+        if(!uid)return;
+        const d=resolveUid(uid);
+        if(d){
+          if(!DB().donors.some(x=>x.uid===d.uid))DB().donors.push(d);
+          profId=d.uid;
+        }else{
+          profId="__missing__";
+        }
+        renderSub("profile");
+      }catch(e){}
+      return;
+    }
+    if(!document.querySelector(".sheet"))go(CUR,SUB,false);
   });
   /* onboarding শুধু auth + RTDB প্রোফাইল লোডের পর (maybeShowSetup) —
      বুটে খালি cache দেখে বারবার স্বাগতম ফর্ম দেখানো বন্ধ। */
   document.addEventListener("keydown",e=>{if(e.key==="Escape"){
     document.querySelector(".ov")?.click();}});
+  /* ২৪ ঘণ্টা পুরোনো notification স্বয়ংক্রিয় cleanup — আলাদা website
+     notification storage থেকেই মুছে যায় (RTDB-তে কিছু লেখা হয় না) */
+  setInterval(()=>{ try{ pruneExpired(); }catch(e){} }, 30*60*1000);
   
 }
 
@@ -6892,4 +7151,30 @@ export default function Doner() {
       <StaticShell />
     </>
   );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   পাবলিক ডোনার রেকর্ডে (donors/{id}) ডোনার নিজে কী আপডেট করতে পারে —
+   RTDB rules-এর protected ফিল্ডগুলোর (verified/suspended/donations/
+   bloodGroup ইত্যাদি) বাইরে। একমাত্র এই ফিল্ডগুলোই লেখা হয়, তাই
+   ডোনারের নিজের তথ্য পরিবর্তন সাথে সাথে সর্বত্র (মেইন ওয়েবসাইটসহ)
+   রিয়েল-টাইমে দেখায়। ছোট ও pure — টেস্টযোগ্য।                    */
+export function donorPublicPatch(
+  account: Record<string, any> | null | undefined,
+  donor: Record<string, any> | null | undefined
+): Record<string, string | boolean> {
+  const a = account || {};
+  const d = donor || {};
+  const ov = (d.ov && typeof d.ov === "object" ? d.ov : {}) as Record<string, any>;
+  return {
+    name: String(ov.name || a.name || ""),
+    gender: String(ov.gender || a.gender || ""),
+    dob: String(ov.dob || a.dob || ""),
+    area: String(ov.area || a.area || ""),
+    phone: String(ov.phone || a.phone || ""),
+    whatsapp: String(d.whatsapp || ""),
+    lastDonationDate: String(d.lastDonation || ""),
+    available: d.available !== false,
+    photo: String(a.photo || ""),
+  };
 }

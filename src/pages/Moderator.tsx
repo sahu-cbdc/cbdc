@@ -11,7 +11,7 @@ import "../lib/store";
 import { initFirebase as initSharedFirebase, NODES } from "../lib/firebase";
 import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
 import { authErrorMessage, resolveUserRole, panelForRole } from "../lib/authx";
-import { getRow, setRow, updateRow, removeRow, watchList, findBy, nowIso, nextDonorId } from "../lib/rtdb";
+import { getRow, setRow, updateRow, removeRow, watchList, findBy, nowIso, nextDonorId, updatePaths } from "../lib/rtdb";
 import { ageText, ageFromDob, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
@@ -2393,6 +2393,19 @@ function initPage() {
     try{ if(!document.querySelector(".sheet"))go(CUR,SUB,false,ARG); }catch(e){}
   });
   pullSharedState();persist();
+  /* পুরোনো/ব্যাকফিল: ডোনার রেকর্ডে প্রোফাইল ছবি (ImgBB link) না থাকলে
+     users/{uid}/photoURL থেকে এক-বার অনুলিপি — পাবলিক প্রোফাইলে সঠিক ছবি দেখাতে */
+  function backfillDonorPhotos(){
+    const missing=DB.donors.filter(d=>!String(d.photo||"").trim()&&d.ownerUid);
+    if(!missing.length)return;
+    Promise.all(missing.map(d=>getRow(NODES.users,d.ownerUid).then(u=>{
+      const ph=String((u&&(u.photoURL||u.photo))||"").trim();
+      if(ph)d.photo=ph;
+    }).catch(()=>{}))).then(()=>{
+      if(DB.donors.some(d=>String(d.photo||"").trim()))persist();
+    });
+  }
+  backfillDonorPhotos();
   function logAudit(act,target,mod){
     DB.audit.unshift({at:new Date().toISOString(),who:ME.name,role:ME.role,act,target,mod});
     if(DB.audit.length>300)DB.audit.length=300;persist();
@@ -3405,6 +3418,20 @@ function initPage() {
       persist();s.close();after?after():RENDER.work();paintNav();paintTop();
       toast(bn(ids.length)+"টি বাতিল করা হয়েছে")};
   }
+  /* বাতিল করা জরুরি আবেদনের status ব্যবহারকারীর "আমার আবেদন"-এ (users/{uid}/data/mine)
+     'rejected' হিসেবে লিখে দিই — ডোনার প্যানেলে সাথে সাথে সঠিক অবস্থা দেখায় */
+  function markRequestRejected(ownerUid,reqId,note){
+    if(!ownerUid||!reqId)return;
+    getRow(NODES.users,ownerUid).then(u=>{
+      const mine=Array.isArray(u&&u.data&&u.data.mine)?u.data.mine:[];
+      const i=mine.findIndex(m=>String(m&&m.id||"")===String(reqId));
+      if(i<0)return;
+      const paths={};
+      paths[`users/${ownerUid}/data/mine/${i}/status`]="rejected";
+      if(note)paths[`users/${ownerUid}/data/mine/${i}/rejectNote`]=String(note).slice(0,200);
+      updatePaths(paths).catch(e=>console.warn("mark rejected:",e&&e.message));
+    }).catch(e=>console.warn("mark rejected:",e&&e.message));
+  }
   async function decide(id,ok,note,quiet){
     const i=DB.queue.findIndex(x=>x.id===id);if(i<0)return;
     const q=DB.queue[i];
@@ -3420,20 +3447,39 @@ function initPage() {
       }
       DB.donors.unshift({id:approvedDonorId,
         name:q.name,group:q.group,area:q.area,phone:q.phone,whatsapp:q.whatsapp||q.phone,gender:q.gender,dob:q.dob||"",last:q.last,
-        ownerUid:q.ownerUid||"",available:true,verified:true,suspended:false,joined:iso(now()),donations:q.last?1:0});
+        photo:q.photo||"",ownerUid:q.ownerUid||"",available:true,verified:true,suspended:false,joined:iso(now()),donations:q.last?1:0});
       if(q.ownerUid){
         updateRow(NODES.users, q.ownerUid, {donorStatus:"approved", donorId:approvedDonorId, bloodGroup:q.group||""})
           .catch(e=>console.warn("donor approve user:",e&&e.message));
         if(q.memberId) updateRow(NODES.members, q.memberId, {status:"approved", donorId:approvedDonorId})
           .catch(e=>console.warn("donor approve member:",e&&e.message));
+        /* প্রোফাইল ছবি (ImgBB link) — queue-তে না থাকলে users/{uid}/photoURL থেকে অনুলিপি */
+        getRow(NODES.users, q.ownerUid).then(u=>{
+          const ph=String((u&&(u.photoURL||u.photo))||"").trim();
+          if(ph){
+            const donor=DB.donors.find(x=>x.id===approvedDonorId);
+            if(donor&&!String(donor.photo||"").trim()){donor.photo=ph;persist();}
+          }
+        }).catch(e=>console.warn("donor approve photo:",e&&e.message));
       }
     }
     if(q.kind==="donation"&&ok){const d=DB.donors.find(x=>x.name===q.name);
       if(d){d.donations++;if(!d.last||q.date>d.last)d.last=q.date}}
-    if(q.kind==="request"&&ok)DB.live.unshift({id:q.id,patient:q.patient,group:q.group,bags:q.bags,
-      urgency:q.urgency,status:"searching",responders:0,hospital:q.hospital,area:q.area,requester:q.requester||"স্বজন",
-      phone:q.phone,whatsapp:q.whatsapp||q.phone,expiresAt:q.expiresAt||"",at:new Date().toISOString()});
-    if(q.kind==="group"&&ok){const d=DB.donors.find(x=>x.name===q.name);if(d)d.group=q.to}
+    if(q.kind==="request"&&ok){
+      DB.live.unshift({id:q.id,patient:q.patient,group:q.group,bags:q.bags,
+        urgency:q.urgency,status:"searching",responders:0,hospital:q.hospital,area:q.area,requester:q.requester||"স্বজন",
+        phone:q.phone,whatsapp:q.whatsapp||q.phone,expiresAt:q.expiresAt||"",at:new Date().toISOString(),
+        ownerUid:q.ownerUid||""});
+    }
+    if(q.kind==="group"&&ok){
+      const d=DB.donors.find(x=>x.name===q.name);if(d)d.group=q.to;
+    }
+    if(!ok){
+      /* বাতিলের status main RTDB data-তে (users/{uid}/data/mine) লেখা হয় —
+         ডোনার প্যানেল সেটি দেখে নিজের notification তৈরি করে (আলাদা storage-এ) */
+      const owner=String(q.ownerUid||q.uid||"").trim();
+      if(q.kind==="request"&&owner)markRequestRejected(owner,q.id,note);
+    }
     DB.queue.splice(i,1);
     logAudit(ok?QK[q.kind].t+" অনুমোদন":QK[q.kind].t+" বাতিল",id+(note?" — "+note.slice(0,40):""),q.kind);
     if(!quiet){persist();RENDER.work();paintNav();paintTop();toast(ok?"অনুমোদন করা হয়েছে":"বাতিল করা হয়েছে",ok?"ok":"")}

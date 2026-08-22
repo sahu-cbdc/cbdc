@@ -3432,7 +3432,8 @@ function initPage() {
       const setRequests = async (list) => { };
       // Realtime Database is the single source of truth — no demo/mock data anywhere
       const daysSince = date => { if(!date)return null; const d=new Date(date+"T00:00:00"); if(Number.isNaN(d.getTime()))return null; const n=new Date(); const a=new Date(n.getFullYear(),n.getMonth(),n.getDate()); const b=new Date(d.getFullYear(),d.getMonth(),d.getDate()); return Math.floor((a-b)/86400000); };
-      const canDonate = donor => !donor.lastDonationDate || (daysSince(donor.lastDonationDate) !== null && daysSince(donor.lastDonationDate) >= 90);
+      const canDonate = donor => donor.available !== false && !donor.suspended
+        && (!donor.lastDonationDate || (daysSince(donor.lastDonationDate) !== null && daysSince(donor.lastDonationDate) >= 90));
       const statusText = status => ({pending:"অপেক্ষমাণ",approved:"অনুমোদিত",rejected:"বাতিল",resolved:"সমাধান হয়েছে"}[status] || status);
       const statusBadge = status => `<span class="status ${esc(status)}">${esc(statusText(status))}</span>`;
   
@@ -3590,7 +3591,7 @@ function initPage() {
           ${esc(d.name)}
         </div>
         <div class="donor-status">
-          ✓ রক্তদানে প্রস্তুত
+          ${d.available === false ? "প্রাপ্যতা বন্ধ" : "✓ রক্তদানে প্রস্তুত"}
         </div>
         <div class="details">
           <div>📍 এলাকা: <strong>${esc(d.area)}</strong></div>
@@ -3875,6 +3876,11 @@ function initPage() {
       function renderPublic(){ renderStats();renderSearch();renderBoard();
         /* keep the profile-page hand-off in sync with whatever is on screen (RTDB live data) */
         try{ publishDonors(); }catch(e){}
+        /* খোলা ডোনার প্রোফাইল পেজটিও live update হয় — RTDB listener-এর কল্যাণে
+           ডোনার/অ্যাডমিন তথ্য বদলালে রিলোড ছাড়াই নতুন তথ্য দেখায় */
+        if(currentProfId&&document.getElementById("profileBody")){
+          try{ renderProfile(currentProfId); }catch(e){}
+        }
       }
   
       let currentDcardId=null;
@@ -4222,17 +4228,21 @@ function initPage() {
           if(!fbReady) throw new Error("ডাটাবেস সংযোগ নেই।");
           /* RTDB-তে লেখা — approved হলে সরাসরি লাইভ বোর্ডে, না হলে queue-তে।
              দুই ক্ষেত্রেই listener-এর কল্যাণে সব জায়গায় সঙ্গে সঙ্গে দেখা যায়। */
+          const memberUid = (()=>{ try{ return localStorage.getItem("cbdcMemberUid")||""; }catch(e){ return ""; } })();
           const reqId = await addRow(NODES.requests, {
-            ...o, status:newStatus, createdAt, expiresAt: expiresAtDate.toISOString()
+            ...o, status:newStatus, createdAt, expiresAt: expiresAtDate.toISOString(),
+            ownerUid: memberUid||""
           });
           if(!autoApproved){
             await setRow(NODES.queue, reqId, {
               kind:"request", requestId:reqId, patient:o.patientName, group:o.bloodGroup, bags:o.bags,
               urgency:o.urgency, hospital:o.hospitalName, area:o.hospitalAddress, phone:o.phone,
               requester:o.requesterName, whatsapp:o.whatsapp||"", description:o.description||"",
-              at:createdAt, expiresAt:expiresAtDate.toISOString()
+              at:createdAt, expiresAt:expiresAtDate.toISOString(), ownerUid:memberUid||""
             });
           }
+          /* Notification RTDB-তে লেখা হয় না — আবেদন live হলে প্রতিটি ডোনারের
+             প্যানেল নিজে নিজে matching notification তৈরি করে (আলাদা storage-এ) */
           form.reset();
           clearFormErrors(form);
           $("#requestAgree").checked = false;
