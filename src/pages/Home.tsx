@@ -34,6 +34,9 @@ import { validateForm, clearFormErrors, attachLiveClear, setFieldError, clearFie
 import { ageFromDob, ageText, dobBounds, isValidDob, toBanglaDigits } from "../lib/age";
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
+/* প্রোফাইল কার্ড ডাউনলোড — Doner প্যানেলের working system-এর shared port
+   (src/lib/donorCard.ts)। দুই জায়গা থেকেই হুবহু একই কার্ড তৈরি হয়। */
+import { openDonorCardDownloadSheet, downloadDonorCardImages } from "../lib/donorCard";
 
 /* ═══════════════════════════════════════════════════════════════════
    CSS — মূল index.html-এর <style> ব্লক হুবহু কপি
@@ -3898,53 +3901,46 @@ function initPage() {
          is absent from the object, so it cannot reach the DOM or the source. */
       $("#dcardClose").addEventListener("click",closeDonorCard);
       $("#donorCardModalBg").addEventListener("click",e=>{ if(e.target.id==="donorCardModalBg") closeDonorCard(); });
+      /* ══════════ ডোনার কার্ড ডাউনলোড ══════════
+         Doner প্যানেলের Card Download System-ই এখন এখানে ব্যবহার হয় —
+         shared module (src/lib/donorCard.ts) থেকে। আগের আলাদা canvas
+         implementation সরানো হয়েছে; এখন দুই জায়গা থেকেই একই ডোনারের
+         একই design/size/QR-এর কার্ড, একই "কার্ড নামান" অপশন sheet
+         (দুই পাশ / শুধু সামনে / শেয়ার-লম্বা) এবং একই ফাইল তৈরি হয়।
+         ডেটা আগের মতোই Firebase RTDB-র donors থেকে (publicDonors)। */
+      function cardSubjectFromDonor(d, index=0){
+        /* বয়স জন্ম তারিখ (dob) থেকে — Doner প্যানেলের নিয়মে; অজানা হলে ফাঁকা */
+        const at = ageText(d);
+        return {
+          name: d.name || "",
+          gender: d.gender || "",
+          area: d.area || "",
+          phone: d.phone || "",
+          ageText: at === "—" ? "" : at,
+          photo: d.photo || d.photoURL || "",
+          bloodGroup: d.bloodGroup || d.group || "",
+          donorId: formatDonorId(d, index),
+          cardTheme: "green",
+          available: d.available !== false,
+          lastDonation: d.lastDonationDate || d.lastDonation || "",
+        };
+      }
       window.downloadDonorCard = async function(idvOrEl){
         let idv = typeof idvOrEl === "string" ? idvOrEl : idvOrEl?.dataset?.id;
         if(!idv && typeof idvOrEl === "object" && idvOrEl?.closest){
           const btn = idvOrEl.closest(".donor-card")?.querySelector(".download-btn");
           idv = btn?.dataset?.id;
         }
-        const d = publicDonors().find(x=>x.id===idv || x.donorId===idv) || publicDonors().find((x, i)=> formatDonorId(x, i)===idv) || publicDonors()[0];
+        const list = publicDonors();
+        const d = list.find(x=>x.id===idv || x.donorId===idv) || list.find((x, i)=> formatDonorId(x, i)===idv) || list[0];
         if(!d) return;
-        if(window._dcardBusy) return;   // দ্রুত পরপর ক্লিকে ডুপ্লিকেট ঠেকায়
-        window._dcardBusy = true;
-        toast("ডোনার কার্ড ডাউনলোড হচ্ছে...");
-        try{
-        const W=560,H=820,c=document.createElement("canvas"); c.width=W; c.height=H; const x=c.getContext("2d");
-        const rr=(x2,y2,w2,h2,r)=>{x.beginPath();x.moveTo(x2+r,y2);x.arcTo(x2+w2,y2,x2+w2,y2+h2,r);x.arcTo(x2+w2,y2+h2,x2,y2+h2,r);x.arcTo(x2,y2+h2,x2,y2,r);x.arcTo(x2,y2+h2,x2,y2+w2,y2,r);x.closePath();};
-        rr(0,0,W,H,26); x.clip();
-        const g=x.createLinearGradient(0,0,W,H); g.addColorStop(0,"#0c6d4a"); g.addColorStop(1,"#053d2e"); x.fillStyle=g; x.fillRect(0,0,W,H);
-        const font='"SolaimanLipi","Noto Sans Bengali","Hind Siliguri","Nirmala UI",sans-serif';
-        x.textAlign="center";
-        x.fillStyle="#ffffff"; x.font='900 22px '+font; x.fillText(SITE.name, W/2, 62);
-        x.fillStyle="#bdebd6"; x.font='700 14px '+font; x.fillText("CBDC • রক্ত দান কেন্দ্র", W/2, 88);
-        const logo=await loadImg(LOGO_SRC);
-        x.save(); rr(W/2-32,110,64,64,32); x.clip(); x.drawImage(logo,W/2-32,110,64,64); x.restore();
-        const av=await loadImg(avatarData(d.gender));
-        x.save(); rr(W/2-62,220,124,124,62); x.clip(); x.drawImage(av,W/2-62,220,124,124); x.restore();
-        x.lineWidth=3; x.strokeStyle="#ffffff"; rr(W/2-62,220,124,124,62); x.stroke();
-        x.fillStyle="#ffffff"; x.font='900 30px '+font; x.fillText(String(d.name), W/2, 396);
-        x.fillStyle="#e51f2a"; x.beginPath(); x.arc(W/2,462,52,0,Math.PI*2); x.fill();
-        x.strokeStyle="rgba(255,255,255,.85)"; x.lineWidth=3; x.stroke();
-        x.fillStyle="#ffffff"; x.font='900 30px '+font; x.fillText(String(d.bloodGroup), W/2, 478);
-        const donorCardId = formatDonorId(d, publicDonors().indexOf(d));
-        const rows=[["এলাকা",d.area],["শেষ রক্তদান",d.lastDonationDate?dateText(d.lastDonationDate):"নতুন দাতা"],["মোবাইল",d.phone],["কার্ড নং",donorCardId]];
-        let yy=548; x.font='700 18px '+font;
-        for(const [k,v] of rows){ x.textAlign="left"; x.fillStyle="rgba(255,255,255,.55)"; x.fillText(String(k)+"  :", 66, yy); x.textAlign="right"; x.fillStyle="#ffffff"; x.fillText(String(v), W-66, yy); x.strokeStyle="rgba(255,255,255,.2)"; x.beginPath(); x.moveTo(50,yy+16); x.lineTo(W-50,yy+16); x.stroke(); yy+=44; }
-        x.textAlign="center"; x.fillStyle="#bdebd6"; x.font='700 15px '+font; x.fillText("✓ অনুমোদিত রক্তদাতা • রক্ত দিন, জীবন বাঁচান 🩸", W/2, H-42);
-        /* a non-ASCII download filename is dropped by the browser (the file
-           would arrive as "download"), so build a safe slug from the card id */
-        const slug=String(d.id||d.name||"donor").replace(/[^\x20-\x7E]/g,"")
-          .replace(/\s+/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"") || "CBDC-donor";
-        const a=document.createElement("a"); a.href=c.toDataURL("image/png");
-        a.download=slug+"-DonorCard.png"; a.style.display="none";
-        document.body.appendChild(a); a.click(); setTimeout(()=>a.remove(),1500);
-        }catch(err){
-          console.warn("donor card download:", err);
-          toast("ডোনার কার্ড ডাউনলোড করা যায়নি", true);
-        }finally{
-          setTimeout(()=>{ window._dcardBusy = false; }, 800);
-        }
+        const sub = cardSubjectFromDonor(d, list.indexOf(d));
+        /* Doner প্যানেলের মতোই — আগে "কার্ড নামান" sheet, তারপর ডাউনলোড।
+           downloadDonorCardImages ভেতরেই busy-guard, "কার্ড তৈরি হচ্ছে…" স্টেটাস
+           ও ব্রাউজারের ডাউনলোড সিস্টেম ব্যবহার করে। */
+        openDonorCardDownloadSheet(kind=>{
+          downloadDonorCardImages(kind, sub, { toast:(m,k)=>toast(m, k==="er") });
+        });
       };
       const downloadDonorCard = window.downloadDonorCard;
   
