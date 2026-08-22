@@ -28,7 +28,7 @@ import {
   verifyResetCode,
   completePasswordReset,
 } from "../lib/authx";
-import { addRow, setRow, updateRow, findBy, getRow, listOnce, nowIso } from "../lib/rtdb";
+import { addRow, setRow, updateRow, findBy, getRow, listOnce, nowIso, incrementField } from "../lib/rtdb";
 import { NODES } from "../lib/firebase";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, clearFieldError } from "../lib/forms";
 import { ageFromDob, ageText, dobBounds, isValidDob, toBanglaDigits } from "../lib/age";
@@ -4343,7 +4343,7 @@ function initPage() {
           if(!fbReady) throw new Error("ডাটাবেস সংযোগ নেই।");
           /* RTDB-তে লেখা — approved হলে সরাসরি লাইভ বোর্ডে, না হলে queue-তে।
              দুই ক্ষেত্রেই listener-এর কল্যাণে সব জায়গায় সঙ্গে সঙ্গে দেখা যায়। */
-          const memberUid = (()=>{ try{ return localStorage.getItem("cbdcMemberUid")||""; }catch(e){ return ""; } })();
+          const memberUid = String((auth && auth.currentUser && auth.currentUser.uid)||"").trim();
           const reqId = await addRow(NODES.requests, {
             ...o, status:newStatus, createdAt, expiresAt: expiresAtDate.toISOString(),
             ownerUid: memberUid||""
@@ -4356,6 +4356,8 @@ function initPage() {
               at:createdAt, expiresAt:expiresAtDate.toISOString(), ownerUid:memberUid||""
             });
           }
+          if(memberUid)incrementField(NODES.users,memberUid,"applicationCount",1)
+            .catch(e=>console.warn("application count increment:",e&&e.message));
           /* Notification RTDB-তে লেখা হয় না — আবেদন live হলে প্রতিটি ডোনারের
              প্যানেল নিজে নিজে matching notification তৈরি করে (আলাদা storage-এ) */
           form.reset();
