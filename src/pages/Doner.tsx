@@ -4575,7 +4575,10 @@ function initPage() {
     });
   }
   function myApplicationsAreLoading(){
-    return !AUTH_SESSION_READY||!!MY_APPLICATION_UID&&(!MY_APPLICATION_USER_READY||!MY_APPLICATION_REQUESTS_READY);
+    /* The private users/{uid} snapshot is the required source. The public
+       requests listener is only an additional live source; a temporary
+       listener/network issue must never leave this tab blocked forever. */
+    return !AUTH_SESSION_READY||!!MY_APPLICATION_UID&&!MY_APPLICATION_USER_READY;
   }
   function firebaseCurrentUid(){
     try{
