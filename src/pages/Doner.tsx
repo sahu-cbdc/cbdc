@@ -1208,6 +1208,10 @@ function initPage() {
   "যাচাই চলছে":"Under review",
   "আপাতত বন্ধ":"Currently off",
   "আমার আবেদন":"My requests",
+  "আবেদন আপডেট":"Update request",
+  "আপডেট":"Update",
+  "ডিলিট":"Delete",
+  "ডিলিট করুন":"Delete it",
   "আবেদন লোড হচ্ছে…":"Loading requests…",
   "আপনার সর্বশেষ আবেদনগুলো আনা হচ্ছে":"Fetching your latest requests",
   "কোনো আবেদন নেই":"No requests",
@@ -2551,13 +2555,16 @@ function initPage() {
     const responders=Array.isArray(r.responders)?r.responders:[];
     const responderCount=Math.max(responders.length,Number(r.responderCount)||0);
     const final=r.status==="done"||r.status==="resolved"||r.status==="expired"||r.status==="cancelled"||r.status==="rejected";
+    const manage=r.status==="expired";
     return `<div class="reqc"><h4>${esc(r.id)} <span class="bg">${esc(r.group)}</span> <span class="pill ${c}">${t}</span></h4>
     <p>${esc(r.patient)} · ${bn(r.bags)} ব্যাগ</p>
     <p>${ICON.hospital(13)} ${esc(r.hospital)} · ${dS(r.neededBy)}</p>
     ${r.rejectNote?`<p class="mut" style="margin-top:6px">বাতিলের কারণ: ${esc(r.rejectNote)}</p>`:""}
     ${responderCount?`<p style="color:var(--grn);font-weight:700">${bn(responderCount)} জন সাড়া দিয়েছেন</p>`:""}
     <div class="a">${responders.length?`<button class="btn sm" data-resps="${esc(r.id)}">সাড়াদাতারা</button>`:""}
-      ${!final?
+      ${manage?`<button class="btn gh sm" data-update="${esc(r.id)}">আপডেট</button>
+        <button class="btn gh sm" data-delete="${esc(r.id)}" style="color:var(--red)">ডিলিট</button>`:
+        !final?
         `<button class="btn gh sm" data-done="${esc(r.id)}">${ICON.check(14)} সম্পন্ন</button>
          <button class="btn gh sm" data-cancel="${esc(r.id)}">বাতিল</button>`:""}</div></div>`};
   
@@ -3315,43 +3322,101 @@ function initPage() {
   }
 
   /* ── জরুরি রক্তের আবেদন ── */
-  function sheetNewReq(){
-    const s=sheet("জরুরি রক্তের আবেদন",`
+  function applicationBelongsToCurrentUser(id){
+    const uid=firebaseCurrentUid();
+    return !!uid&&uid===MY_APPLICATION_UID&&RAW.mine.some(row=>String(row&&row.id||"")===String(id));
+  }
+  function applicationQueueRecord(app,uid){
+    return {
+      kind:"request",id:app.id,requestId:app.id,patient:app.patient,group:app.group,bags:app.bags,
+      urgency:app.urgency,hospital:app.hospital,area:app.address||app.area||"",phone:STORE.account.phone||"",
+      requester:STORE.account.name||"",whatsapp:STORE.donor.whatsapp||"",description:app.description||"",
+      at:app.createdAt||nowIso(),expiresAt:app.neededBy?app.neededBy+"T23:59:59":"",ownerUid:uid
+    };
+  }
+  async function savePersonalApplication(app,{remove=false,hasRequest}={}){
+    const uid=firebaseCurrentUid();
+    if(!uid||uid!==MY_APPLICATION_UID||(!remove&&!applicationBelongsToCurrentUser(app&&app.id)))
+      throw new Error("এই আবেদনটি আপনার অ্যাকাউন্টের নয়।");
+    const paths={};
+    paths[`users/${uid}/data/mine`]=remove?RAW.mine.filter(row=>String(row&&row.id||"")!==String(app.id)):RAW.mine;
+    /* queue/{id} is the existing pending-moderation record used by Doner.
+       Owner updates are implemented as delete + create because the existing
+       rules allow owners to remove their queue item, but only allow creation
+       for a new queue item. */
+    if(remove)paths[`queue/${app.id}`]=null;
+    /* Home-created applications also have requests/{id}; update/delete that
+       record only when it already exists, without changing the data shape. */
+    const requestExists=hasRequest===undefined
+      ?MY_APPLICATION_REQUEST_ROWS.some(row=>String(row&&row.id||"")===String(app.id))
+      :hasRequest;
+    if(requestExists&&remove)paths[`requests/${app.id}`]=null;
+    if(requestExists&&!remove){
+        const requestPrefix=`requests/${app.id}`;
+        Object.assign(paths,{
+          [`${requestPrefix}/patientName`]:app.patient,
+          [`${requestPrefix}/bloodGroup`]:app.group,
+          [`${requestPrefix}/bags`]:app.bags,
+          [`${requestPrefix}/urgency`]:app.urgency,
+          [`${requestPrefix}/hospitalName`]:app.hospital,
+          [`${requestPrefix}/hospitalAddress`]:app.address||app.area||"",
+          [`${requestPrefix}/requesterName`]:STORE.account.name||"",
+          [`${requestPrefix}/phone`]:STORE.account.phone||"",
+          [`${requestPrefix}/description`]:app.description||"",
+          [`${requestPrefix}/status`]:"pending",
+          [`${requestPrefix}/workflowStatus`]:null,
+          [`${requestPrefix}/responders`]:[],
+          [`${requestPrefix}/expiresAt`]:app.neededBy?app.neededBy+"T23:59:59":"",
+          [`${requestPrefix}/ownerUid`]:uid
+        });
+    }
+    if(!remove)await removeRow(NODES.queue,app.id);
+    await updatePaths(paths);
+    if(!remove)await setRow(NODES.queue,app.id,applicationQueueRecord(app,uid));
+  }
+  function sheetNewReq(existing=null){
+    const editing=!!existing;
+    const initial=existing||{};
+    const val=(key,fallback="")=>esc(initial[key]||fallback);
+    const deadline=String(initial.neededBy||"").slice(0,10)||addD(iso(now()),1);
+    const urgencyOptions=["অতিজরুরি (২ ঘণ্টা)","জরুরি (আজকের মধ্যে)","আগামীকালের মধ্যে"];
+    const s=sheet(editing?"আবেদন আপডেট":"জরুরি রক্তের আবেদন",`
       <div class="note i">${ICON.info(17)}<span>জমা দিলে অ্যাডমিন যাচাই করবেন; অনুমোদনের পর তা রক্তদাতাদের কাছে প্রকাশিত হবে।</span></div>
       <form id="newreqForm" novalidate>
       <div class="f"><label>রোগীর নাম <i>*</i></label>
-        <input id="nr_patient" name="nr_patient">
+        <input id="nr_patient" name="nr_patient" value="${val("patient")}">
         <span class="hint">রোগীর অনুমতি ছাড়া পুরো নাম না লেখাই ভালো</span></div>
       <div class="f"><label>রক্তের গ্রুপ <i>*</i></label>
         <select id="nr_group" name="nr_group">
           <option value="">গ্রুপ নির্বাচন করুন</option>
-          ${GROUPS.map(g=>`<option>${esc(g)}</option>`).join("")}
+          ${GROUPS.map(g=>`<option ${g===initial.group?"selected":""}>${esc(g)}</option>`).join("")}
         </select></div>
       <div class="f2">
         <div class="f"><label>কত ব্যাগ <i>*</i></label>
-          <input id="nr_bags" name="nr_bags" type="number" min="1" max="99" inputmode="numeric"></div>
+          <input id="nr_bags" name="nr_bags" type="number" min="1" max="99" inputmode="numeric" value="${val("bags")}"></div>
         <div class="f"><label>জরুরিতা <i>*</i></label>
           <select id="nr_urgency" name="nr_urgency">
             <option value="">নির্বাচন করুন</option>
-            <option>অতিজরুরি (২ ঘণ্টা)</option>
-            <option>জরুরি (আজকের মধ্যে)</option>
-            <option>আগামীকালের মধ্যে</option>
+            ${urgencyOptions.map(option=>`<option ${option===initial.urgency?"selected":""}>${esc(option)}</option>`).join("")}
           </select></div>
       </div>
+      ${editing?`<div class="f"><label>রক্ত দরকার কবে <i>*</i></label>
+        <input id="nr_needed" name="nr_needed" type="date" min="${iso(now())}" value="${esc(deadline)}">
+        <span class="hint">তারিখ বদলালে আবেদনটি আবার যাচাইয়ের জন্য যাবে।</span></div>`:""}
       <div class="f"><label>হাসপাতালের নাম <i>*</i></label>
-        <input id="nr_hospital" name="nr_hospital"></div>
+        <input id="nr_hospital" name="nr_hospital" value="${val("hospital")}"></div>
       <div class="f"><label>হাসপাতালের ঠিকানা <i>*</i></label>
-        <input id="nr_address" name="nr_address"></div>
+        <input id="nr_address" name="nr_address" value="${val("address")}"></div>
       <div class="f"><label>বিবরণ <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
-        <textarea id="nr_desc" name="nr_desc"></textarea></div>
+        <textarea id="nr_desc" name="nr_desc">${val("description")}</textarea></div>
       <label class="chk"><input type="checkbox" id="nr_ok" name="nr_ok">
-        <span>আমি নিশ্চিত করছি উপরের তথ্য সঠিক এবং রক্তের প্রয়োজনটি বাস্তব।</span></label>
+        <span>আমি নিশ্চিত করছি প্রদত্ত তথ্য সঠিক এবং রক্তের প্রয়োজনটি বাস্তব।</span></label>
       </form>`,
-      `<button class="btn gh" data-close>বাতিল</button><button class="btn red" id="nr_save">${ICON.plus(16)} আবেদন জমা দিন</button>`,{lock:true});
+      `<button class="btn gh" data-close>বাতিল</button><button class="btn red" id="nr_save">${editing?"আপডেট":ICON.plus(16)+" আবেদন জমা দিন"}</button>`,{lock:true});
     attachLiveClear(s.q("#newreqForm"));
     s.q("#nr_save").onclick=async()=>{
       const form=s.q("#newreqForm");
-      const v=validateForm(form,{
+      const rules={
         nr_patient:{required:true,label:"রোগীর নাম"},
         nr_group:{required:true,label:"রক্তের গ্রুপ"},
         nr_bags:{required:true,custom:v=>{const n=Number(v);return n>=1&&n<=99?"":"১–৯৯ ব্যাগ দিন"},label:"কত ব্যাগ"},
@@ -3359,25 +3424,50 @@ function initPage() {
         nr_hospital:{required:true,label:"হাসপাতালের নাম"},
         nr_address:{required:true,label:"হাসপাতালের ঠিকানা"},
         nr_ok:{checked:true}
-      });
+      };
+      if(editing)rules.nr_needed={required:true,custom:v=>String(v)>=iso(now())?true:"আজ বা পরের তারিখ দিন",label:"রক্ত দরকার কবে"};
+      const v=validateForm(form,rules);
       if(!v.ok)return;
-      const btn=s.q("#nr_save");btn.disabled=true;btn.textContent="জমা হচ্ছে…";
-      const m={
-        id:genId("REQ"),
+      const btn=s.q("#nr_save");btn.disabled=true;btn.textContent=editing?"আপডেট হচ্ছে…":"জমা হচ্ছে…";
+      const formValues={
         patient:s.q("#nr_patient").value.trim(),
         group:s.q("#nr_group").value,
         bags:Number(s.q("#nr_bags").value),
         urgency:s.q("#nr_urgency").value,
         hospital:s.q("#nr_hospital").value.trim(),
         address:s.q("#nr_address").value.trim(),
-        description:s.q("#nr_desc").value.trim()||"",
-        neededBy:addD(iso(now()),1),
-        createdAt:new Date().toISOString(),
-        status:"pending",
-        responders:[]
+        description:s.q("#nr_desc").value.trim()||""
       };
+      if(editing){
+        const current=RAW.mine.find(row=>String(row&&row.id||"")===String(initial.id));
+        if(!current){btn.disabled=false;btn.textContent="আপডেট";return toast("আবেদনটি আর পাওয়া যাচ্ছে না","er");}
+        const previousMine=RAW.mine.slice(),previousUserRows=MY_APPLICATION_USER_ROWS.slice(),previousRequestRows=MY_APPLICATION_REQUEST_ROWS.slice();
+        const updated={...current,...formValues,neededBy:s.q("#nr_needed").value,
+          expiresAt:s.q("#nr_needed").value+"T23:59:59",status:"pending",workflowStatus:null,
+          rejectNote:null,responders:[],responderCount:0};
+        RAW.mine=RAW.mine.map(row=>String(row&&row.id||"")===String(updated.id)?updated:row);
+        MY_APPLICATION_USER_ROWS=MY_APPLICATION_USER_ROWS.some(row=>String(row&&row.id||"")===String(updated.id))
+          ?MY_APPLICATION_USER_ROWS.map(row=>String(row&&row.id||"")===String(updated.id)?updated:row)
+          :[...MY_APPLICATION_USER_ROWS,updated];
+        MY_APPLICATION_REQUEST_ROWS=MY_APPLICATION_REQUEST_ROWS.map(row=>String(row&&row.id||"")===String(updated.id)
+          ?{...row,patientName:updated.patient,bloodGroup:updated.group,bags:updated.bags,urgency:updated.urgency,
+            hospitalName:updated.hospital,hospitalAddress:updated.address,description:updated.description,
+            status:"pending",workflowStatus:null,responders:[],expiresAt:updated.neededBy+"T23:59:59"}:row);
+        mergeMyApplications();
+        try{
+          await savePersonalApplication(updated);
+          s.close();reqTab="mine";go("req");
+          toast("আবেদন আপডেট হয়েছে — আবার যাচাইয়ের অপেক্ষায়","ok");
+        }catch(e){
+          RAW.mine=previousMine;MY_APPLICATION_USER_ROWS=previousUserRows;MY_APPLICATION_REQUEST_ROWS=previousRequestRows;
+          mergeMyApplications();btn.disabled=false;btn.textContent="আপডেট";
+          toast(e&&e.message?e.message:"আবেদন আপডেট করা যায়নি","er");
+        }
+        return;
+      }
+      const m={...formValues,id:genId("REQ"),neededBy:addD(iso(now()),1),createdAt:new Date().toISOString(),status:"pending",responders:[]};
       RAW.mine.unshift(m);
-      saveData();                            /* localStorage + users/{uid}/data + queue (shared/RTDB) */
+      saveData();                            /* localStorage + queue (shared/RTDB) */
       logAct("জরুরি রক্তের আবেদন",m.group+" · "+m.bags+" ব্যাগ","donor");
       /* matching ডোনারদের notification RTDB-তে লেখা হয় না — আবেদন approve হয়ে
          live হলে প্রতিটি ডোনারের প্যানেল নিজে নিজে notification তৈরি করে */
@@ -3386,6 +3476,23 @@ function initPage() {
       go("req");
       toast("আবেদন জমা হয়েছে — যাচাইয়ের অপেক্ষায়","ok");
     };
+  }
+  async function deletePersonalApplication(app){
+    if(!app||!applicationBelongsToCurrentUser(app.id))return toast("আবেদনটি আর পাওয়া যাচ্ছে না","er");
+    const previousMine=RAW.mine.slice(),previousUserRows=MY_APPLICATION_USER_ROWS.slice(),previousRequestRows=MY_APPLICATION_REQUEST_ROWS.slice();
+    const hasRequest=MY_APPLICATION_REQUEST_ROWS.some(row=>String(row&&row.id||"")===String(app.id));
+    RAW.mine=RAW.mine.filter(row=>String(row&&row.id||"")!==String(app.id));
+    MY_APPLICATION_USER_ROWS=MY_APPLICATION_USER_ROWS.filter(row=>String(row&&row.id||"")!==String(app.id));
+    MY_APPLICATION_REQUEST_ROWS=MY_APPLICATION_REQUEST_ROWS.filter(row=>String(row&&row.id||"")!==String(app.id));
+    mergeMyApplications();
+    try{
+      await savePersonalApplication(app,{remove:true,hasRequest});
+      toast("আবেদন সম্পূর্ণ ডিলিট হয়েছে","ok");
+    }catch(e){
+      RAW.mine=previousMine;MY_APPLICATION_USER_ROWS=previousUserRows;MY_APPLICATION_REQUEST_ROWS=previousRequestRows;
+      mergeMyApplications();
+      toast(e&&e.message?e.message:"আবেদন ডিলিট করা যায়নি","er");
+    }
   }
 
   /* ── রক্তদান যোগ (adddonation sub-screen) ── */
@@ -3580,7 +3687,7 @@ function initPage() {
   document.addEventListener("click",async e=>{
     const sub=e.target.closest("[data-sub]");
     if(sub&&!e.target.closest("[data-act]")){go(CUR==="set"||SUB?"set":CUR,sub.dataset.sub);return}
-    const b=e.target.closest("[data-act],[data-resp],[data-mute],[data-done],[data-cancel],[data-resps],[data-fav]");
+    const b=e.target.closest("[data-act],[data-resp],[data-mute],[data-done],[data-cancel],[data-resps],[data-update],[data-delete],[data-fav]");
     if(!b)return;const D_=b.dataset;
   
     if(D_.fav!==undefined){const n=D_.fav,i=STORE.saved.indexOf(n);
@@ -3594,6 +3701,19 @@ function initPage() {
     if(D_.mute){if(!await confirmS({title:"এই আবেদন লুকাবেন?",desc:"আপনার তালিকা থেকে সরে যাবে।",ok:"লুকান"}))return;
       const i=RAW.incoming.findIndex(x=>x.id===D_.mute);if(i>-1)RAW.incoming.splice(i,1);saveData();rReq();
       logAct("আবেদন লুকানো হয়েছে",D_.mute,"donor");toast("লুকানো হয়েছে");return}
+    if(D_.update){
+      const app=RAW.mine.find(row=>String(row&&row.id||"")===String(D_.update));
+      if(!app)return toast("আবেদনটি আর পাওয়া যাচ্ছে না","er");
+      if(!applicationBelongsToCurrentUser(app.id))return toast("এই আবেদনটি আপনার অ্যাকাউন্টের নয়","er");
+      sheetNewReq(app);return;
+    }
+    if(D_.delete){
+      const app=RAW.mine.find(row=>String(row&&row.id||"")===String(D_.delete));
+      if(!app)return toast("আবেদনটি আর পাওয়া যাচ্ছে না","er");
+      if(!applicationBelongsToCurrentUser(app.id))return toast("এই আবেদনটি আপনার অ্যাকাউন্টের নয়","er");
+      if(!await confirmS({title:"আবেদনটি সম্পূর্ণ ডিলিট করবেন?",desc:"এই আবেদনটি আপনার আবেদন তালিকা ও RTDB থেকে স্থায়ীভাবে মুছে যাবে।",ok:"ডিলিট করুন",danger:true}))return;
+      await deletePersonalApplication(app);return;
+    }
     if(D_.done){if(!await confirmS({title:"সম্পন্ন হিসেবে চিহ্নিত করবেন?",desc:"রক্ত পাওয়া গেছে নিশ্চিত করছেন।",ok:"সম্পন্ন"}))return;
       RAW.mine.find(x=>x.id===D_.done).status="done";saveData();rReq();
       logAct("আবেদন সম্পন্ন",D_.done,"donor");toast("আবেদন সম্পন্ন হয়েছে","ok");return}
@@ -4477,6 +4597,13 @@ function initPage() {
     /* workflowStatus is the more specific part of an approved request. */
     return canonical(workflow)||canonical(status)||"pending";
   }
+  function applicationHasExpired(row){
+    const raw=String(row&&row.expiresAt||row&&row.neededBy||"").trim();
+    if(!raw)return false;
+    const value=/^\d{4}-\d{2}-\d{2}$/.test(raw)?raw+"T23:59:59":raw;
+    const time=Date.parse(value);
+    return Number.isFinite(time)&&time<Date.now();
+  }
   function normalizeApplication(row){
     const r=row&&typeof row==="object"?row:{};
     const responders=Array.isArray(r.responders)
@@ -4486,6 +4613,7 @@ function initPage() {
       ?responders.length
       :Number(r.responders)||Number(r.responderCount)||0;
     const expires=String(r.neededBy||r.expiresAt||"");
+    const status=applicationStatus(r);
     return {
       ...r,
       id:String(r.id||r.requestId||""),
@@ -4498,7 +4626,9 @@ function initPage() {
       area:r.area||r.hospitalAddress||r.address||"",
       neededBy:expires.slice(0,10),
       createdAt:r.createdAt||r.at||"",
-      status:applicationStatus(r),
+      /* Expiry is derived for display only; the original RTDB record remains
+         intact until the user explicitly updates or deletes it. */
+      status:!APPLICATION_TERMINAL_STATUS.has(status)&&applicationHasExpired(r)?"expired":status,
       responders,
       responderCount,
       rejectNote:r.rejectNote||r.rejectionReason||""
@@ -4908,6 +5038,14 @@ function initPage() {
   /* ২৪ ঘণ্টা পুরোনো notification স্বয়ংক্রিয় cleanup — আলাদা website
      notification storage থেকেই মুছে যায় (RTDB-তে কিছু লেখা হয় না) */
   setInterval(()=>{ try{ pruneExpired(); }catch(e){} }, 30*60*1000);
+  /* An expired request stays in the user's history, but its status/actions
+     should appear without requiring a page refresh when its deadline passes. */
+  setInterval(()=>{
+    try{
+      if(CUR==="req"&&!document.querySelector(".sheet")&&RAW.mine.some(row=>
+        !APPLICATION_TERMINAL_STATUS.has(applicationStatus(row))&&applicationHasExpired(row)))mergeMyApplications();
+    }catch(e){}
+  },60*1000);
   
 }
 
