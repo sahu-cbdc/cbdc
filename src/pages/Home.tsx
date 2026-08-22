@@ -1576,19 +1576,52 @@ function StaticShell() {
                         {"সকল থানা"}
                       </option>
                       <option>
+                        {"কোতোয়ালি"}
+                      </option>
+                      <option>
                         {"চকবাজার"}
+                      </option>
+                      <option>
+                        {"পাঁচলাইশ"}
+                      </option>
+                      <option>
+                        {"খুলশী"}
+                      </option>
+                      <option>
+                        {"বায়েজিদ বোস্তামী"}
+                      </option>
+                      <option>
+                        {"পাহাড়তলী"}
+                      </option>
+                      <option>
+                        {"আকবরশাহ"}
+                      </option>
+                      <option>
+                        {"হালিশহর"}
+                      </option>
+                      <option>
+                        {"ডবলমুরিং"}
+                      </option>
+                      <option>
+                        {"পতেঙ্গা"}
+                      </option>
+                      <option>
+                        {"ইপিজেড"}
+                      </option>
+                      <option>
+                        {"বন্দর"}
+                      </option>
+                      <option>
+                        {"কর্ণফুলী"}
                       </option>
                       <option>
                         {"বাকলিয়া"}
                       </option>
                       <option>
-                        {"কোতোয়ালী"}
+                        {"সদরঘাট"}
                       </option>
                       <option>
-                        {"চাঁদগাঁও"}
-                      </option>
-                      <option>
-                        {"পাঁচলাইশ"}
+                        {"চান্দগাঁও"}
                       </option>
                     </select>
                   </div>
@@ -1946,19 +1979,52 @@ function StaticShell() {
                           {"থানা / এলাকা নির্বাচন করুন"}
                         </option>
                         <option>
+                          {"কোতোয়ালি"}
+                        </option>
+                        <option>
                           {"চকবাজার"}
+                        </option>
+                        <option>
+                          {"পাঁচলাইশ"}
+                        </option>
+                        <option>
+                          {"খুলশী"}
+                        </option>
+                        <option>
+                          {"বায়েজিদ বোস্তামী"}
+                        </option>
+                        <option>
+                          {"পাহাড়তলী"}
+                        </option>
+                        <option>
+                          {"আকবরশাহ"}
+                        </option>
+                        <option>
+                          {"হালিশহর"}
+                        </option>
+                        <option>
+                          {"ডবলমুরিং"}
+                        </option>
+                        <option>
+                          {"পতেঙ্গা"}
+                        </option>
+                        <option>
+                          {"ইপিজেড"}
+                        </option>
+                        <option>
+                          {"বন্দর"}
+                        </option>
+                        <option>
+                          {"কর্ণফুলী"}
                         </option>
                         <option>
                           {"বাকলিয়া"}
                         </option>
                         <option>
-                          {"কোতোয়ালী"}
+                          {"সদরঘাট"}
                         </option>
                         <option>
-                          {"চাঁদগাঁও"}
-                        </option>
-                        <option>
-                          {"পাঁচলাইশ"}
+                          {"চান্দগাঁও"}
                         </option>
                       </select>
                     </div>
@@ -2913,19 +2979,52 @@ function StaticShell() {
                           {"থানা / এলাকা নির্বাচন করুন"}
                         </option>
                         <option>
+                          {"কোতোয়ালি"}
+                        </option>
+                        <option>
                           {"চকবাজার"}
+                        </option>
+                        <option>
+                          {"পাঁচলাইশ"}
+                        </option>
+                        <option>
+                          {"খুলশী"}
+                        </option>
+                        <option>
+                          {"বায়েজিদ বোস্তামী"}
+                        </option>
+                        <option>
+                          {"পাহাড়তলী"}
+                        </option>
+                        <option>
+                          {"আকবরশাহ"}
+                        </option>
+                        <option>
+                          {"হালিশহর"}
+                        </option>
+                        <option>
+                          {"ডবলমুরিং"}
+                        </option>
+                        <option>
+                          {"পতেঙ্গা"}
+                        </option>
+                        <option>
+                          {"ইপিজেড"}
+                        </option>
+                        <option>
+                          {"বন্দর"}
+                        </option>
+                        <option>
+                          {"কর্ণফুলী"}
                         </option>
                         <option>
                           {"বাকলিয়া"}
                         </option>
                         <option>
-                          {"কোতোয়ালী"}
+                          {"সদরঘাট"}
                         </option>
                         <option>
-                          {"চাঁদগাঁও"}
-                        </option>
-                        <option>
-                          {"পাঁচলাইশ"}
+                          {"চান্দগাঁও"}
                         </option>
                       </select>
                     </div>
