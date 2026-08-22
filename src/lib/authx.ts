@@ -36,7 +36,7 @@ import {
   type ActionCodeSettings,
 } from "firebase/auth";
 import { NODES } from "./firebase";
-import { getRow, updateRow, setRow, findBy, nowIso, nextDonorId } from "./rtdb";
+import { getRow, updateRow, setRow, findBy, nowIso } from "./rtdb";
 import { isValidDob, toEnglishDigits } from "./age";
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -474,15 +474,14 @@ export async function ensureUserProfile(
     base.status = "active";
     base.createdAt = nowIso();
     if (!base.donorStatus && bloodGroup) base.donorStatus = "pending";
-    /* Account তৈরির সিরিয়াল অনুযায়ী স্থায়ী Donor UID — কখনো random/uid-hash নয়। */
-    if (!base.donorId) base.donorId = await nextDonorId();
+    /* Account তৈরির সময় Donor UID তৈরি হয় না।
+       Donor UID শুধু Admin/Moderator Approve করে Donor List-এ যুক্ত করার সময় নির্ধারিত হয়। */
     await setRow(NODES.users, user.uid, base);
     return;
   }
   // existing থাকলে donorStatus যদি আগে না থাকে কিন্তু এখন bloodGroup আসছে, pending করে দাও
   if (!existing.donorStatus && bloodGroup && !base.donorStatus) base.donorStatus = "pending";
-  /* আগের UID থাকলে কখনো পরিবর্তন হয় না; শুধু পুরোনো/নতুন account-এ না থাকলে next serial দিই */
-  if (!base.donorId) base.donorId = await nextDonorId();
+  /* ইতিমধ্যে থাকা donorId কখনো পরিবর্তন/তৈরি করা হয় না — approval-এর সময় Admin নিজে সেট করে। */
   await updateRow(NODES.users, user.uid, base);
 }
 

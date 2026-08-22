@@ -18,7 +18,7 @@ import {
   loadUserProfile,
   isProfileComplete,
 } from "../lib/authx";
-import { getRow, setRow, updateRow, watchRow, addRow, findBy, listOnce, nowIso, updatePaths, nextDonorId } from "../lib/rtdb";
+import { getRow, setRow, updateRow, watchRow, addRow, findBy, listOnce, nowIso, updatePaths } from "../lib/rtdb";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
@@ -4225,7 +4225,7 @@ function initPage() {
           <button class="btn w" style="margin-top:12px" data-act="become">রক্তদাতা হিসেবে যুক্ত হন</button></div>`
       : `<div class="card">
           <div class="per"><span class="bg" style="width:46px;height:46px;border-radius:12px;font-size:1rem">${esc(d.bloodGroup)}</span>
-            <div class="i"><b>${esc(dv("name"))}</b><small>${esc(d.donorId)} · ${esc(dv("area"))}</small></div></div>
+            <div class="i"><b>${esc(dv("name"))}</b><small>${d.donorId?esc(d.donorId)+" · ":""}${esc(dv("area"))}${d.donorId?"":dStatus()&&dStatus()!=="none"?" · অ্যাডমিন অনুমোদনের অপেক্ষায়":""}</small></div></div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin:11px 0">${donorPill()}
             ${dStatus()==="approved"?`<span class="pill b n">${ICON.checkC(12)} যাচাইকৃত</span>`:""}</div>
           <div style="display:flex;gap:8px">
@@ -5618,10 +5618,9 @@ function initPage() {
       d.whatsapp=s.q("#bc_wa").value.trim()||"";
       d.appliedAt=iso(now());
       d.available=true;
-      if(!d.donorId){
-        try{ d.donorId=await newDonorId(); }  /* সিরিয়াল; একবার তৈরি হলে স্থায়ী */
-        catch(err){ btn.disabled=false; btn.textContent="জমা দিন"; toast(authErrorMessage(err,{fallback:"Donor UID তৈরি করা যায়নি। আবার চেষ্টা করুন।"}),"er"); return; }
-      }
+      /* আবেদনের সময় Donor UID তৈরি হয় না — সেটি Admin Approve হলে নির্ধারিত হবে।
+         পুরোনো/ভুলভাবে থাকা donorId-ও পেন্ডিং আবেদনে বাদ দেওয়া হয়। */
+      d.donorId="";
       save();                                   /* localStorage + queue (shared/RTDB) + users/{uid} */
       logAct("রক্তদাতা হিসেবে যুক্ত হন",d.bloodGroup+" · যাচাইয়ের অপেক্ষায়","donor");
       s.close();
@@ -6464,12 +6463,9 @@ function initPage() {
      No default identity ships with the app, so on the very first open we ask for
      the minimum an account needs. Everything else is filled in later, from the
      screen that owns it. */
-  /* club ID for a brand-new donor: CBDC-<year>-<4-digit serial>
-     Serial নম্বর RTDB-র atomic counter থেকে আসে — random/uid-hash কখনোই নয়।
-     একবার তৈরি হলে `d.donorId` স্থায়ী থাকে, পরের login/update-এ পরিবর্তন হয় না। */
-  async function newDonorId(){
-    return await nextDonorId();
-  }
+  /* Donor UID সরাসরি এখানে তৈরি হয় না।
+     এটি শুধু "রক্তদাতা হিসেবে যুক্ত হন" → Admin Approve → Donor List-এ যুক্ত হওয়ার
+     সময় sequential counter (`_meta/donorCounter/<year>`) থেকে নির্ধারিত হয়। */
   function needsSetup(){return !isProfileComplete(STORE.account)}
   function sheetSetup(){
     const b=dobBounds(SITE.rules.minAge,SITE.rules.maxAge);
@@ -6596,7 +6592,6 @@ function initPage() {
     if(row.joined)a.joined=row.joined;
     // donor fields — একই UID তে donor তথ্য একীভূত, কোনো duplicate নয়
     const _bg = row.bloodGroup || row.group || "";
-    const _dId = row.donorId || row.donorID || "";
     /* Account-এর `status:"active"` কে কখনোই donor status ভাবা যাবে না।
        নতুন অ্যাকাউন্টে শুধু `status:"active"` থাকে — এটি Read হলে যেন নবাগত
        ইউজারকে Approved/প্রস্তুত Donor দেখানো না হয়। Donor status তখনই
@@ -6608,6 +6603,10 @@ function initPage() {
     const _dStatus = _knownDonorStatuses.includes(_dStatusRaw)
       ? _dStatusRaw
       : (_knownDonorStatuses.includes(_accountStatus) ? _accountStatus : "");
+    /* Donor UID শুধু approved হলে রাখা হয়। পেন্ডিং/নতুন status-এ পুরোনো
+       (ভুলভাবে তৈরি) donorId থাকলেও তা ব্যবহার করা হয় না — approve হলে
+       Admin sequential সিরিয়ালে নতুন UID দেবে। */
+    const _dId = _dStatus==="approved" ? (row.donorId || row.donorID || "") : "";
     const _last = row.lastDonation || row.lastDonationDate || row.last || "";
     const _wa = row.whatsapp || row.whatsApp || "";
     const _health = row.health || row.healthNotes || "";
@@ -6620,6 +6619,7 @@ function initPage() {
     const _hasDonorInfo = !!(_bg || _dId || (_dStatus && _dStatus!=="none"));
     if(_bg) STORE.donor.bloodGroup=_bg;
     if(_dId) STORE.donor.donorId=_dId;
+    else if(_dStatus && _dStatus!=="approved") STORE.donor.donorId="";
     if(!_hasDonorInfo){
       /* RTDB অ্যাকাউন্টে কোনো donor আবেদন/তথ্য নেই → Donor নয়। এর ফলে আগের
          ভুল cache বা `status:"active"`-এর কারণে অনুমোদিত Donor দেখানো বন্ধ হয়। */
@@ -6660,7 +6660,7 @@ function initPage() {
       }catch(e){}
       if(donor){
         STORE.donor.is=true; STORE.donor.status="approved";
-        STORE.donor.donorId = donor.id || donor.donorId || STORE.donor.donorId || (await newDonorId());
+        STORE.donor.donorId = donor.id || donor.donorId || STORE.donor.donorId || "";
         STORE.donor.bloodGroup = donor.bloodGroup || donor.group || STORE.donor.bloodGroup;
         if(donor.lastDonationDate) STORE.donor.lastDonation = donor.lastDonationDate;
         else if(donor.lastDonation) STORE.donor.lastDonation = donor.lastDonation;
@@ -6685,7 +6685,8 @@ function initPage() {
         STORE.donor.is=true;
         const st = String(member.status||member.donorStatus||"pending").toLowerCase();
         STORE.donor.status = st==="approved" ? "approved" : "pending";
-        STORE.donor.donorId = member.donorId || member.id || STORE.donor.donorId || (await newDonorId());
+        /* Donor UID শুধু approved হলে রাখা হয়; pending হলে approve-র আগে না রাখা */
+        STORE.donor.donorId = st==="approved" ? (member.donorId || member.id || STORE.donor.donorId || "") : "";
         STORE.donor.bloodGroup = member.bloodGroup || member.group || STORE.donor.bloodGroup;
         if(member.lastDonationDate) STORE.donor.lastDonation = member.lastDonationDate;
         else if(member.lastDonation) STORE.donor.lastDonation = member.lastDonation;
@@ -6703,7 +6704,8 @@ function initPage() {
         const q = allQ.find(x=> x.kind==="donor" && String(x.ownerUid)===String(uid)) || allQ.find(x=> String(x.uid)===String(uid) && x.group);
         if(q){
           STORE.donor.is=true; STORE.donor.status="pending";
-          STORE.donor.donorId = q.donorId || q.id || q.memberId || STORE.donor.donorId || (await newDonorId());
+          /* pending queue — Donor UID এখনো তৈরি হয়নি; approve-র পরে Admin সেট করবে */
+          STORE.donor.donorId = "";
           STORE.donor.bloodGroup = q.group || q.bloodGroup || STORE.donor.bloodGroup;
           if(q.last) STORE.donor.lastDonation = q.last;
           else if(q.lastDonation) STORE.donor.lastDonation = q.lastDonation;

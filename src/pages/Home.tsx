@@ -28,7 +28,7 @@ import {
   verifyResetCode,
   completePasswordReset,
 } from "../lib/authx";
-import { addRow, setRow, updateRow, findBy, getRow, nowIso, nextDonorId } from "../lib/rtdb";
+import { addRow, setRow, updateRow, findBy, getRow, nowIso } from "../lib/rtdb";
 import { NODES } from "../lib/firebase";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, clearFieldError } from "../lib/forms";
 import { ageFromDob, ageText, dobBounds, isValidDob, toBanglaDigits } from "../lib/age";
@@ -4880,16 +4880,14 @@ function initPage() {
           };
           if(existingProfile){
             /* বিদ্যমান প্রোফাইল — শুধু account তথ্য আপডেট; donor তথ্য
-               (donorStatus/donorId/bloodGroup) অক্ষত থাকে — pending-এ ঠেলে দেওয়া হয় না।
-               ইতিমধ্যে থাকা donorId কখনো পরিবর্তন হয় না; না থাকলে ensureUserProfile
-               sequential সিরিয়ালে নতুনটি দেবে। */
+               (donorStatus/donorId/bloodGroup) অক্ষত থাকে — pending-এ ঠেলে দেওয়া হয় না। */
             await ensureUserProfile({
               uid, email:o.email, name:o.name, photo:photoURL,
               phone:o.phone, dob:o.dob, gender:o.gender, area:o.area, username:o.username, address:o.address
             }, {provider: isGoogle ? "google" : "password"});
           } else {
-            /* নতুন Account-এর সিরিয়াল অনুযায়ী স্থায়ী Donor UID — random/uid-hash নয় */
-            profilePayload.donorId = await nextDonorId();
+            /* নতুন Account-এ Donor UID তৈরি হয় না — শুধু account record।
+               Donor UID কেবল "রক্তদাতা হিসেবে যুক্ত হন" → Admin Approve হলে নির্ধারিত হয়। */
             await setRow(NODES.users, uid, {
               ...profilePayload,
               role: DEFAULT_ROLE,

@@ -179,10 +179,10 @@ Website-এ role শুধুমাত্র ৩টি: **Admin** (Full Access),
 
 ### Donor application flow
 
-1. নতুন account তৈরি/login করলে user শুধু Doner role-এ থাকে — auto donor হয় না।
-2. `users/{uid}/donorId` account তৈরির **সিরিয়াল অনুযায়ী** তৈরি হয় (`CBDC-<year>-0001`, `0002`, …) — থাকলে স্থায়ী, random/uid-hash নয়।
-3. Doner Panel → “রক্তদাতা হিসেবে যুক্ত হন” থেকে আবেদন করলে সেটি `queue`-এ `pending` থাকে।
-4. Admin approve করলে তবেই `donors/{donorId}` তৈরি হয় এবং public donor list-এ দেখা যায়।
+1. নতুন account তৈরি/login করলে user শুধু Doner role-এ থাকে — auto donor হয় না এবং কোনো Donor UID তৈরি হয় না।
+2. Doner Panel → “রক্তদাতা হিসেবে যুক্ত হন” থেকে আবেদন করলে সেটি `queue`-এ `pending` থাকে (Donor UID তখনো তৈরি হয় না)।
+3. Admin approve করলে তবেই `donors/{donorId}` তৈরি হয়। সেখানে `donorId`-টি **আবেদন approve হওয়ার সিরিয়াল অনুযায়ী** তৈরি হয় (`CBDC-<year>-0001`, `0002`, …) — account তৈরির সময় নয়।
+4. `users/{uid}/donorId` তখনই approval-এর সময় set হয় এবং স্থায়ী থাকে (পরবর্তী login/update-এ পরিবর্তন হয় না)।
 5. `users/{uid}/donorStatus` user নিজে `approved` করতে পারে না; Security Rules-এ এটি Admin-only।
 
 ### Staff account তৈরি

@@ -3419,7 +3419,11 @@ function initPage() {
       let approvedDonorId = q.donorId || "";
       if(!approvedDonorId){
         try{ approvedDonorId = await nextDonorId(); }
-        catch(e){ console.warn("donor id:",e&&e.message); approvedDonorId = "CBDC-"+new Date().getFullYear()+"-"+pad(DB.donors.length+1); }
+        catch(e){
+          console.warn("donor id:",e&&e.message);
+          toast("Donor UID তৈরি করা যায়নি — অনুমোদন সম্পন্ন হয়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।","er");
+          return;
+        }
       }
       DB.donors.unshift({id:approvedDonorId,
         name:q.name,group:q.group,area:q.area,phone:q.phone,whatsapp:q.whatsapp||q.phone,gender:q.gender,dob:q.dob||"",last:q.last,
@@ -3665,7 +3669,8 @@ function initPage() {
       if(id){Object.assign(d,o);logAudit("ডোনার তথ্য সম্পাদনা",id,"donor")}
       else{
         let newId="";
-        try{ newId=await nextDonorId(); }catch(e){ console.warn("donor id:",e&&e.message); newId="CBDC-"+new Date().getFullYear()+"-"+pad(DB.donors.length+1); }
+        try{ newId=await nextDonorId(); }
+        catch(e){ console.warn("donor id:",e&&e.message); toast("Donor UID তৈরি করা যায়নি — সংরক্ষণ হয়নি। আবার চেষ্টা করুন।","er"); return; }
         DB.donors.unshift({id:newId,...o,available:true,verified:true,
           suspended:false,joined:iso(now()),donations:0});logAudit("নতুন ডোনার যোগ",n,"donor")}
       persist();s.close();renderSub("donors");toast("সংরক্ষণ হয়েছে","ok")};
