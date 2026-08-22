@@ -413,6 +413,41 @@ const toDonerDonor = (d: any) => ({
   privacy: { showArea: true, showGroup: true, showWhatsapp: !!d.whatsapp },
 });
 
+/**
+ * Canonical public-donor mapping — **মেইন ওয়েবসাইট ও ডোনার প্যানেল উভয়ই
+ * একই field থেকে একই মান পড়ে** (single master donor data, single mapping)।
+ *
+ * RTDB `donors/{id}`-এর raw record-কে একটি নির্ধারিত view-তে normalise করে:
+ *   • `bloodGroup`/`group`      → রক্তের গ্রুপ (উভয় নামই fallback-সহ),
+ *   • `lastDonationDate`/`last` → শেষ রক্তদান,
+ *   • `photo`/`photoURL`        → প্রোফাইল ছবি (ImgBB link),
+ *   • `available` / `suspended` → প্রাপ্যতা,
+ *   • `donations`/`totalDonations` → মোট রক্তদান।
+ * ফলে কোনো donor-এর তথ্য যেখানেই বদলাক, দু-জায়গায় একই তথ্য দেখায় —
+ * আলাদা mapping-এর কারণে ভিন্ন তথ্য দেখানোর সুযোগই থাকে না।
+ */
+const toPublicDonor = (d: any) => {
+  const r = d && typeof d === "object" ? d : {};
+  const bloodGroup = r.bloodGroup || r.group || "";
+  const lastDonationDate = r.lastDonationDate || r.last || "";
+  const photo = r.photo || r.photoURL || "";
+  return {
+    ...r,
+    id: r.id || r.donorId || "",
+    donorId: r.donorId || r.id || "",
+    bloodGroup,
+    group: bloodGroup,
+    lastDonationDate,
+    last: lastDonationDate,
+    photo,
+    photoURL: photo,
+    available: r.available !== false,
+    suspended: !!r.suspended,
+    donations: Number(r.donations ?? r.totalDonations) || 0,
+    totalDonations: Number(r.totalDonations ?? r.donations) || 0,
+  };
+};
+
 const fromDonerDonor = (d: any) => ({
   id: d.donorId || d.id,
   donorId: d.donorId || d.id,
@@ -447,6 +482,7 @@ const store = {
   fromAdminDonor,
   toDonerDonor,
   fromDonerDonor,
+  toPublicDonor,
 };
 
 // Expose the same `window.CBDCShared` global the ported pages expect.
@@ -458,4 +494,5 @@ globalThis.CBDCShared = store;
 watchAuthForPrivateNodes();
 startRealtimeSync();
 
+export { toPublicDonor };
 export default store;

@@ -143,5 +143,34 @@ check("second donor keeps own photo", d2.photo === "https://i.ibb.co/xyz/salma.j
 check("second donor available:true", d2.available === true, String(d2.available));
 check("no cross-donor bleed", d.name === "রফিক উদ্দিন" && d.photo === "https://i.ibb.co/abc/rafiq.jpg", "");
 
+/* ── 7. canonical `toPublicDonor` mapping (Home-এর master mapping) ── */
+const pd = S.toPublicDonor(raw);
+check("toPublicDonor normalizes bloodGroup", pd.bloodGroup === "O+", String(pd.bloodGroup));
+check("toPublicDonor alias group === bloodGroup", pd.group === "O+", String(pd.group));
+check("toPublicDonor normalizes lastDonationDate", pd.lastDonationDate === "2026-05-01", String(pd.lastDonationDate));
+check("toPublicDonor normalizes photo (photo||photoURL)", pd.photo === "https://i.ibb.co/abc/rafiq.jpg", String(pd.photo));
+check("toPublicDonor maps available", pd.available === false, String(pd.available));
+check("toPublicDonor maps suspended", pd.suspended === false, String(pd.suspended));
+check("toPublicDonor normalizes donations", pd.donations === 0, String(pd.donations));
+
+/* legacy-shape fallbacks: bloodGroup as `group`, photo as `photoURL`, last as `last` */
+const legacy = { id: "X", name: "লিগ্যাসি", group: "AB+", last: "2026-01-01", photoURL: "https://i.ibb.co/legacy.jpg", donations: 2 };
+const pl = S.toPublicDonor(legacy);
+check("toPublicDonor falls back group→bloodGroup", pl.bloodGroup === "AB+", String(pl.bloodGroup));
+check("toPublicDonor falls back last→lastDonationDate", pl.lastDonationDate === "2026-01-01", String(pl.lastDonationDate));
+check("toPublicDonor falls back photoURL→photo", pl.photo === "https://i.ibb.co/legacy.jpg", String(pl.photo));
+check("toPublicDonor normalizes donations from totalDonations", S.toPublicDonor({ id: "Y", totalDonations: 3 }).donations === 3, "");
+
+/* ── 8. Home consumes the canonical mapping; card/profile show photo + group ── */
+check("Home getDonors maps through toPublicDonor", homeSrc.includes("CBDCShared.toPublicDonor"), "");
+check("Home donor card renders profile photo (.donor-photo)", homeSrc.includes('class="donor-photo"'), "");
+check("Home profile uses donor photo (photo||avatar)", homeSrc.includes("v.photo || avatarData(v.gender)"), "");
+check("Home profileViewOf exposes photo + group fallback", homeSrc.includes("photo: donorPhoto(d)") && homeSrc.includes("group: d.bloodGroup || d.group || \"\""), "");
+
+/* ── 9. donor self-save must MERGE, not replace the public record ── */
+check("Doner pushDonorRecordToRtdb uses updateRow (merge), not updatePaths",
+  /await\s+updateRow\s*\(\s*NODES\.donors,\s*id,\s*donorPublicPatch\(STORE\.account,STORE\.donor\)\s*\)/.test(donerSrc),
+  "public donors record must keep admin fields (bloodGroup/status/ownerUid) on donor save");
+
 console.log(failed ? "\nSOME CHECKS FAILED" : "\nALL CHECKS PASSED");
 process.exit(failed ? 1 : 0);

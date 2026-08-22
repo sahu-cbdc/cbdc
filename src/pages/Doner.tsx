@@ -6826,7 +6826,12 @@ function initPage() {
       }
       const id=(donor&&donor.id)||d.donorId;
       if(!id)return;
-      await updatePaths({[NODES.donors+"/"+id]: donorPublicPatch(STORE.account,STORE.donor)});
+      /* ⚠️ আগে `updatePaths({donors/id: …})` ব্যবহৃত হতো — multi-location update
+         ওই path-এ **পুরো node replace** করে, তাই ডোনার নিজের প্রোফাইল save করলে
+         donors/{id}-এর bloodGroup/status/ownerUid/id ইত্যাদি admin ফিল্ড মুছে যেত
+         (ফলে তালিকায় গ্রুপ ঠিক থাকলেও প্রোফাইলে "দেখানো হয়নি" দেখা যেত)।
+         `updateRow` (merge) শুধু ডোনারের নিজের ফিল্ড আপডেট করে, বাকি সব অক্ষত থাকে। */
+      await updateRow(NODES.donors, id, donorPublicPatch(STORE.account,STORE.donor));
     }catch(e){ console.warn("donor public push:", e && e.message); }
   }
   /* ডোনারের নিজস্ব রেকর্ড (রক্তদান, নিজের আবেদন, বিজ্ঞপ্তি, কার্যক্রম) RTDB-তে —

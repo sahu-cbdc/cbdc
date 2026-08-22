@@ -168,6 +168,17 @@ const pageCss = `    @font-face {
   padding-top:4px;
 }
 
+.donor-photo{
+  width:52px;
+  height:52px;
+  border-radius:50%;
+  object-fit:cover;
+  margin-bottom:8px;
+  background:#eef4f1;
+  border:2px solid #d7efe6;
+  box-shadow:0 3px 9px rgba(16,43,42,.12);
+}
+
 .blood-group{
   width:52px;
   height:52px;
@@ -258,6 +269,11 @@ const pageCss = `    @font-face {
     font-size:12px;
     gap:4px;
     margin-top:7px;
+  }
+  .donor-photo{
+    width:44px;
+    height:44px;
+    margin-bottom:6px;
   }
   .blood-group{
     width:44px;
@@ -3387,6 +3403,13 @@ function initPage() {
         const female = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#ffe3ee"/><path d="M22 30c0-11 9-16 28-16s28 5 28 16v10c0 11-9 16-28 16S22 51 22 40z" fill="#d76a9a"/><circle cx="50" cy="66" r="18" fill="#e6a0bf"/><path d="M28 86c0-14 10-22 22-22s22 8 22 22z" fill="#d76a9a"/></svg>`;
         return "data:image/svg+xml;utf8," + encodeURIComponent((gender==="মহিলা"||gender==="female") ? female : male);
       };
+      /* ডোনারের আসল প্রোফাইল ছবি (RTDB `photo`/`photoURL` → ImgBB link); ছবি না
+         থাকলে gender-ভিত্তিক placeholder avatar — ডোনার প্যানেলের মতোই। */
+      const donorPhoto = d => String((d && (d.photo || d.photoURL)) || "").trim();
+      const donorAvatar = d => donorPhoto(d) || avatarData(d && d.gender);
+      const donorAvatarFallback = d => avatarData(d && d.gender);
+      /* ImgBB-র cross-origin ছবি canvas-এ আঁকতে CORS লাগে; ব্যর্থ হলে null। */
+      const loadImgCors = src => new Promise((res, rej) => { const im=new Image(); im.crossOrigin="anonymous"; im.onload=()=>res(im); im.onerror=()=>rej(new Error("cors")); im.src=src; });
       function showAppLoading(){ $("#appMessage").classList.add("hidden"); $("#appLoading").classList.remove("hidden"); $("#appModal").classList.remove("hidden"); document.body.classList.add("lock"); }
       function showAppMessage(msg, err=false, title=null){ $("#appLoading").classList.add("hidden"); $("#appMessage").classList.remove("hidden"); $("#appMsgIcon").className="app-icon "+(err?"err":"ok"); $("#appMsgIcon").textContent=err?"!":"✓"; $("#appMsgTitle").textContent=title || (err?"তথ্য অসম্পূর্ণ":"সফল"); $("#appMsgText").textContent=msg; $("#appModal").classList.remove("hidden"); document.body.classList.add("lock"); }
       $("#appModalClose")?.addEventListener("click", hideAppModal);
@@ -3416,9 +3439,18 @@ function initPage() {
       }
 
       const sharedState = () => window.CBDCShared ? CBDCShared.load() : null;
+      /* মেইন ওয়েবসাইট ও ডোনার প্যানেল — একই master donor data (RTDB `donors`)
+         এবং একই mapping (store.ts → toPublicDonor) ব্যবহার করে। এতে রক্তের গ্রুপ,
+         শেষ রক্তদান, এলাকা, মোবাইল, বয়স, প্রাপ্যতা ও ছবি সব জায়গায় একই field
+         থেকে একই মান পড়া হয় — আলাদা/hardcoded list নেই। */
       const getDonors = () => {
         const s=sharedState();
-        return s&&s.donors.length ? s.donors.map(d=>({...d,status:"approved"})) : [];
+        return s&&s.donors.length
+          ? s.donors.map(d=>({
+              ...(window.CBDCShared && CBDCShared.toPublicDonor ? CBDCShared.toPublicDonor(d) : d),
+              status:"approved"
+            }))
+          : [];
       };
       const getRequests = () => {
         const s=sharedState();
@@ -3600,6 +3632,8 @@ function initPage() {
         </div>
       </div>
       <div class="blood-info">
+        <img class="donor-photo" src="${donorAvatar(d)}" alt="" loading="lazy"
+             onerror="this.onerror=null;this.src=this.dataset.ph" data-ph="${donorAvatarFallback(d)}">
         <div class="blood-group">
           ${esc(d.bloodGroup)}
         </div>
@@ -3886,7 +3920,7 @@ function initPage() {
       let currentDcardId=null;
       function dcardHTML(d){
         const last= d.lastDonationDate?dateText(d.lastDonationDate):"নতুন দাতা";
-        return `<div class="dcard"><div class="dcard-topbar"><img class="dcard-logo" src="${LOGO_SRC}" alt=""><span>${SITE.name}</span></div><div class="dcard-photo"><img src="${avatarData(d.gender)}" alt=""></div><h3 class="dcard-name">${esc(d.name)}</h3><div class="dcard-group">${esc(d.bloodGroup)}</div><div class="dcard-rows"><div>📍 এলাকা <strong>${esc(d.area)}</strong></div><div>🗓 শেষ রক্তদান <strong>${esc(last)}</strong></div><div>☎ মোবাইল <strong>${esc(d.phone)}</strong></div><div>🪪 কার্ড নং <strong>${esc(d.id)}</strong></div></div><div class="dcard-footer">✓ অনুমোদিত রক্তদাতা • রক্ত দিন, জীবন বাঁচান 🩸</div></div>`;
+        return `<div class="dcard"><div class="dcard-topbar"><img class="dcard-logo" src="${LOGO_SRC}" alt=""><span>${SITE.name}</span></div><div class="dcard-photo"><img src="${donorAvatar(d)}" alt="" onerror="this.onerror=null;this.src=this.dataset.ph" data-ph="${donorAvatarFallback(d)}"></div><h3 class="dcard-name">${esc(d.name)}</h3><div class="dcard-group">${esc(d.bloodGroup)}</div><div class="dcard-rows"><div>📍 এলাকা <strong>${esc(d.area)}</strong></div><div>🗓 শেষ রক্তদান <strong>${esc(last)}</strong></div><div>☎ মোবাইল <strong>${esc(d.phone)}</strong></div><div>🪪 কার্ড নং <strong>${esc(d.id)}</strong></div></div><div class="dcard-footer">✓ অনুমোদিত রক্তদাতা • রক্ত দিন, জীবন বাঁচান 🩸</div></div>`;
       }
       function openDonorCard(idv){ const d=publicDonors().find(x=>x.id===idv); if(!d)return; currentDcardId=idv; $("#dcardPreview").innerHTML=dcardHTML(d); $("#donorCardModalBg").classList.remove("hidden"); document.body.classList.add("lock"); }
       function closeDonorCard(){ $("#donorCardModalBg").classList.add("hidden"); document.body.classList.remove("lock"); currentDcardId=null; }
@@ -3920,7 +3954,13 @@ function initPage() {
         x.fillStyle="#bdebd6"; x.font='700 14px '+font; x.fillText("CBDC • রক্ত দান কেন্দ্র", W/2, 88);
         const logo=await loadImg(LOGO_SRC);
         x.save(); rr(W/2-32,110,64,64,32); x.clip(); x.drawImage(logo,W/2-32,110,64,64); x.restore();
-        const av=await loadImg(avatarData(d.gender));
+        /* প্রোফাইল ছবি (RTDB photo/photoURL → ImgBB) আগে; CORS/লোড ব্যর্থ হলে
+           gender-ভিত্তিক placeholder avatar-এ পড়ি — ডোনার প্যানেলের মতোই। */
+        let av=null;
+        if(donorPhoto(d)){
+          try{ av=await loadImgCors(donorPhoto(d)); }catch(e){ av=null; }
+        }
+        if(!av) av=await loadImg(avatarData(d.gender));
         x.save(); rr(W/2-62,220,124,124,62); x.clip(); x.drawImage(av,W/2-62,220,124,124); x.restore();
         x.lineWidth=3; x.strokeStyle="#ffffff"; rr(W/2-62,220,124,124,62); x.stroke();
         x.fillStyle="#ffffff"; x.font='900 30px '+font; x.fillText(String(d.name), W/2, 396);
@@ -3960,7 +4000,8 @@ function initPage() {
           id: d.id,
           name: d.name || "নাম নেই",
           gender: d.gender || "",
-          group: d.bloodGroup || "",
+          photo: donorPhoto(d),
+          group: d.bloodGroup || d.group || "",
           area: d.area || "",
           dob: d.dob || "",
           age: ageText(d) === "—" ? "" : ageText(d),
@@ -3988,7 +4029,8 @@ function initPage() {
         return `
         <div class="pcard">
           <div class="phead2">
-            <img class="pav" src="${avatarData(v.gender)}" alt="">
+            <img class="pav" src="${v.photo || avatarData(v.gender)}" alt=""
+                 onerror="this.onerror=null;this.src=this.dataset.ph" data-ph="${avatarData(v.gender)}">
             ${v.group?`<span class="pgrp">${esc(v.group)}</span>`:""}
           </div>
           <div class="pnm">
