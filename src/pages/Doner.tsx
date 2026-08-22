@@ -626,6 +626,9 @@ function StaticShell() {
           <section className="scr" id="s-req">
           </section>
           {" "}
+          <section className="scr" id="s-become">
+          </section>
+          {" "}
           <section className="scr" id="s-set">
           </section>
           {" "}
@@ -4165,7 +4168,7 @@ function initPage() {
     window.scrollTo({top:0,behavior:"instant"});
   }
   function paintNav(){
-    $("#bnav").innerHTML=NAV.map(n=>`<button data-nav="${n.id}" class="${CUR===n.id?"on":""}"
+    $("#bnav").innerHTML=NAV.map(n=>`<button data-nav="${n.id}" class="${CUR===n.id||(CUR==="become"&&n.id==="req")?"on":""}"
       aria-label="${n.label}">${n.icon(23)}<span>${n.label}</span></button>`).join("");
   }
   function paintTop(){
@@ -4183,6 +4186,11 @@ function initPage() {
       t.innerHTML=`<button class="back" id="tback" aria-label="পেছনে">${ICON.back(22)}</button>
         <h1>${esc(meta?meta.title:"")}</h1><div class="sp"></div>
         <button class="bell" id="tbell" aria-label="বিজ্ঞপ্তি">${ICON.bell(21)}${badge()}</button>`;
+    }else if(CUR==="become"){
+      t.className="top sub";
+      t.innerHTML=`<button class="back" id="tback" aria-label="পেছনে">${ICON.back(22)}</button>
+        <h1>রক্তদাতা হিসেবে যুক্ত হন</h1><div class="sp"></div>
+        <button class="bell" id="tbell" aria-label="বিজ্ঞপ্তি">${ICON.bell(21)}${badge()}</button>`;
     }else{
       t.className="top";
       t.innerHTML=`<a class="brand" href="${appBase()}" data-home="1">
@@ -4199,7 +4207,9 @@ function initPage() {
     if(e.target.closest("[data-home]")){e.preventDefault();navigateToPage("home");return}
     const n=e.target.closest("[data-nav]");
     if(n){e.preventDefault();go(n.dataset.nav);return}
-    if(e.target.closest("#tback")){go(CUR);return}
+    if(e.target.closest("#tback")){
+      if(CUR==="become"){reqTab="become";go("req");return}
+      go(CUR);return}
     if(e.target.closest("#tbell")){openNotifs();return}
   });
   const reRoute=()=>{
@@ -4221,7 +4231,7 @@ function initPage() {
       ? `<div class="card">
           <div class="per"><span style="width:44px;height:44px;border-radius:50%;background:var(--red-s);
             display:grid;place-items:center;color:var(--red)">${ICON.drop(24)}</span>
-            <div class="i"><b>রক্তদাতা হিসেবে নিবন্ধিত নন (Not Registered)</b><small>আপনি এখনো রক্তদাতা হিসেবে আবেদন করেননি। 'রক্তদাতা হিসেবে যুক্ত হন' অপশন থেকে আবেদন করুন।</small></div></div>
+            <div class="i"><b>রক্তদাতা হিসেবে নিবন্ধিত নন</b><small>আপনি এখনো রক্তদাতা হিসেবে আবেদন করেননি। 'রক্তদাতা হিসেবে যুক্ত হন' অপশন থেকে আবেদন করুন।</small></div></div>
           <button class="btn w" style="margin-top:12px" data-act="become">রক্তদাতা হিসেবে যুক্ত হন</button></div>`
       : `<div class="card">
           <div class="per"><span class="bg" style="width:46px;height:46px;border-radius:12px;font-size:1rem">${esc(d.bloodGroup)}</span>
@@ -5553,69 +5563,101 @@ function initPage() {
     return prefix+"-"+Date.now().toString(36).toUpperCase()+"-"+Math.random().toString(36).slice(2,7).toUpperCase();
   }
 
-  /* ── রক্তদাতা হিসেবে যুক্ত হন ── */
-  function sheetBecome(){
-    if(isDonor()&&dStatus()==="pending"){ toast("আপনার আবেদন ইতিমধ্যে যাচাইয়ের অপেক্ষায় আছে","er"); reqTab="become"; go("req"); return; }
-    if(isDonor()&&dStatus()==="approved"){ go("set","donor"); return; }
-    const s=sheet("রক্তদাতা হিসেবে যুক্ত হন",`
-      <div class="note i">${ICON.info(17)}<span>আপনার অ্যাকাউন্টের তথ্য (নাম, লিঙ্গ, এলাকা, মোবাইল) স্বয়ংক্রিয়ভাবে বসে গেছে — প্রয়োজন হলে পরিবর্তন করে জমা দিন।</span></div>
-      <form id="becomeForm" novalidate>
-      <div class="f"><label>নাম <i>*</i></label>
-        <input id="bc_name" name="bc_name" value="${esc(a.name||"")}" maxlength="60"></div>
-      <div class="f"><label>লিঙ্গ <i>*</i></label>
-        <select id="bc_gender" name="bc_gender">
-          <option value="">লিঙ্গ নির্বাচন করুন</option>
-          ${["পুরুষ","মহিলা","অন্যান্য"].map(g=>`<option ${a.gender===g?"selected":""}>${esc(g)}</option>`).join("")}
-        </select></div>
-      <div class="f"><label>এলাকা <i>*</i></label>
-        <select id="bc_area" name="bc_area">
-          <option value="">থানা / এলাকা নির্বাচন করুন</option>
-          ${SITE.homeAreas.map(g=>`<option ${a.area===g?"selected":""}>${esc(g)}</option>`).join("")}
-        </select></div>
-      <div class="f"><label>মোবাইল নম্বর <i>*</i></label>
-        <input id="bc_phone" name="bc_phone" value="${esc(a.phone||"")}" inputmode="numeric" maxlength="11"></div>
-      <div class="f"><label>রক্তের গ্রুপ <i>*</i></label>
-        <select id="bc_group" name="bc_group">
-          <option value="">রক্তের গ্রুপ নির্বাচন করুন</option>
-          ${GROUPS.map(g=>`<option ${d.bloodGroup===g?"selected":""}>${esc(g)}</option>`).join("")}
-        </select></div>
-      <div class="f"><label>সর্বশেষ রক্তদান <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
-        <input id="bc_last" name="bc_last" type="date" max="${iso(now())}" value="${esc(d.lastDonation||"")}">
-        <span class="hint">মনে না থাকলে খালি রাখুন।</span></div>
-      <div class="f"><label>স্বাস্থ্য তথ্য <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
-        <textarea id="bc_health" name="bc_health" placeholder="সম্পূর্ণ সুস্থ, কোনো দীর্ঘমেয়াদি রোগ নেই।">${esc(d.health||"")}</textarea></div>
-      <div class="f"><label>WhatsApp নম্বর <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
-        <input id="bc_wa" name="bc_wa" inputmode="numeric" maxlength="11" value="${esc(d.whatsapp||"")}"></div>
-      <label class="chk"><input type="checkbox" id="bc_ok" name="bc_ok">
-        <span>আমি নিশ্চিত করছি প্রদত্ত তথ্য সঠিক এবং স্বেচ্ছায় রক্তদানে সম্মত।</span></label>
-      </form>`,
-      `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="bc_save">${ICON.check(16)} জমা দিন</button>`,{lock:true});
-    attachLiveClear(s.q("#becomeForm"));
-    s.q("#bc_save").onclick=async()=>{
-      const form=s.q("#becomeForm");
+  /* ── রক্তদাতা হিসেবে যুক্ত হন — পূর্ণাঙ্গ আবেদন পেজ (পপআপ নয়) ── */
+  function rBecome(){
+    const a=STORE.account,d=STORE.donor;
+    /* ইতিমধ্যে আবেদন করা থাকলে — পেজেই তার বর্তমান অবস্থা দেখাও */
+    if(isDonor()&&dStatus()==="pending"){
+      $("#s-become").innerHTML=`
+        <h2 class="ptitle">রক্তদাতা হিসেবে যুক্ত হন<small>আপনার আবেদন অ্যাডমিনের যাচাইয়ের অপেক্ষায় আছে</small></h2>
+        <div class="card">
+          <div class="note w">${ICON.clock(17)}<span><b>আপনার তথ্য যাচাই করা হচ্ছে</b><br>
+            জমা দিয়েছেন ${dL(d.appliedAt)} · সাধারণত ২৪–৪৮ ঘণ্টা লাগে।</span></div>
+          ${donorRows()}
+          <button class="btn gh w" style="margin-top:12px" data-act="withdraw">আবেদন প্রত্যাহার</button></div>`;
+      return;
+    }
+    if(isDonor()&&dStatus()==="approved"){
+      $("#s-become").innerHTML=`
+        <h2 class="ptitle">রক্তদাতা হিসেবে যুক্ত হন<small>আপনি ইতিমধ্যে অনুমোদিত রক্তদাতা</small></h2>
+        <div class="card">
+          <div class="note g">${ICON.checkC(17)}<span><b>আপনি অনুমোদিত রক্তদাতা</b><br>${esc(d.donorId)}</span></div>
+          ${donorRows()}
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <button class="btn gh" style="flex:1" id="hprof">${ICON.user(15)} আমার প্রোফাইল</button>
+            <button class="btn" style="flex:1" data-sub="donor">${ICON.gear(15)} সম্পাদনা</button></div></div>`;
+      $("#hprof").onclick=()=>openProfile("me");
+      return;
+    }
+    const dobBounds_=dobBounds(SITE.rules.minAge,SITE.rules.maxAge);
+    $("#s-become").innerHTML=`
+      <h2 class="ptitle">রক্তদাতা হিসেবে যুক্ত হন<small>নিচের তথ্য পূরণ করে আবেদন জমা দিন — অনুমোদনের পর পাবলিক রক্তদাতা তালিকায় যুক্ত হবেন।</small></h2>
+      <div class="card">
+        <div class="note i">${ICON.info(17)}<span>আপনার অ্যাকাউন্টের তথ্য (নাম, লিঙ্গ, এলাকা, মোবাইল) স্বয়ংক্রিয়ভাবে বসে গেছে — প্রয়োজন হলে পরিবর্তন করে জমা দিন।</span></div>
+        <form id="becomeForm" novalidate>
+        <div class="f"><label>নাম <i>*</i></label>
+          <input id="bc_name" name="bc_name" value="${esc(a.name||"")}" maxlength="60"></div>
+        <div class="f"><label>লিঙ্গ <i>*</i></label>
+          <select id="bc_gender" name="bc_gender">
+            <option value="">লিঙ্গ নির্বাচন করুন</option>
+            ${["পুরুষ","মহিলা","অন্যান্য"].map(g=>`<option ${a.gender===g?"selected":""}>${esc(g)}</option>`).join("")}
+          </select></div>
+        <div class="f"><label>জন্ম তারিখ <i>*</i></label>
+          <input id="bc_dob" name="bc_dob" type="date" min="${dobBounds_.min}" max="${dobBounds_.max}" value="${esc(a.dob||"")}">
+          <span class="hint">বয়স ${SITE.rules.minAge}–${SITE.rules.maxAge} বছর হতে হবে।</span></div>
+        <div class="f"><label>এলাকা <i>*</i></label>
+          <select id="bc_area" name="bc_area">
+            <option value="">থানা / এলাকা নির্বাচন করুন</option>
+            ${SITE.homeAreas.map(g=>`<option ${a.area===g?"selected":""}>${esc(g)}</option>`).join("")}
+          </select></div>
+        <div class="f"><label>মোবাইল নম্বর <i>*</i></label>
+          <input id="bc_phone" name="bc_phone" value="${esc(a.phone||"")}" inputmode="numeric" maxlength="11"></div>
+        <div class="f"><label>রক্তের গ্রুপ <i>*</i></label>
+          <select id="bc_group" name="bc_group">
+            <option value="">রক্তের গ্রুপ নির্বাচন করুন</option>
+            ${GROUPS.map(g=>`<option ${d.bloodGroup===g?"selected":""}>${esc(g)}</option>`).join("")}
+          </select></div>
+        <div class="f"><label>সর্বশেষ রক্তদান <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
+          <input id="bc_last" name="bc_last" type="date" max="${iso(now())}" value="${esc(d.lastDonation||"")}">
+          <span class="hint">মনে না থাকলে খালি রাখুন।</span></div>
+        <div class="f"><label>স্বাস্থ্য তথ্য <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
+          <textarea id="bc_health" name="bc_health" placeholder="সম্পূর্ণ সুস্থ, কোনো দীর্ঘমেয়াদি রোগ নেই।">${esc(d.health||"")}</textarea></div>
+        <div class="f"><label>WhatsApp নম্বর <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
+          <input id="bc_wa" name="bc_wa" inputmode="numeric" maxlength="11" value="${esc(d.whatsapp||"")}"></div>
+        <label class="chk"><input type="checkbox" id="bc_ok" name="bc_ok">
+          <span>আমি নিশ্চিত করছি প্রদত্ত তথ্য সঠিক এবং স্বেচ্ছায় রক্তদানে সম্মত।</span></label>
+        <button class="btn w" type="submit" id="bc_save" style="margin-top:14px">${ICON.check(16)} রক্তদাতা হিসেবে আবেদন জমা দিন</button>
+        </form>
+      </div>`;
+    attachLiveClear($("#becomeForm"));
+    $("#becomeForm").addEventListener("submit",async e=>{
+      e.preventDefault();
+      const form=$("#becomeForm");
       const v=validateForm(form,{
         bc_name:{required:true,minLength:2,label:"নাম"},
         bc_gender:{required:true,label:"লিঙ্গ"},
+        bc_dob:{required:true,dob:{min:SITE.rules.minAge,max:SITE.rules.maxAge},label:"জন্ম তারিখ"},
         bc_area:{required:true,label:"এলাকা"},
-        bc_phone:{required:true, custom:val=>phoneOK(val)||"১১ সংখ্যার সঠিক মোবাইল নম্বর দিন", label:"মোবাইল নম্বর"},
+        bc_phone:{required:true, custom:val=>phoneOK(val)?"":"১১ সংখ্যার সঠিক মোবাইল নম্বর দিন", label:"মোবাইল নম্বর"},
         bc_group:{required:true,label:"রক্তের গ্রুপ"},
-        bc_last:{custom:v=>!v||dayDiff(v)>=0||"ভবিষ্যতের তারিখ দেওয়া যাবে না"},
-        bc_wa:{custom:v=>!v||phoneOK(v)||"সঠিক ১১ সংখ্যার নম্বর দিন"},
+        bc_last:{custom:v=>!v?"":(dayDiff(v)>=0?"":"ভবিষ্যতের তারিখ দেওয়া যাবে না")},
+        bc_wa:{custom:v=>!v?"":(phoneOK(v)?"":"সঠিক ১১ সংখ্যার নম্বর দিন")},
         bc_ok:{checked:true}
       });
       if(!v.ok)return;
-      const btn=s.q("#bc_save");btn.disabled=true;btn.textContent="সংরক্ষণ হচ্ছে…";
+      const btn=$("#bc_save");btn.disabled=true;btn.textContent="সংরক্ষণ হচ্ছে…";
       const a=STORE.account,d=STORE.donor;
       /* অ্যাকাউন্টের তথ্যও হালনাগাদ — RTDB `users/{uid}`-এ সাথে সাথে (আইটেম ৩, ৬) */
-      a.name=s.q("#bc_name").value.trim();
-      a.gender=s.q("#bc_gender").value;
-      a.area=s.q("#bc_area").value;
-      a.phone=s.q("#bc_phone").value.trim();
+      a.name=$("#bc_name").value.trim();
+      a.gender=$("#bc_gender").value;
+      a.dob=$("#bc_dob").value;
+      a.area=$("#bc_area").value;
+      a.phone=$("#bc_phone").value.trim();
       d.is=true; d.status="pending";
-      d.bloodGroup=s.q("#bc_group").value;
-      d.lastDonation=s.q("#bc_last").value||"";
-      d.health=s.q("#bc_health").value.trim()||"";
-      d.whatsapp=s.q("#bc_wa").value.trim()||"";
+      d.bloodGroup=$("#bc_group").value;
+      d.lastDonation=$("#bc_last").value||"";
+      d.health=$("#bc_health").value.trim()||"";
+      d.whatsapp=$("#bc_wa").value.trim()||"";
       d.appliedAt=iso(now());
       d.available=true;
       /* আবেদনের সময় Donor UID তৈরি হয় না — সেটি Admin Approve হলে নির্ধারিত হবে।
@@ -5623,11 +5665,10 @@ function initPage() {
       d.donorId="";
       save();                                   /* localStorage + queue (shared/RTDB) + users/{uid} */
       logAct("রক্তদাতা হিসেবে যুক্ত হন",d.bloodGroup+" · যাচাইয়ের অপেক্ষায়","donor");
-      s.close();
       reqTab="become";
       go("req");
       toast("আপনার তথ্য যাচাইয়ের জন্য পাঠানো হয়েছে","ok");
-    };
+    });
   }
 
   /* ── জরুরি রক্তের আবেদন ── */
@@ -5886,7 +5927,7 @@ function initPage() {
         </div></div>`).join(""),`<button class="btn gh" data-close>বন্ধ</button>`);return}
   
     switch(D_.act){
-      case "become":sheetBecome();break;
+      case "become":go("become");break;
       case "newreq":sheetNewReq();break;
       case "adddon":go("set","adddonation");break;
       case "card":go("set","card");break;
@@ -5922,7 +5963,9 @@ function initPage() {
         desc:"অ্যাকাউন্ট থাকবে, শুধু ডোনার তথ্য ও কার্ড সরে যাবে। চাইলে আবার যুক্ত হতে পারবেন।",ok:"সরে যান",danger:true})){
         STORE.donor.is=false;STORE.donor.status="none";save();logAct("ডোনার তালিকা থেকে সরে গেছেন","");go("set","donor");toast("সরে গেছেন")}break;
       case "withdraw":if(await confirmS({title:"আবেদন প্রত্যাহার করবেন?",desc:"পরে আবার আবেদন করতে পারবেন।",ok:"প্রত্যাহার",danger:true})){
-        STORE.donor.is=false;STORE.donor.status="none";save();rReq();toast("প্রত্যাহার করা হয়েছে")}break;
+        STORE.donor.is=false;STORE.donor.status="none";save();
+        if(CUR==="become"){reqTab="become";go("req");}else{rReq();}
+        toast("প্রত্যাহার করা হয়েছে")}break;
   
       case "forgotPass":sheetForgot();break;
       case "pol_terms":case "pol_privacy":case "pol_donate":sheetPolicy(D_.act);break;
@@ -6744,7 +6787,7 @@ function initPage() {
   }
 
   /* ══════════ BOOT ══════════ */
-  const RENDER={home:rHome,find:rFind,req:rReq,set:rSet};
+  const RENDER={home:rHome,find:rFind,req:rReq,become:rBecome,set:rSet};
   /* If login happened on index.html, use the same account here. */
   /* Firebase Authentication session sync — login happens on index (Home).
      Session is now owned by Firebase Auth; this mirrors the signed-in user
