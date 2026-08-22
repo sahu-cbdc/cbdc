@@ -3477,13 +3477,19 @@ function initPage() {
       });
   
   
-      /* A donation count that is stable per donor: derived from the card id so
-         the same person always shows the same number, and a database record
-         with a real `donations` field simply overrides it. */
+      /* মোট রক্তদান — শুধু RTDB-র বাস্তব `donations`/`totalDonations` ফিল্ড থেকে
+         গণনা। কোনো hardcoded/demo সংখ্যা নয় (আগের `(n % 9)+1`-এর মতো invented
+         fallback সরানো হয়েছে)। ফিল্ড না থাকলে ০। নিয়মটি Doner প্যানেলের
+         toDonerDonor/toAdminDonor রূপান্তরের সাথে সঙ্গতিপূর্ণ — একই RTDB source। */
       const donationCount = d => {
-        if(Number.isFinite(+d.donations)) return +d.donations;
-        const n = parseInt(String(d.id||"").replace(/\D/g,"").slice(-2)||"0",10);
-        return d.lastDonationDate ? (n % 9) + 1 : 0;
+        const n = Number(d.donations ?? d.totalDonations);
+        return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+      };
+      /* ডোনার রেকর্ডে আদৌ রক্তদানের সংখ্যা লেখা আছে কি না — "তথ্য" সেকশনে সংখ্যা
+         না থাকলে "দেওয়া হয়নি" দেখানোর জন্য (0 থেকে "তথ্য নেই" আলাদা করতে)। */
+      const hasDonationCount = d => {
+        const v = d.donations ?? d.totalDonations;
+        return v !== undefined && v !== null && v !== "";
       };
       const publicDonors = () => getDonors();
   
@@ -3957,12 +3963,15 @@ function initPage() {
         const total = donationCount(d);
         return {
           id: d.id,
+          /* Doner প্যানেলের profileView-এর মতো একই RTDB source (donors/{id}) থেকে।
+             username/email পাবলিক donors রেকর্ডে থাকে না (গোপনীয়তা নীতি) — তাই
+             সেগুলো "তথ্য" সেকশনে দেখানো হয় না; বাকি সব donor তথ্য এখান থেকেই আসে। */
           name: d.name || "নাম নেই",
           gender: d.gender || "",
           /* প্রোফাইল ছবি — Doner প্যানেলের profileView-এর মতোই একই RTDB field
              (photo, পুরোনো রেকর্ডে photoURL) থেকে */
           photo: String(d.photo || d.photoURL || "").trim(),
-          group: d.bloodGroup || "",
+          group: d.bloodGroup || d.group || "",
           area: d.area || "",
           dob: d.dob || "",
           age: ageText(d) === "—" ? "" : ageText(d),
@@ -3970,11 +3979,13 @@ function initPage() {
           phone: d.phone || "",
           /* WhatsApp গোপন রাখা থাকলে সেটি অবজেক্টেই আসে না — DOM বা সোর্সে পৌঁছাতে পারে না */
           whatsapp: d.whatsapp ? d.whatsapp : null,
-          last: d.lastDonationDate || "",
+          last: d.lastDonationDate || d.lastDonation || "",
           joined: d.joined || "",
           donorId: formatDonorId(d, index),
           total,
+          hasDonations: hasDonationCount(d),
           ready,
+          available: d.available !== false,
           rest: (!ready && gap !== null) ? Math.max(0, 90 - gap) : 0
         };
       }
@@ -3987,6 +3998,11 @@ function initPage() {
         ].join("");
         const row = (k, val, dim) =>
           `<div class="prow"><b>${esc(k)}</b><span class="${dim?"dim":""}">${esc(val)}</span></div>`;
+        const NA = "দেওয়া হয়নি";
+        /* রক্তদানে প্রস্তুত/Availability status — chips-এর একই নিয়মে, একই RTDB
+           তথ্য (available + lastDonationDate) থেকে হিসাব হয়। */
+        const availLabel = v.ready ? "রক্তদানে প্রস্তুত"
+          : (v.available ? `বিশ্রামে · আর ${bn(v.rest)} দিন` : "প্রাপ্যতা বন্ধ");
         return `
         <div class="pcard">
           <div class="phead2">
@@ -4009,16 +4025,24 @@ function initPage() {
           </div>
         </div>
         <div class="pstats">
-          <div class="pstat"><b>${bn(v.total)}</b><span>মোট রক্তদান</span></div>
-          <div class="pstat"><b>${bn(v.total*3)}</b><span>জীবন বাঁচাতে সাহায্য</span></div>
+          <div class="pstat"><b>${v.hasDonations?bn(v.total):"—"}</b><span>মোট রক্তদান</span></div>
+          <div class="pstat"><b>${v.hasDonations?bn(v.total*3):"—"}</b><span>জীবন বাঁচাতে সাহায্য</span></div>
           <div class="pstat"><b class="sm">${v.last?dateShort(v.last):"—"}</b><span>শেষ রক্তদান</span></div>
         </div>
         <div class="psec">তথ্য</div>
         <div class="prows">
-          ${row("রক্তের গ্রুপ", v.group || "দেখানো হয়নি", !v.group)}
-          ${row("এলাকা", v.area || "দেখানো হয়নি", !v.area)}
-          ${row("মোবাইল", v.phone || "দেওয়া হয়নি", !v.phone)}
-          ${v.joined?row("যুক্ত হয়েছেন", dateText(v.joined)):""}
+          ${row("ডোনার আইডি", v.donorId || NA, !v.donorId)}
+          ${row("জন্মতারিখ", v.dob ? dateText(v.dob) : NA, !v.dob)}
+          ${row("বয়স", v.age || NA, !v.age)}
+          ${row("লিঙ্গ", v.gender || NA, !v.gender)}
+          ${row("রক্তের গ্রুপ", v.group || NA, !v.group)}
+          ${row("এলাকা", v.area || NA, !v.area)}
+          ${row("মোবাইল নম্বর", v.phone || NA, !v.phone)}
+          ${row("WhatsApp নম্বর", v.whatsapp || NA, !v.whatsapp)}
+          ${row("সর্বশেষ রক্তদানের তারিখ", v.last ? dateText(v.last) : NA, !v.last)}
+          ${row("মোট রক্তদান", v.hasDonations ? bn(v.total) : NA, !v.hasDonations)}
+          ${row("রক্তদানে প্রস্তুত", availLabel, !v.ready)}
+          ${v.joined ? row("যুক্ত হয়েছেন", dateText(v.joined)) : ""}
         </div>
         <div class="psec">প্রোফাইল কার্ড</div>
         <div class="pcardbox">

@@ -2304,6 +2304,7 @@ function initPage() {
       mine, raw:d,
       name:d.name, photo:d.photo||d.photoURL||"", gender:d.gender, donorId:d.donorId,
       verified:d.verified, bio:d.bio||"",
+      dob:d.dob||"",
       group:show("showGroup")&&d.group?d.group:null,
       area:show("showArea")&&d.area?d.area:null,
       age:d.age||null, occupation:d.occupation||"",
@@ -2444,16 +2445,24 @@ function initPage() {
       </div>
   
       <div class="pstats">
-        <div class="pstat"><b>${bn(v.total)}</b><span>মোট রক্তদান</span></div>
-        <div class="pstat"><b>${bn(v.total*3)}</b><span>জীবন বাঁচাতে সাহায্য</span></div>
+        <div class="pstat"><b>${v.total>0?bn(v.total):"—"}</b><span>মোট রক্তদান</span></div>
+        <div class="pstat"><b>${v.total>0?bn(v.total*3):"—"}</b><span>জীবন বাঁচাতে সাহায্য</span></div>
         <div class="pstat"><b class="sm">${v.last?dS(v.last):"—"}</b><span>শেষ রক্তদান</span></div>
       </div>
   
       <div class="sec-t">তথ্য</div>
       <div class="card pad0">
-        ${pRow("রক্তের গ্রুপ",v.group||(v.mine?"এখনো দেননি":"দেখানো হয়নি"),!v.group)}
-        ${pRow("এলাকা",v.area||(v.mine?"এখনো দেননি":"দেখানো হয়নি"),!v.area)}
-        ${pRow("মোবাইল",v.phone||"দেওয়া হয়নি",!v.phone)}
+        ${pRow("ডোনার আইডি",(v.donorId&&v.donorId!=="—")?v.donorId:"দেওয়া হয়নি",!(v.donorId&&v.donorId!=="—"))}
+        ${pRow("জন্মতারিখ",v.dob?dL(v.dob):"দেওয়া হয়নি",!v.dob)}
+        ${pRow("বয়স",v.age!=null?bn(v.age)+" বছর":"দেওয়া হয়নি",v.age==null)}
+        ${pRow("লিঙ্গ",v.gender||"দেওয়া হয়নি",!v.gender)}
+        ${pRow("রক্তের গ্রুপ",v.group||(v.mine?"এখনো দেননি":"দেওয়া হয়নি"),!v.group)}
+        ${pRow("এলাকা",v.area||(v.mine?"এখনো দেননি":"দেওয়া হয়নি"),!v.area)}
+        ${pRow("মোবাইল নম্বর",v.phone||"দেওয়া হয়নি",!v.phone)}
+        ${pRow("WhatsApp নম্বর",v.whatsapp||"দেওয়া হয়নি",!v.whatsapp)}
+        ${pRow("সর্বশেষ রক্তদানের তারিখ",v.last?dL(v.last):"দেওয়া হয়নি",!v.last)}
+        ${pRow("মোট রক্তদান",v.total>0?bn(v.total):"দেওয়া হয়নি",!(v.total>0))}
+        ${pRow("রক্তদানে প্রস্তুত",v.ready?"রক্তদানে প্রস্তুত":(v.avail?`বিশ্রামে · আর ${bn(v.rest)} দিন`:"প্রাপ্যতা বন্ধ"),!v.ready)}
         ${v.joined?pRow("যুক্ত হয়েছেন",dL(v.joined)):""}
       </div>
   
@@ -4018,14 +4027,6 @@ function initPage() {
   /* পাসওয়ার্ড ভুলে গেলে — ইউজার ইতিমধ্যে লগইন করা, তাই আলাদা full-page UI-তে
      ইমেইল চাওয়া হয় না। Firebase Auth-এর অ্যাকাউন্ট ইমেইলে সরাসরি reset link
      পাঠিয়ে ছোট confirmation sheet দেখানো হয়। */
-  function maskEmail(em){
-    const s=String(em||"").trim();
-    const at=s.indexOf("@");
-    if(at<1)return s;
-    const u=s.slice(0,at), d=s.slice(at+1);
-    const show=u.length<=2?u[0]+"*":u.slice(0,2)+"*".repeat(Math.min(u.length-2,4));
-    return show+"@"+d;
-  }
   function sheetForgot(){
     const shared=initSharedFirebase();
     const user=shared.auth && shared.auth.currentUser;
@@ -4042,7 +4043,7 @@ function initPage() {
         </div>
         <b id="fg_title" style="display:block;font-size:.95rem;margin-bottom:6px">লিংক পাঠানো হচ্ছে…</b>
         <p id="fg_desc" class="mut" style="font-size:.82rem;line-height:1.7;margin:0 0 12px">
-          <span data-noi18n>${esc(maskEmail(email))}</span>
+          <span data-noi18n>${esc(email)}</span>
         </p>
         <div id="fg_note" class="note i" style="text-align:left;margin:0">
           ${ICON.info(16)}
@@ -4055,7 +4056,7 @@ function initPage() {
       if(kind==="ok"){
         title.textContent="রিসেট লিংক পাঠানো হয়েছে";
         desc.innerHTML=`আপনার অ্যাকাউন্টের ইমেইলে পাসওয়ার্ড রিসেট লিংক পাঠানো হয়েছে।<br>
-          <b data-noi18n style="color:var(--ink);font-weight:800">${esc(maskEmail(email))}</b>`;
+          <b data-noi18n style="color:var(--ink);font-weight:800">${esc(email)}</b>`;
         note.className="note g";
         note.style.textAlign="left";
         note.style.margin="0";
@@ -4068,7 +4069,7 @@ function initPage() {
         s.q("#fg_again").onclick=()=>send(true);
       }else if(kind==="er"){
         title.textContent="লিংক পাঠানো যায়নি";
-        desc.innerHTML=`<span data-noi18n>${esc(maskEmail(email))}</span>`;
+        desc.innerHTML=`<span data-noi18n>${esc(email)}</span>`;
         note.className="note r";
         note.style.textAlign="left";
         note.style.margin="0";
@@ -4079,7 +4080,7 @@ function initPage() {
         s.q("#fg_again").onclick=()=>send(true);
       }else{
         title.textContent="লিংক পাঠানো হচ্ছে…";
-        desc.innerHTML=`<span data-noi18n>${esc(maskEmail(email))}</span>`;
+        desc.innerHTML=`<span data-noi18n>${esc(email)}</span>`;
         note.className="note i";
         note.style.textAlign="left";
         note.style.margin="0";
@@ -4094,7 +4095,7 @@ function initPage() {
       try{
         await requestPasswordReset(shared.auth, email);
         logAct(again?"পাসওয়ার্ড রিসেট লিংক আবার পাঠানো":"পাসওয়ার্ড রিসেট লিংক পাঠানো",
-          maskEmail(email),"security");
+          email,"security");
         setState("ok");
         toast("রিসেট লিংক পাঠানো হয়েছে","ok");
       }catch(err){
