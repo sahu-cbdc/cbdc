@@ -11,7 +11,7 @@ import "../lib/store";
 import { initFirebase as initSharedFirebase, NODES } from "../lib/firebase";
 import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
 import { authErrorMessage, resolveUserRole, panelForRole } from "../lib/authx";
-import { getRow, setRow, updateRow, removeRow, watchList, findBy, nowIso } from "../lib/rtdb";
+import { getRow, setRow, updateRow, removeRow, watchList, findBy, nowIso, nextDonorId } from "../lib/rtdb";
 import { ageText, ageFromDob, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
@@ -3288,8 +3288,8 @@ function initPage() {
     el.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>openReview(b.dataset.open));
     if(wSel.size){
       $("#skC").onclick=()=>{wSel.clear();RENDER.work()};
-      $("#skOk").onclick=()=>bulkDo(true);
-      $("#skNo").onclick=()=>bulkDo(false);
+      $("#skOk").onclick=async()=>{ await bulkDo(true); };
+      $("#skNo").onclick=async()=>{ await bulkDo(false); };
     }
   };
   function wkItem(q){
@@ -3309,10 +3309,12 @@ function initPage() {
       </button>
       <span class="go">${SI.right(17)}</span></div>`;
   }
-  function bulkDo(ok){
+  async function bulkDo(ok){
     if(!can("donor.approve"))return toast("আপনার অনুমতি নেই","er");
     if(!ok)return rejectSheet([...wSel],()=>{wSel.clear();RENDER.work()});
-    const n=wSel.size;[...wSel].forEach(id=>decide(id,true,"",true));
+    const n=wSel.size;
+    /* Serial Donor UID হিসাবের জন্য সব approve সম্পূর্ণ হওয়া পর্যন্ত অপেক্ষা */
+    await Promise.all([...wSel].map(id=>decide(id,true,"",true)));
     wSel.clear();persist();RENDER.work();paintNav();paintTop();
     toast(bn(n)+"টি অনুমোদন করা হয়েছে","ok");
   }
@@ -3386,7 +3388,7 @@ function initPage() {
          :`<button class="btn gh w" data-close>বন্ধ</button>`);
     if(can("contact.reveal"))logAudit("যোগাযোগ দেখা হয়েছে",q.id,q.kind);
     if(may){
-      s.q("#rv_yes").onclick=()=>{decide(id,true,s.q("#rv_note").value);s.close()};
+      s.q("#rv_yes").onclick=async()=>{ await decide(id,true,s.q("#rv_note").value); s.close(); };
       s.q("#rv_no").onclick=()=>{s.close();rejectSheet([id])};
     }
   }
@@ -3406,15 +3408,23 @@ function initPage() {
     s.q("#rj_ok").onclick=()=>{
       const txt=s.q("#rj_txt").value.trim();
       if(!txt)return toast("কারণ লিখতে হবে","er");
-      ids.forEach(id=>decide(id,false,txt,true));
+      ids.forEach(id=>{ void decide(id,false,txt,true); });
       persist();s.close();after?after():RENDER.work();paintNav();paintTop();
       toast(bn(ids.length)+"টি বাতিল করা হয়েছে")};
   }
-  function decide(id,ok,note,quiet){
+  async function decide(id,ok,note,quiet){
     const i=DB.queue.findIndex(x=>x.id===id);if(i<0)return;
     const q=DB.queue[i];
     if(q.kind==="donor"&&ok){
-      const approvedDonorId = q.donorId || ("CBDC-2026-"+pad(DB.donors.length+1));
+      let approvedDonorId = q.donorId || "";
+      if(!approvedDonorId){
+        try{ approvedDonorId = await nextDonorId(); }
+        catch(e){
+          console.warn("donor id:",e&&e.message);
+          toast("Donor UID তৈরি করা যায়নি — অনুমোদন সম্পন্ন হয়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।","er");
+          return;
+        }
+      }
       DB.donors.unshift({id:approvedDonorId,
         name:q.name,group:q.group,area:q.area,phone:q.phone,whatsapp:q.whatsapp||q.phone,gender:q.gender,dob:q.dob||"",last:q.last,
         ownerUid:q.ownerUid||"",available:true,verified:true,suspended:false,joined:iso(now()),donations:q.last?1:0});
@@ -3648,7 +3658,7 @@ function initPage() {
       <label>লিঙ্গ</label><select id="f_s"><option ${d.gender==="পুরুষ"?"selected":""}>পুরুষ</option><option ${d.gender==="মহিলা"?"selected":""}>মহিলা</option></select>
       <label>শেষ রক্তদান</label><input id="f_l" type="date" value="${d.last||""}">
     </div>`,`<button class="btn gh" data-close>বাতিল</button><button class="btn" id="f_ok">সংরক্ষণ</button>`);
-    s.q("#f_ok").onclick=()=>{
+    s.q("#f_ok").onclick=async()=>{
       const n=s.q("#f_n").value.trim(),p=s.q("#f_p").value.trim();
       if(n.length<3)return toast("নাম লিখুন","er");
       if(!phoneOK(p))return toast("সঠিক ফোন নম্বর দিন (০১…, ১১ সংখ্যা)","er");
@@ -3657,8 +3667,12 @@ function initPage() {
       const o={name:n,group:s.q("#f_g").value,area:s.q("#f_a").value,phone:p,
         dob:dobVal,gender:s.q("#f_s").value,last:s.q("#f_l").value};
       if(id){Object.assign(d,o);logAudit("ডোনার তথ্য সম্পাদনা",id,"donor")}
-      else{DB.donors.unshift({id:"CBDC-2026-"+pad(DB.donors.length+1),...o,available:true,verified:true,
-        suspended:false,joined:iso(now()),donations:0});logAudit("নতুন ডোনার যোগ",n,"donor")}
+      else{
+        let newId="";
+        try{ newId=await nextDonorId(); }
+        catch(e){ console.warn("donor id:",e&&e.message); toast("Donor UID তৈরি করা যায়নি — সংরক্ষণ হয়নি। আবার চেষ্টা করুন।","er"); return; }
+        DB.donors.unshift({id:newId,...o,available:true,verified:true,
+          suspended:false,joined:iso(now()),donations:0});logAudit("নতুন ডোনার যোগ",n,"donor")}
       persist();s.close();renderSub("donors");toast("সংরক্ষণ হয়েছে","ok")};
   }
   

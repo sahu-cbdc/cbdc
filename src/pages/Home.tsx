@@ -3073,9 +3073,6 @@ function StaticShell() {
                       {"আমি অঙ্গীকার করছি যে, আমার প্রদত্ত সকল তথ্য সঠিক। আমি স্বেচ্ছায় রক্তদানে প্রস্তুত এবং ক্লাবের সকল নিয়মাবলী মেনে চলতে সম্মত।"}
                     </span>
                   </label>
-                  <div className="note" style={{ marginTop: "12px" }}>
-                    {"অ্যাকাউন্ট তৈরি হয়ে যাবে — রক্তদাতা হিসেবে যুক্ত হতে চাইলে পরে Doner প্যানেলের 'রক্তদাতা হিসেবে যুক্ত হন' অপশন থেকে আলাদাভাবে আবেদন করতে হবে।"}
-                  </div>
                   {" "}
                   <div className="form-actions">
                     <button className="btn btn-green" type="submit">
@@ -3452,13 +3449,14 @@ function initPage() {
       /* প্যানেল লিংক — clean path URL ("/admin" ইত্যাদি; src/lib/router.ts) */
       function dashPage(role){ return role==="admin" ? pagePath("admin") : role==="moderator" ? pagePath("moderator") : appBase(); }
       // RTDB `admins/{uid}`-এর role ফিল্ড বদলালেই ব্যবহারকারীর প্যানেল বদলে যায় (real-time)
-      // ইতিমধ্যে লগইন করা থাকলে লগইন ভিউতে "ড্যাশবোর্ডে যান" কার্ড দেখায়
+      /* শুধু Login ভিউ খোলার সময়ই run করা হয় (Home boot থেকে কখনোই না) —
+         নাহলে লগইন থাকা অবস্থায় Main Website/Home-এ গেলেই আবার Panel-এ
+         auto-redirect (loop) হয়ে যেত। Login-এর সময় role-based redirect
+         আগের মতোই কাজ করে (`routeClick` → dashboard/login + finishLogin)। */
       function renderLoginGate(){
         const role = sessionStorage.getItem("cbdcUserRole");
         const box = $("#alreadyBox"), card = $("#loginBox");
         if(!box || !card) return;
-        /* ইতিমধ্যে লগইন করা থাকলে "✅ লগইন সক্রিয় আছে" আলাদা পেজ আর দেখানো হয় না —
-           role অনুযায়ী সরাসরি নিজ নিজ প্যানেলে পাঠানো হয় (আইটেম ৯)। */
         if(sessionStorage.getItem("cbdcAdmin")==="1" && (role==="admin"||role==="moderator")){
           try{ navigateToPage(role==="admin"?"admin":"moderator"); }catch(e){}
           return;
@@ -3572,7 +3570,8 @@ function initPage() {
       function formatDonorId(d, index=0){
         if(d.donorId && /^CBDC-\d{4}-\d+/i.test(d.donorId)) return d.donorId;
         if(d.id && /^CBDC-\d{4}-\d+/i.test(d.id)) return d.id;
-        return `CBDC-2026-${String(index+1).padStart(2, '0')}`;
+        /* Display fallback — শুধু পুরোনো/অসম্পূর্ণ ডেটার জন্য; real UID সবসময় RTDB থেকে আসে */
+        return `CBDC-${new Date().getFullYear()}-${String(index+1).padStart(4, '0')}`;
       }
   
       function donorCard(d, index=0){
@@ -4786,8 +4785,11 @@ function initPage() {
       }
 
       /* --- অ্যাকাউন্ট তৈরি (Email/Password অথবা Google) ---
-         • কোনো popup/alert নয় — ভুল থাকলে ঘরটি highlight হয়, নিচে বার্তা আসে।
-         • সফল হলে কোনো success popup নয় — সরাসরি নিজ role-এর dashboard-এ। */
+         • ভুল থাকলে ঘরটি highlight হয়, নিচে বার্তা আসে।
+         • সফল হলে শুধু ১টি popup: "অনুগ্রহ করে অপেক্ষা করুন..." পরিবর্তন হয়ে
+           ছোট success popup দেখায়, ৩ সেকেন্ড পর বন্ধ হয়ে Login পেজে নিয়ে যায়।
+           Google প্রথমবার হলে সরাসরি Doner Panel-এ পাঠানো হয়।
+         • Account তৈরি করলে কোনো রক্তদাতা আবেদন/ডোনার হিসেবে যুক্ত হয় না। */
       $("#signupForm")?.addEventListener("submit", async e => {
         e.preventDefault();
         const form = e.currentTarget, message = $("#signupMessage");
@@ -4884,6 +4886,8 @@ function initPage() {
               phone:o.phone, dob:o.dob, gender:o.gender, area:o.area, username:o.username, address:o.address
             }, {provider: isGoogle ? "google" : "password"});
           } else {
+            /* নতুন Account-এ Donor UID তৈরি হয় না — শুধু account record।
+               Donor UID কেবল "রক্তদাতা হিসেবে যুক্ত হন" → Admin Approve হলে নির্ধারিত হয়। */
             await setRow(NODES.users, uid, {
               ...profilePayload,
               role: DEFAULT_ROLE,
@@ -4897,9 +4901,9 @@ function initPage() {
           const _wasGoogle = isGoogle;
           setSignupGoogleMode(null);
           message.className = "hidden"; message.textContent = "";
-          hideAppModal();
           if(_wasGoogle){
             // Google দিয়ে প্রথমবার — সরাসরি Doner Panel (কোনো error নয়, clean form থেকে)
+            hideAppModal();
             setPendingGoogleProfile(null);
             const rr2 = await resolveRole({uid, email:o.email, name:o.name});
             finishLogin({email:o.email, name:o.name, role:rr2.role, permissions:rr2.permissions, photo:photoURL, uid});
@@ -4910,16 +4914,20 @@ function initPage() {
               if(auth && auth.currentUser) await signOut(auth);
             }catch(e){}
             setPendingGoogleProfile(null);
-            try{ history.pushState(null,"",appBase()+"login"); }catch(e){}
-            showView("login");
+            /* Login ফর্মে ইমেইল আগে থেকেই বসিয়ে রাখি — popup বন্ধ হলে যেন ব্যবহারকারী
+               সহজেই লগইন করতে পারে। */
             const _loginEmail = document.getElementById("username");
             if(_loginEmail) _loginEmail.value = o.email || "";
-            showMessage(document.getElementById("loginMessage"), "অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে। অনুগ্রহ করে ইউজারনেম অথবা ইমেইল এবং পাসওয়ার্ড দিয়ে লগইন করুন।", "success");
-            // 3 সেকেন্ডের popup — একাউন্ট সফলভাবে তৈরি হয়েছে
+            /* শুধু ১টি popup: loading popup-এর ভেতরেই text বদলে ছোট success দেখাই —
+               Login পেজে আলাদা success message আর দেখানো হয় না। */
+            const _loginMsg = document.getElementById("loginMessage");
+            if(_loginMsg){ _loginMsg.className = "hidden"; _loginMsg.textContent = ""; }
+            showView("login");
             try{
               showAppMessage("অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে। অনুগ্রহ করে ইউজারনেম অথবা ইমেইল এবং পাসওয়ার্ড দিয়ে লগইন করুন।", false, "অ্যাকাউন্ট তৈরি হয়েছে!");
+              /* popup ৩ সেকেন্ড পর নিজে থেকে বন্ধ হবে — Login পেজটি ইতিমধ্যে তার পেছনে আছে */
               setTimeout(()=>{ try{ hideAppModal(); }catch(e){} }, 3000);
-            }catch(e){ toast("অ্যাকাউন্ট তৈরি হয়েছে — এখন লগইন করুন"); }
+            }catch(e){ hideAppModal(); toast("অ্যাকাউন্ট তৈরি হয়েছে — এখন লগইন করুন"); }
           }
         }catch(err){
           hideAppModal();
@@ -5115,7 +5123,10 @@ function initPage() {
       setLogo();
       if(window.CBDCShared)CBDCShared.subscribe(()=>{ renderPublic(); renderGallery(); });
       initFirebase().then(()=>{
-        renderPublic(); renderGallery(); renderLoginGate(); renderAuthState();
+        /* Home/root বুট-এ কোনো লগইন-গেট redirect নয় — ব্যবহারকারী Panel থেকে
+           সরাসরি Main Website-এ ফিরে আসতে পারবে। Role redirect শুধু Login ভিউ ও
+           Login সফলের সময় হয় (routeClick/finishLogin)। */
+        renderPublic(); renderGallery(); renderAuthState();
         try{
           const pending = getPendingGoogleProfile();
           if(pending && auth && auth.currentUser && auth.currentUser.uid === pending.uid){

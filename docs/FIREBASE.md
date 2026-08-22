@@ -116,7 +116,8 @@ metadata** সেভ হয়।
 
 | Node | Key | Fields | Access |
 | --- | --- | --- | --- |
-| `donors` | donor id (`CBDC-2026-XXXX`) | name, bloodGroup, gender, **dob**, phone, whatsapp, area, lastDonationDate, donations, totalDonations, status, available, verified, suspended, joined, occupation, ownerUid, photo (ImgBB URL) | public read; **admin write only** |
+| `donors` | donor id (`CBDC-2026-0001`) | name, bloodGroup, gender, **dob**, phone, whatsapp, area, lastDonationDate, donations, totalDonations, status, available, verified, suspended, joined, occupation, ownerUid, photo (ImgBB URL) | public read; admin write; **owner delete (own record)** |
+| `_meta` | counter | `donorCounter/<year>` — পরবর্তী ধারাবাহিক Donor UID-এর atomic counter | public read; authenticated increment |
 | `requests` | push id | patientName, bloodGroup, bags, urgency, status, workflowStatus, hospitalName, hospitalAddress, requesterName, phone, whatsapp, **patientDob**, createdAt, expiresAt, responders | anyone can create; public read; staff manage |
 | `members` | push id | donor sign-up application (status `pending`, **dob**) | anyone can create; owner/staff read |
 | `users` | **auth uid** | uid, name, username, email, phone, **dob**, gender, area, photoURL, provider, role, status, createdAt, `data:{donations,mine,notifs,activity}` | owner + staff; `approved` donorStatus admin-only |
@@ -178,10 +179,11 @@ Website-এ role শুধুমাত্র ৩টি: **Admin** (Full Access),
 
 ### Donor application flow
 
-1. নতুন account তৈরি/login করলে user শুধু Doner role-এ থাকে — auto donor হয় না।
-2. Doner Panel → “রক্তদাতা হিসেবে যুক্ত হন” থেকে আবেদন করলে সেটি `queue`-এ `pending` থাকে।
-3. Admin approve করলে তবেই `donors/{donorId}` তৈরি হয় এবং public donor list-এ দেখা যায়।
-4. `users/{uid}/donorStatus` user নিজে `approved` করতে পারে না; Security Rules-এ এটি Admin-only।
+1. নতুন account তৈরি/login করলে user শুধু Doner role-এ থাকে — auto donor হয় না এবং কোনো Donor UID তৈরি হয় না।
+2. Doner Panel → “রক্তদাতা হিসেবে যুক্ত হন” থেকে আবেদন করলে সেটি `queue`-এ `pending` থাকে (Donor UID তখনো তৈরি হয় না)।
+3. Admin approve করলে তবেই `donors/{donorId}` তৈরি হয়। সেখানে `donorId`-টি **আবেদন approve হওয়ার সিরিয়াল অনুযায়ী** তৈরি হয় (`CBDC-<year>-0001`, `0002`, …) — account তৈরির সময় নয়।
+4. `users/{uid}/donorId` তখনই approval-এর সময় set হয় এবং স্থায়ী থাকে (পরবর্তী login/update-এ পরিবর্তন হয় না)।
+5. `users/{uid}/donorStatus` user নিজে `approved` করতে পারে না; Security Rules-এ এটি Admin-only।
 
 ### Staff account তৈরি
 

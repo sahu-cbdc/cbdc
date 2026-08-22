@@ -120,6 +120,7 @@ export const NODES = {
   notices: "notices", // published notices
   accounts: "accounts", // panel / team account records
   settings: "settings", // app settings (e.g. settings/imgbb — ImgBB API key)
+  _meta: "_meta",       // internal counters (e.g. _meta/donorCounter/<year>)
 } as const;
 
 /**

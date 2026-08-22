@@ -18,7 +18,7 @@ import {
   loadUserProfile,
   isProfileComplete,
 } from "../lib/authx";
-import { getRow, setRow, updateRow, watchRow, addRow, findBy, listOnce, nowIso } from "../lib/rtdb";
+import { getRow, setRow, updateRow, watchRow, addRow, findBy, listOnce, nowIso, updatePaths } from "../lib/rtdb";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
@@ -4221,11 +4221,11 @@ function initPage() {
       ? `<div class="card">
           <div class="per"><span style="width:44px;height:44px;border-radius:50%;background:var(--red-s);
             display:grid;place-items:center;color:var(--red)">${ICON.drop(24)}</span>
-            <div class="i"><b>আপনি এখনো রক্তদাতা নন</b><small>কয়েকটি তথ্য দিলেই যুক্ত হতে পারবেন</small></div></div>
+            <div class="i"><b>রক্তদাতা হিসেবে নিবন্ধিত নন (Not Registered)</b><small>আপনি এখনো রক্তদাতা হিসেবে আবেদন করেননি। 'রক্তদাতা হিসেবে যুক্ত হন' অপশন থেকে আবেদন করুন।</small></div></div>
           <button class="btn w" style="margin-top:12px" data-act="become">রক্তদাতা হিসেবে যুক্ত হন</button></div>`
       : `<div class="card">
           <div class="per"><span class="bg" style="width:46px;height:46px;border-radius:12px;font-size:1rem">${esc(d.bloodGroup)}</span>
-            <div class="i"><b>${esc(dv("name"))}</b><small>${esc(d.donorId)} · ${esc(dv("area"))}</small></div></div>
+            <div class="i"><b>${esc(dv("name"))}</b><small>${d.donorId?esc(d.donorId)+" · ":""}${esc(dv("area"))}${d.donorId?"":dStatus()&&dStatus()!=="none"?" · অ্যাডমিন অনুমোদনের অপেক্ষায়":""}</small></div></div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin:11px 0">${donorPill()}
             ${dStatus()==="approved"?`<span class="pill b n">${ICON.checkC(12)} যাচাইকৃত</span>`:""}</div>
           <div style="display:flex;gap:8px">
@@ -4290,7 +4290,7 @@ function initPage() {
     if(diff<3600){const v=Math.max(1,Math.floor(diff/60));return tp(`${bn(v)} মিনিট আগে`,`${v} min ago`)}
     if(diff<86400){const v=Math.floor(diff/3600);return tp(`${bn(v)} ঘণ্টা আগে`,`${v} hr ago`)}
     if(bdDayKey(at)===1)return "গতকাল";
-    return bdDate(at).toLocaleDateString(LOC(),{day:"numeric",month:"short"});
+    return bdDateText(at,LOC(),{day:"numeric",month:"short"});
   }
   
   /* ══════════ SCREEN: FIND ══════════ */
@@ -4821,7 +4821,7 @@ function initPage() {
             color:${x.type==="security"?"var(--blu)":x.type==="donor"?"var(--red)":"var(--mut)"}">
             ${x.type==="security"?ICON.shield(18):x.type==="donor"?ICON.drop(18):ICON.user(18)}</span>
           <span class="tx"><b>${esc(x.title)}</b><small>${esc(x.detail)}</small>
-            <small style="color:var(--mut);font-size:.7rem">${bdDate(x.at).toLocaleDateString(LOC(),{day:"numeric",month:"short",year:"numeric"})} · ${bdTimeStr(x.at)}</small></span></div>`).join("")}</div>`).join("");
+            <small style="color:var(--mut);font-size:.7rem">${bdDateText(x.at,LOC(),{day:"numeric",month:"short",year:"numeric"})} · ${bdTimeStr(x.at)}</small></span></div>`).join("")}</div>`).join("");
     };
   
     P.privacy=()=>`
@@ -5518,24 +5518,34 @@ function initPage() {
   }
 
   /* ══ বাংলাদেশ সময় (Asia/Dhaka, UTC+6 — DST নেই) ══
-     RTDB-তে টাইমস্ট্যাম্প UTC ISO আকারে থাকে; সব সময়-প্রদর্শন এখানে বাংলাদেশ
-     সময়ে রূপান্তর করে — তাই কার্যকলাপের সঠিক সময় সবসময় একই দেখায়। */
+     RTDB-তে টাইমস্ট্যাম্প UTC ISO আকারে থাকে। সব সময়-প্রদর্শন এখানে বাংলাদেশ
+     সময়ে রূপান্তর করে — এবং ফরম্যাট করার সময় `timeZone:"UTC"` দিয়ে সেই
+     shifted Date-এর UTC ফিল্ড দেখানো হয়। এতে ব্রাউজারের লোকাল টাইমজোন
+     (ডাকায় +৬ সরাসরি থাকলেও) আবার +৬ যোগ করে দ্বিগুণ offset হয় না। */
   const BD_OFFSET = 6*60*60*1000;
-  const bdDate = v => new Date((new Date(v)).getTime() + BD_OFFSET);
+  const bdDate = v => { const t = new Date(v || 0).getTime(); return new Date((Number.isFinite(t) ? t : Date.now()) + BD_OFFSET); };
   const bdNow = () => bdDate(new Date());
+  function bdDateText(v, locale="bn-BD", opts={}){
+    /* বর্তমান প্রোগ্রাম-টাইমজোন নির্বিশেষে ঢাকার ওয়াল-ক্লক দেখান */
+    return bdDate(v).toLocaleDateString(locale,{timeZone:"UTC",...opts});
+  }
+  function bdTimeText(v, locale="bn-BD", opts={}){
+    return bdDate(v).toLocaleTimeString(locale,{timeZone:"UTC",hour:"2-digit",minute:"2-digit",...opts});
+  }
   function bdDayKey(v){ // 0 = আজ, 1 = গতকাল, else দিন-সংখ্যা (বাংলাদেশ সময়ে)
     const d=bdDate(v), n=bdNow();
-    const z=x=>new Date(x.getFullYear(),x.getMonth(),x.getDate()).getTime();
+    /* UTC ফিল্ড ব্যবহার করা হয়, কারণ bdDate-এর UTC ফিল্ডই ঢাকার স্থানীয় তারিখ */
+    const z=x=>Date.UTC(x.getUTCFullYear(),x.getUTCMonth(),x.getUTCDate());
     return Math.round((z(n)-z(d))/864e5);
   }
   function bdDateLabel(v){
     const k=bdDayKey(v);
     if(k===0)return "আজ";
     if(k===1)return "গতকাল";
-    return bdDate(v).toLocaleDateString("bn-BD",{day:"numeric",month:"short",year:"numeric"});
+    return bdDateText(v,"bn-BD",{day:"numeric",month:"short",year:"numeric"});
   }
   function bdTimeStr(v){
-    return bdDate(v).toLocaleTimeString("bn-BD",{hour:"2-digit",minute:"2-digit"});
+    return bdTimeText(v,"bn-BD",{hour:"2-digit",minute:"2-digit"});
   }
 
   /* ── id generator (local request id) ── */
@@ -5608,7 +5618,9 @@ function initPage() {
       d.whatsapp=s.q("#bc_wa").value.trim()||"";
       d.appliedAt=iso(now());
       d.available=true;
-      d.donorId=d.donorId||newDonorId();       /* uid থেকে স্থির — duplicate হয় না */
+      /* আবেদনের সময় Donor UID তৈরি হয় না — সেটি Admin Approve হলে নির্ধারিত হবে।
+         পুরোনো/ভুলভাবে থাকা donorId-ও পেন্ডিং আবেদনে বাদ দেওয়া হয়। */
+      d.donorId="";
       save();                                   /* localStorage + queue (shared/RTDB) + users/{uid} */
       logAct("রক্তদাতা হিসেবে যুক্ত হন",d.bloodGroup+" · যাচাইয়ের অপেক্ষায়","donor");
       s.close();
@@ -6260,6 +6272,101 @@ function initPage() {
     try{ window.location.assign(appBase()+"forgot-password"); }catch(e){ navigateToPage("home"); }
   }
 
+  /* ---------- REAL account deletion ----------
+     Account Delete-এর আগে অবশ্যই বর্তমান Password Firebase-এর মাধ্যমে যাচাই
+     করতে হবে। ভুল Password দিলে এখানেই থেমে যায় — কোনো deleting হয় না।
+     সঠিক Password হলে:
+       ১) RTDB-র সাথে সম্পর্কিত সব রেকর্ড একসাথে (atomic updatePaths) মুছে ফেলা হয়
+       ২) তারপর Firebase Authentication account deleteUser() দিয়ে মুছে ফেলা হয়
+     কোনো error হলে আংশিক delete-এর মতো দেখানো হয় না — স্পষ্ট বাংলা error দেখানো হয়। */
+  async function deleteAccountNow(currentPassword){
+    const shared=initSharedFirebase();
+    if(!shared.auth) throw new Error("Firebase সংযোগ নেই। ইন্টারনেট সংযোগ পরীক্ষা করুন।");
+    const user=shared.auth.currentUser;
+    if(!user) throw new Error("লগইন অবস্থায় নেই। আবার লগইন করুন।");
+    const uid=String(user.uid || STORE.account.uid || "").trim();
+    const email=String(user.email || STORE.account.email || "").trim().toLowerCase();
+    const phone=String(STORE.account.phone || "").replace(/\s+/g,"");
+    if(!uid) throw new Error("অ্যাকাউন্টের UID পাওয়া যায়নি।");
+    if(!email) throw new Error("এই অ্যাকাউন্টে ইমেইল নেই — অ্যাকাউন্ট মুছে ফেলা যাবে না।");
+
+    /* যদি এই অ্যাকাউন্টে Password sign-in থাকে তবেই password-যাচাই সম্ভব।
+       Google-only অ্যাকাউন্টের পাসওয়ার্ড নেই — স্পষ্ট বার্তা দিয়ে থামাই। */
+    const providers=Array.isArray(user.providerData)?user.providerData.map(p=>String(p&&p.providerId||"")):[];
+    const hasPasswordProvider=providers.includes("password") || providers.includes("firebase");
+    if(!hasPasswordProvider) throw new Error("এই অ্যাকাউন্টে পাসওয়ার্ড সেট নেই। পাসওয়ার্ড দিয়ে যাচাই করা সম্ভব নয়।");
+
+    /* ১. বর্তমান Password যাচাই — ভুল হলে এখানেই abort */
+    const {EmailAuthProvider, reauthenticateWithCredential}=await import("firebase/auth");
+    await reauthenticateWithCredential(user, EmailAuthProvider.credential(email, currentPassword));
+
+    /* ২. সম্পর্কিত RTDB রেকর্ড খোঁজা */
+    const paths={};
+    const ownerMatches = x => String((x&&(x.ownerUid||x.uid||x.userId))||"").trim()===uid;
+    const emailMatches = x => !!x && String(x.email||"").trim().toLowerCase()===email;
+    const phoneMatches = x => !!phone && String(x.phone||"").replace(/\s+/g,"")===phone;
+
+    // users/{uid} — প্রোফাইল, settings, activities, request history সব অ্যাকাউন্টের ভেতরে
+    paths[`users/${uid}`]=null;
+
+    // donors/{id} — approved donor profile
+    const donors=await listOnce(NODES.donors);
+    donors.filter(d=>ownerMatches(d) || (uid && String(d.uid||"")===uid)).forEach(d=>{ if(d.id) paths[`donors/${d.id}`]=null; });
+
+    // members/{id} — অনুমোদন-প্রক্রিয়ার ডোনার আবেদন
+    const members=await listOnce(NODES.members);
+    const memberIds=new Set();
+    members.filter(m=>ownerMatches(m) || emailMatches(m) || phoneMatches(m)).forEach(m=>{
+      if(m.id){ paths[`members/${m.id}`]=null; memberIds.add(String(m.id)); }
+    });
+
+    // queue/{id} — pending ডোনার/রক্তদান/আবেদন/গ্রুপ রেকর্ড
+    const queue=await listOnce(NODES.queue);
+    queue.filter(q=>(ownerMatches(q) || memberIds.has(String(q.memberId||"")) || (q.phone&&phoneMatches(q)))).forEach(q=>{ if(q.id) paths[`queue/${q.id}`]=null; });
+    /* সাধারণ ইউজার queue-নোড পড়তে পারে না, তাই স্থানীয়/সংরক্ষিত ডেটা থেকে
+       এই ইউজারের নিজের queue-key-ও সরাসরি মুছে ফেলা হয়। */
+    const selfQid="PD-"+String(STORE.donor.donorId||uid).replace(/[^A-Za-z0-9]/g,"").slice(-10);
+    if(selfQid) paths[`queue/${selfQid}`]=null;
+    (RAW.mine||[]).forEach(m=>{ if(m&&m.id) paths[`queue/${m.id}`]=null; });
+    (RAW.donations||[]).forEach(x=>{
+      if(x&&x.date){
+        const dn="DN-"+uid+"-"+String(x.date).replace(/-/g,"");
+        if(dn) paths[`queue/${dn}`]=null;
+      }
+    });
+
+    // requests/{id} — ইউজার করা/জমা করা জরুরি রক্তের আবেদন
+    const requests=await listOnce(NODES.requests);
+    requests.filter(r=>ownerMatches(r) || emailMatches(r) || phoneMatches(r)).forEach(r=>{ if(r.id) paths[`requests/${r.id}`]=null; });
+    (RAW.mine||[]).forEach(m=>{ if(m&&m.id) paths[`requests/${m.id}`]=null; });
+
+    // accounts/{id} — অ্যাডমিন/প্যানেল অ্যাকাউন্ট রেকর্ড (যদি থাকে)
+    const accounts=await listOnce(NODES.accounts);
+    accounts.filter(a=>ownerMatches(a) || emailMatches(a)).forEach(a=>{ if(a.id) paths[`accounts/${a.id}`]=null; });
+
+    // admins/{uid} — রোল রেকর্ড (যদি থাকে)
+    try{ const staff=await getRow(NODES.admins, uid); if(staff) paths[`admins/${uid}`]=null; }catch(e){}
+
+    /* ৩. RTDB সব একসাথে atomic মুছুন — এখানে সফল হলে তবেই Auth account delete হবে */
+    if(Object.keys(paths).length) await updatePaths(paths);
+
+    /* ৪. Firebase Authentication থেকে account স্থায়ীভাবে মুছে ফেলুন */
+    try{
+      const {deleteUser}=await import("firebase/auth");
+      await deleteUser(user);
+    }catch(e){
+      // Auth delete ব্যর্থ হলে সংরক্ষিত RTDB cleanup-এর error সহ স্পষ্টভাবে জানাই
+      throw new Error(authErrorMessage(e,{fallback:"Firebase Authentication থেকে অ্যাকাউন্ট মুছে ফেলা যায়নি। আবার চেষ্টা করুন।"}));
+    }
+
+    /* ৫. স্থানীয় cached data মুছুন */
+    try{
+      [LS,LS_DATA,"cbdc.session","cbdc.auth","cbdcMember","cbdcMemberEmail","cbdcMemberName",
+        "cbdcMemberPhoto","cbdcMemberRole","cbdcMemberUid","cbdcMemberUsername","cbdc.app","cbdc.data"]
+        .forEach(k=>localStorage.removeItem(k));
+    }catch(e){}
+  }
+
   /* ---------- delete account (4 steps) ---------- */
   function sheetDelete(){
     let step=1;
@@ -6272,12 +6379,10 @@ function initPage() {
       if(step===1){bd.innerHTML=bar+`
         <div class="note r">${ICON.warn(17)}<span>এটি একটি <b>স্থায়ী</b> সিদ্ধান্ত। এগোনোর আগে ভালোভাবে দেখে নিন।</span></div>
         <b style="display:block;margin-bottom:7px;font-size:.86rem">যা মুছে যাবে</b>
-        <p class="mut" style="font-size:.81rem;margin-bottom:12px">প্রোফাইল ও ব্যক্তিগত তথ্য · ডোনার প্রোফাইল ও কার্ড ·
-          যোগাযোগের তথ্য · আপনার করা আবেদনসমূহ</p>
-        <div class="note w" style="margin-bottom:12px">${ICON.clock(17)}<span>অনুরোধ করার পর
-          <b>২৪ ঘণ্টার মধ্যে</b> অ্যাকাউন্ট এবং অ্যাকাউন্টের সাথে সম্পর্কিত সকল ডাটা মুছে যাবে।</span></div>
-        <b style="display:block;margin-bottom:7px;font-size:.86rem">যা থাকবে</b>
-        <p class="mut" style="font-size:.81rem">রক্তদানের রেকর্ড (নাম ছাড়া) — কারণ এগুলো অন্যের চিকিৎসার সাথে যুক্ত</p>`;
+        <p class="mut" style="font-size:.81rem;margin-bottom:12px">অ্যাকাউন্ট · প্রোফাইল ও ব্যক্তিগত তথ্য · ডোনার প্রোফাইল ও কার্ড ·
+          সেটিংস · কার্যকলাপ · রক্তদানের রেকর্ড · আপনার করা/সম্পর্কিত জরুরি আবেদনসমূহ</p>
+        <div class="note w" style="margin-bottom:12px">${ICON.warn(17)}<span>সঠিক পাসওয়ার্ড দিয়ে নিশ্চিত করার পর
+          <b>সাথে সাথে</b> অ্যাকাউন্ট এবং অ্যাকাউন্টের সাথে সম্পর্কিত সকল ডাটা স্থায়ীভাবে মুছে যাবে।</span></div>`;
         ft.innerHTML=`<button class="btn gh" data-close>বাতিল</button><button class="btn red" id="nx">পরবর্তী</button>`;}
       if(step===2){bd.innerHTML=bar+`
         <div class="note w">${ICON.info(17)}<span>মুছে ফেলার বদলে এই বিকল্পগুলো ভেবে দেখুন —</span></div>
@@ -6286,17 +6391,17 @@ function initPage() {
         <button class="btn gh w" id="a3">প্রোফাইল গোপন করুন</button>`;
         ft.innerHTML=`<button class="btn gh" id="bk">পেছনে</button><button class="btn red" id="nx">না, মুছেই ফেলব</button>`;}
       if(step===3){bd.innerHTML=bar+`
-        <div class="f"><label>পাসওয়ার্ড দিয়ে নিশ্চিত করুন <i>*</i></label><input id="dp" type="password"></div>
+        <div class="f"><label>বর্তমান পাসওয়ার্ড <i>*</i></label><input id="dp" type="password" autocomplete="current-password"></div>
         <div class="f"><label>নিশ্চিত করতে <b style="color:var(--red)">মুছে ফেলুন</b> লিখুন <i>*</i></label>
-          <input id="dt" autocapitalize="off"></div>`;
+          <input id="dt" autocapitalize="off"></div>
+        <div id="de" style="display:none;margin-top:8px;font-size:.78rem;font-weight:700;color:var(--red-d)"></div>`;
         ft.innerHTML=`<button class="btn gh" id="bk">পেছনে</button><button class="btn red" id="nx">অ্যাকাউন্ট মুছুন</button>`;}
       if(step===4){bd.innerHTML=`<div style="text-align:center;padding:8px 0">
-        <div style="width:58px;height:58px;margin:0 auto 12px;border-radius:50%;background:var(--card2);
-          color:var(--mut);display:grid;place-items:center">${ICON.clock(28)}</div>
-        <b style="display:block;margin-bottom:6px">অ্যাকাউন্ট মুছে ফেলার প্রক্রিয়া শুরু হয়েছে</b>
-        <div class="note w" style="text-align:left;margin-top:12px">${ICON.clock(17)}
-          <span><b>২৪ ঘণ্টার মধ্যে মুছে যাবে</b><br>অ্যাকাউন্ট এবং অ্যাকাউন্টের সাথে সম্পর্কিত
-          সকল ডাটা ২৪ ঘণ্টার মধ্যে স্থায়ীভাবে মুছে ফেলা হবে।</span></div>
+        <div style="width:58px;height:58px;margin:0 auto 12px;border-radius:50%;background:var(--grn-s);
+          color:var(--grn);display:grid;place-items:center">${ICON.checkC(28)}</div>
+        <b style="display:block;margin-bottom:6px">অ্যাকাউন্ট সম্পূর্ণভাবে মুছে ফেলা হয়েছে</b>
+        <div class="note w" style="text-align:left;margin-top:12px">${ICON.info(17)}
+          <span>অ্যাকাউন্ট এবং অ্যাকাউন্টের সাথে সম্পর্কিত সকল ডাটা স্থায়ীভাবে মুছে ফেলা হয়েছে। আপনি আর এই অ্যাকাউন্ট বা পুরোনো ডাটা দিয়ে প্রবেশ করতে পারবেন না।</span></div>
         <p class="mut" style="margin-top:12px;font-size:.8rem">আমাদের সাথে থাকার জন্য ধন্যবাদ</p></div>`;
         ft.innerHTML=`<button class="btn" data-close style="flex:1">বন্ধ করুন</button>`;}
       s.q("#bk")&&(s.q("#bk").onclick=()=>{step--;draw()});
@@ -6304,6 +6409,19 @@ function initPage() {
         if(step===3){
           if(!s.q("#dp").value){toast("পাসওয়ার্ড দিন","er");return}
           if(s.q("#dt").value.trim()!=="মুছে ফেলুন"){toast('হুবহু "মুছে ফেলুন" লিখুন',"er");return}
+          /* বর্তমান Password যাচাই + সম্পূর্ণ delete — ভুল password হলে কিছু delete হয় না */
+          const btn=s.q("#nx"), orig=btn?btn.innerHTML:"";
+          if(btn){btn.disabled=true;btn.innerHTML="যাচাই ও মুছে ফেলা হচ্ছে…";}
+          deleteAccountNow(s.q("#dp").value).then(()=>{
+            step=4;draw();
+            setTimeout(()=>{ try{ navigateToPage("home"); }catch(e){ try{ window.location.assign(appBase()); }catch(_){} } },700);
+          }).catch(err=>{
+            if(btn){btn.disabled=false;btn.innerHTML=orig;}
+            const msg=authErrorMessage(err,{fallback:"অ্যাকাউন্ট মুছে ফেলা যায়নি। সঠিক পাসওয়ার্ড ও ইন্টারনেট সংযোগ থাকা অবস্থায় আবার চেষ্টা করুন।"});
+            toast(msg,"er");
+            if(s.q("#de")){ s.q("#de").textContent=msg; s.q("#de").style.display="block"; }
+          });
+          return;
         }
         step++;draw();
       });
@@ -6345,13 +6463,9 @@ function initPage() {
      No default identity ships with the app, so on the very first open we ask for
      the minimum an account needs. Everything else is filled in later, from the
      screen that owns it. */
-  /* club ID for a brand-new donor: CBDC-<year>-<4 digits derived from the uid> */
-  function newDonorId(){
-    const y=new Date().getFullYear();
-    let n=0;const src=STORE.account.uid||String(Date.now());
-    for(let i=0;i<src.length;i++)n=(n*31+src.charCodeAt(i))>>>0;
-    return `CBDC-${y}-${String(n%9999+1).padStart(4,"0")}`;
-  }
+  /* Donor UID সরাসরি এখানে তৈরি হয় না।
+     এটি শুধু "রক্তদাতা হিসেবে যুক্ত হন" → Admin Approve → Donor List-এ যুক্ত হওয়ার
+     সময় sequential counter (`_meta/donorCounter/<year>`) থেকে নির্ধারিত হয়। */
   function needsSetup(){return !isProfileComplete(STORE.account)}
   function sheetSetup(){
     const b=dobBounds(SITE.rules.minAge,SITE.rules.maxAge);
@@ -6478,21 +6592,42 @@ function initPage() {
     if(row.joined)a.joined=row.joined;
     // donor fields — একই UID তে donor তথ্য একীভূত, কোনো duplicate নয়
     const _bg = row.bloodGroup || row.group || "";
-    const _dId = row.donorId || row.donorID || "";
-    const _dStatus = row.donorStatus || row.status || "";
+    /* Account-এর `status:"active"` কে কখনোই donor status ভাবা যাবে না।
+       নতুন অ্যাকাউন্টে শুধু `status:"active"` থাকে — এটি Read হলে যেন নবাগত
+       ইউজারকে Approved/প্রস্তুত Donor দেখানো না হয়। Donor status তখনই
+       ব্যবহার করা হয় যখন `donorStatus` অথবা স্পষ্ট donor status (pending/
+       approved/rejected/none) থাকে। */
+    const _dStatusRaw = String(row.donorStatus || "").trim().toLowerCase();
+    const _accountStatus = String(row.status || "").trim().toLowerCase();
+    const _knownDonorStatuses = ["pending", "approved", "rejected", "none"];
+    const _dStatus = _knownDonorStatuses.includes(_dStatusRaw)
+      ? _dStatusRaw
+      : (_knownDonorStatuses.includes(_accountStatus) ? _accountStatus : "");
+    /* Donor UID শুধু approved হলে রাখা হয়। পেন্ডিং/নতুন status-এ পুরোনো
+       (ভুলভাবে তৈরি) donorId থাকলেও তা ব্যবহার করা হয় না — approve হলে
+       Admin sequential সিরিয়ালে নতুন UID দেবে। */
+    const _dId = _dStatus==="approved" ? (row.donorId || row.donorID || "") : "";
     const _last = row.lastDonation || row.lastDonationDate || row.last || "";
     const _wa = row.whatsapp || row.whatsApp || "";
     const _health = row.health || row.healthNotes || "";
+    /* `users/{uid}` কখনোই donor status-এর প্রমাণ নয়:
+       - নতুন Account-এ শুধু `status:"active"` থাকে → এটি donor status হিসেবে
+         ব্যবহার করলে নবাগতকে Approved/তৈরি Donor দেখায়।
+       - `users/{uid}` user-ই লিখতে পারে, তাই এটি থেকে Approved আসতে পারে না।
+       আসল Donor status (pending/approved) শুধু `donors` / `members` / `queue`
+       রেকর্ড থেকে আসে (pullSharedPublic + hydrateDonorFromRtdb)। */
+    const _hasDonorInfo = !!(_bg || _dId || (_dStatus && _dStatus!=="none"));
     if(_bg) STORE.donor.bloodGroup=_bg;
     if(_dId) STORE.donor.donorId=_dId;
-    if(_dStatus && _dStatus!=="none"){
-      // users/{uid} is user-writable, so never trust it as proof of approval.
-      // Real approval is detected only from an approved donors/{id} record in
-      // hydrateDonorFromRtdb(). Until then the application remains pending.
-      STORE.donor.is=true; STORE.donor.status=_dStatus==="approved"?"pending":_dStatus;
-    } else if(_bg && _dId){
-      // bloodGroup + donorId থাকলে অন্তত pending — হিস্টোরিক ডেটার জন্য fallback
-      STORE.donor.is=true; if(STORE.donor.status==="none") STORE.donor.status="pending";
+    else if(_dStatus && _dStatus!=="approved") STORE.donor.donorId="";
+    if(!_hasDonorInfo){
+      /* RTDB অ্যাকাউন্টে কোনো donor আবেদন/তথ্য নেই → Donor নয়। এর ফলে আগের
+         ভুল cache বা `status:"active"`-এর কারণে অনুমোদিত Donor দেখানো বন্ধ হয়। */
+      STORE.donor.is=false; STORE.donor.status="none";
+      STORE.donor.donorId=""; STORE.donor.bloodGroup="";
+      STORE.donor.whatsapp=""; STORE.donor.lastDonation="";
+      STORE.donor.health=""; STORE.donor.appliedAt="";
+      STORE.donor.available=true;
     }
     if(_last !== undefined && _last !== null) STORE.donor.lastDonation = String(_last||"");
     if(_wa !== undefined && _wa !== null) STORE.donor.whatsapp = String(_wa||"");
@@ -6525,7 +6660,7 @@ function initPage() {
       }catch(e){}
       if(donor){
         STORE.donor.is=true; STORE.donor.status="approved";
-        STORE.donor.donorId = donor.id || donor.donorId || STORE.donor.donorId || newDonorId();
+        STORE.donor.donorId = donor.id || donor.donorId || STORE.donor.donorId || "";
         STORE.donor.bloodGroup = donor.bloodGroup || donor.group || STORE.donor.bloodGroup;
         if(donor.lastDonationDate) STORE.donor.lastDonation = donor.lastDonationDate;
         else if(donor.lastDonation) STORE.donor.lastDonation = donor.lastDonation;
@@ -6550,7 +6685,8 @@ function initPage() {
         STORE.donor.is=true;
         const st = String(member.status||member.donorStatus||"pending").toLowerCase();
         STORE.donor.status = st==="approved" ? "approved" : "pending";
-        STORE.donor.donorId = member.donorId || member.id || STORE.donor.donorId || newDonorId();
+        /* Donor UID শুধু approved হলে রাখা হয়; pending হলে approve-র আগে না রাখা */
+        STORE.donor.donorId = st==="approved" ? (member.donorId || member.id || STORE.donor.donorId || "") : "";
         STORE.donor.bloodGroup = member.bloodGroup || member.group || STORE.donor.bloodGroup;
         if(member.lastDonationDate) STORE.donor.lastDonation = member.lastDonationDate;
         else if(member.lastDonation) STORE.donor.lastDonation = member.lastDonation;
@@ -6568,7 +6704,8 @@ function initPage() {
         const q = allQ.find(x=> x.kind==="donor" && String(x.ownerUid)===String(uid)) || allQ.find(x=> String(x.uid)===String(uid) && x.group);
         if(q){
           STORE.donor.is=true; STORE.donor.status="pending";
-          STORE.donor.donorId = q.donorId || q.id || q.memberId || STORE.donor.donorId || newDonorId();
+          /* pending queue — Donor UID এখনো তৈরি হয়নি; approve-র পরে Admin সেট করবে */
+          STORE.donor.donorId = "";
           STORE.donor.bloodGroup = q.group || q.bloodGroup || STORE.donor.bloodGroup;
           if(q.last) STORE.donor.lastDonation = q.last;
           else if(q.lastDonation) STORE.donor.lastDonation = q.lastDonation;

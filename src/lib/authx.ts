@@ -474,23 +474,14 @@ export async function ensureUserProfile(
     base.status = "active";
     base.createdAt = nowIso();
     if (!base.donorStatus && bloodGroup) base.donorStatus = "pending";
-    if (!base.donorId && bloodGroup) {
-      let n = 0;
-      const src = String(user.uid);
-      for (let i = 0; i < src.length; i++) n = (n * 31 + src.charCodeAt(i)) >>> 0;
-      base.donorId = `CBDC-${new Date().getFullYear()}-${String((n % 9999) + 1).padStart(4, "0")}`;
-    }
+    /* Account তৈরির সময় Donor UID তৈরি হয় না।
+       Donor UID শুধু Admin/Moderator Approve করে Donor List-এ যুক্ত করার সময় নির্ধারিত হয়। */
     await setRow(NODES.users, user.uid, base);
     return;
   }
   // existing থাকলে donorStatus যদি আগে না থাকে কিন্তু এখন bloodGroup আসছে, pending করে দাও
   if (!existing.donorStatus && bloodGroup && !base.donorStatus) base.donorStatus = "pending";
-  if (!existing.donorId && bloodGroup && !base.donorId) {
-    let n = 0;
-    const src = String(user.uid);
-    for (let i = 0; i < src.length; i++) n = (n * 31 + src.charCodeAt(i)) >>> 0;
-    base.donorId = `CBDC-${new Date().getFullYear()}-${String((n % 9999) + 1).padStart(4, "0")}`;
-  }
+  /* ইতিমধ্যে থাকা donorId কখনো পরিবর্তন/তৈরি করা হয় না — approval-এর সময় Admin নিজে সেট করে। */
   await updateRow(NODES.users, user.uid, base);
 }
 

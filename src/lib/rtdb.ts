@@ -29,6 +29,7 @@ import {
   orderByChild,
   equalTo,
   limitToFirst,
+  runTransaction,
   serverTimestamp as rtdbServerTimestamp,
   type Database,
   type Query,
@@ -45,6 +46,41 @@ export const nowIso = (): string => new Date().toISOString();
 
 function db(): Database | null {
   return getRtdb();
+}
+
+/** Donor UID-এর serial counter node — `_meta/donorCounter/<year>`-এ ধারাবাহিক নম্বর। */
+export const DONOR_COUNTER_NODE = "_meta/donorCounter";
+
+/** RTDB-তে ফরম্যাট করা Donor UID: CBDC-<year>-<0001> */
+export function formatDonorId(seq: number | string, year: number = new Date().getFullYear()): string {
+  return `CBDC-${year}-${String(Number(seq) || 0).padStart(4, "0")}`;
+}
+
+/**
+ * পরবর্তী ধারাবাহিক Donor UID তৈরি করে (যেমন CBDC-2026-0001, CBDC-2026-0002 …)।
+ * Realtime Database-এ atomic transaction (`_meta/donorCounter/<year>`) ব্যবহার করা হয়,
+ * তাই একসাথে অনেকগুলো Account তৈরি হলেও কোনো নম্বর duplicate হয় না।
+ * কোথাও random/number-from-uid ব্যবহার হয় না।
+ */
+export async function nextDonorId(year: number = new Date().getFullYear()): Promise<string> {
+  const d = db();
+  if (!d) throw new Error("Realtime Database সংযোগ নেই।");
+  const counterRef = ref(d, `${DONOR_COUNTER_NODE}/${year}`);
+  let seq = 1;
+  try {
+    const res = await runTransaction(counterRef, (current) => {
+      const n = Number(current ?? 0) || 0;
+      return n + 1;
+    }, { applyLocally: false });
+    const val = res?.snapshot?.val();
+    seq = Math.max(1, Number(val ?? 1) || 1);
+  } catch (e) {
+    console.warn("nextDonorId transaction failed:", (e as Error)?.message);
+    // Transaction ব্যর্থ হলে আমরা কখনোই random UID তৈরি করি না —
+    // কারণ সিরিয়াল ভেঙে যাবে। স্পষ্ট error দিয়ে ফিরে আসি।
+    throw new Error("Donor UID তৈরি করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।");
+  }
+  return formatDonorId(seq, year);
 }
 
 /** RTDB snapshot map → `{id, ...value}` array (নাল-নিরাপদ)। */
