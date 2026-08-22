@@ -11,6 +11,16 @@
       }
     },
 
+    "_meta": {
+      ".read": true,
+      "donorCounter": {
+        "$year": {
+          ".write": "auth != null && newData.isNumber() && newData.val() >= 0",
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        }
+      }
+    },
+
     "requests": {
       ".read": true,
       ".indexOn": ["status", "bloodGroup", "createdAt", "ownerUid"],

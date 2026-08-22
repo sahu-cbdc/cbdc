@@ -18,7 +18,7 @@ import {
   loadUserProfile,
   isProfileComplete,
 } from "../lib/authx";
-import { getRow, setRow, updateRow, watchRow, addRow, findBy, listOnce, nowIso, updatePaths } from "../lib/rtdb";
+import { getRow, setRow, updateRow, watchRow, addRow, findBy, listOnce, nowIso, updatePaths, nextDonorId } from "../lib/rtdb";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
@@ -5618,7 +5618,10 @@ function initPage() {
       d.whatsapp=s.q("#bc_wa").value.trim()||"";
       d.appliedAt=iso(now());
       d.available=true;
-      d.donorId=d.donorId||newDonorId();       /* uid থেকে স্থির — duplicate হয় না */
+      if(!d.donorId){
+        try{ d.donorId=await newDonorId(); }  /* সিরিয়াল; একবার তৈরি হলে স্থায়ী */
+        catch(err){ btn.disabled=false; btn.textContent="জমা দিন"; toast(authErrorMessage(err,{fallback:"Donor UID তৈরি করা যায়নি। আবার চেষ্টা করুন।"}),"er"); return; }
+      }
       save();                                   /* localStorage + queue (shared/RTDB) + users/{uid} */
       logAct("রক্তদাতা হিসেবে যুক্ত হন",d.bloodGroup+" · যাচাইয়ের অপেক্ষায়","donor");
       s.close();
@@ -6461,12 +6464,11 @@ function initPage() {
      No default identity ships with the app, so on the very first open we ask for
      the minimum an account needs. Everything else is filled in later, from the
      screen that owns it. */
-  /* club ID for a brand-new donor: CBDC-<year>-<4 digits derived from the uid> */
-  function newDonorId(){
-    const y=new Date().getFullYear();
-    let n=0;const src=STORE.account.uid||String(Date.now());
-    for(let i=0;i<src.length;i++)n=(n*31+src.charCodeAt(i))>>>0;
-    return `CBDC-${y}-${String(n%9999+1).padStart(4,"0")}`;
+  /* club ID for a brand-new donor: CBDC-<year>-<4-digit serial>
+     Serial নম্বর RTDB-র atomic counter থেকে আসে — random/uid-hash কখনোই নয়।
+     একবার তৈরি হলে `d.donorId` স্থায়ী থাকে, পরের login/update-এ পরিবর্তন হয় না। */
+  async function newDonorId(){
+    return await nextDonorId();
   }
   function needsSetup(){return !isProfileComplete(STORE.account)}
   function sheetSetup(){
@@ -6658,7 +6660,7 @@ function initPage() {
       }catch(e){}
       if(donor){
         STORE.donor.is=true; STORE.donor.status="approved";
-        STORE.donor.donorId = donor.id || donor.donorId || STORE.donor.donorId || newDonorId();
+        STORE.donor.donorId = donor.id || donor.donorId || STORE.donor.donorId || (await newDonorId());
         STORE.donor.bloodGroup = donor.bloodGroup || donor.group || STORE.donor.bloodGroup;
         if(donor.lastDonationDate) STORE.donor.lastDonation = donor.lastDonationDate;
         else if(donor.lastDonation) STORE.donor.lastDonation = donor.lastDonation;
@@ -6683,7 +6685,7 @@ function initPage() {
         STORE.donor.is=true;
         const st = String(member.status||member.donorStatus||"pending").toLowerCase();
         STORE.donor.status = st==="approved" ? "approved" : "pending";
-        STORE.donor.donorId = member.donorId || member.id || STORE.donor.donorId || newDonorId();
+        STORE.donor.donorId = member.donorId || member.id || STORE.donor.donorId || (await newDonorId());
         STORE.donor.bloodGroup = member.bloodGroup || member.group || STORE.donor.bloodGroup;
         if(member.lastDonationDate) STORE.donor.lastDonation = member.lastDonationDate;
         else if(member.lastDonation) STORE.donor.lastDonation = member.lastDonation;
@@ -6701,7 +6703,7 @@ function initPage() {
         const q = allQ.find(x=> x.kind==="donor" && String(x.ownerUid)===String(uid)) || allQ.find(x=> String(x.uid)===String(uid) && x.group);
         if(q){
           STORE.donor.is=true; STORE.donor.status="pending";
-          STORE.donor.donorId = q.donorId || q.id || q.memberId || STORE.donor.donorId || newDonorId();
+          STORE.donor.donorId = q.donorId || q.id || q.memberId || STORE.donor.donorId || (await newDonorId());
           STORE.donor.bloodGroup = q.group || q.bloodGroup || STORE.donor.bloodGroup;
           if(q.last) STORE.donor.lastDonation = q.last;
           else if(q.lastDonation) STORE.donor.lastDonation = q.lastDonation;

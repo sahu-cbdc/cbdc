@@ -36,7 +36,7 @@ import {
   type ActionCodeSettings,
 } from "firebase/auth";
 import { NODES } from "./firebase";
-import { getRow, updateRow, setRow, findBy, nowIso } from "./rtdb";
+import { getRow, updateRow, setRow, findBy, nowIso, nextDonorId } from "./rtdb";
 import { isValidDob, toEnglishDigits } from "./age";
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -474,23 +474,15 @@ export async function ensureUserProfile(
     base.status = "active";
     base.createdAt = nowIso();
     if (!base.donorStatus && bloodGroup) base.donorStatus = "pending";
-    if (!base.donorId && bloodGroup) {
-      let n = 0;
-      const src = String(user.uid);
-      for (let i = 0; i < src.length; i++) n = (n * 31 + src.charCodeAt(i)) >>> 0;
-      base.donorId = `CBDC-${new Date().getFullYear()}-${String((n % 9999) + 1).padStart(4, "0")}`;
-    }
+    /* Account তৈরির সিরিয়াল অনুযায়ী স্থায়ী Donor UID — কখনো random/uid-hash নয়। */
+    if (!base.donorId) base.donorId = await nextDonorId();
     await setRow(NODES.users, user.uid, base);
     return;
   }
   // existing থাকলে donorStatus যদি আগে না থাকে কিন্তু এখন bloodGroup আসছে, pending করে দাও
   if (!existing.donorStatus && bloodGroup && !base.donorStatus) base.donorStatus = "pending";
-  if (!existing.donorId && bloodGroup && !base.donorId) {
-    let n = 0;
-    const src = String(user.uid);
-    for (let i = 0; i < src.length; i++) n = (n * 31 + src.charCodeAt(i)) >>> 0;
-    base.donorId = `CBDC-${new Date().getFullYear()}-${String((n % 9999) + 1).padStart(4, "0")}`;
-  }
+  /* আগের UID থাকলে কখনো পরিবর্তন হয় না; শুধু পুরোনো/নতুন account-এ না থাকলে next serial দিই */
+  if (!base.donorId) base.donorId = await nextDonorId();
   await updateRow(NODES.users, user.uid, base);
 }
 
