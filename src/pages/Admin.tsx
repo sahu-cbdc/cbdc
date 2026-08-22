@@ -2395,6 +2395,19 @@ function initPage() {
     try{ if(!document.querySelector(".sheet"))go(CUR,SUB,false,ARG); }catch(e){}
   });
   pullSharedState();persist();
+  /* পুরোনো/ব্যাকফিল: ডোনার রেকর্ডে প্রোফাইল ছবি (ImgBB link) না থাকলে
+     users/{uid}/photoURL থেকে এক-বার অনুলিপি — পাবলিক প্রোফাইলে সঠিক ছবি দেখাতে */
+  function backfillDonorPhotos(){
+    const missing=DB.donors.filter(d=>!String(d.photo||"").trim()&&d.ownerUid);
+    if(!missing.length)return;
+    Promise.all(missing.map(d=>getRow(NODES.users,d.ownerUid).then(u=>{
+      const ph=String((u&&(u.photoURL||u.photo))||"").trim();
+      if(ph)d.photo=ph;
+    }).catch(()=>{}))).then(()=>{
+      if(DB.donors.some(d=>String(d.photo||"").trim()))persist();
+    });
+  }
+  backfillDonorPhotos();
   function logAudit(act,target,mod){
     DB.audit.unshift({at:new Date().toISOString(),who:ME.name,role:ME.role,act,target,mod});
     if(DB.audit.length>300)DB.audit.length=300;persist();
@@ -3427,12 +3440,21 @@ function initPage() {
       }
       DB.donors.unshift({id:approvedDonorId,
         name:q.name,group:q.group,area:q.area,phone:q.phone,whatsapp:q.whatsapp||q.phone,gender:q.gender,dob:q.dob||"",last:q.last,
-        ownerUid:q.ownerUid||"",available:true,verified:true,suspended:false,joined:iso(now()),donations:q.last?1:0});
+        photo:q.photo||"",ownerUid:q.ownerUid||"",available:true,verified:true,suspended:false,joined:iso(now()),donations:q.last?1:0});
       if(q.ownerUid){
         updateRow(NODES.users, q.ownerUid, {donorStatus:"approved", donorId:approvedDonorId, bloodGroup:q.group||""})
           .catch(e=>console.warn("donor approve user:",e&&e.message));
         if(q.memberId) updateRow(NODES.members, q.memberId, {status:"approved", donorId:approvedDonorId})
           .catch(e=>console.warn("donor approve member:",e&&e.message));
+        /* প্রোফাইল ছবি (ImgBB link) — queue-তে না থাকলে users/{uid}/photoURL থেকে অনুলিপি,
+           যাতে অনুমোদিত ডোনারের পাবলিক প্রোফাইলে সঠিক ছবি দেখায় */
+        getRow(NODES.users, q.ownerUid).then(u=>{
+          const ph=String((u&&(u.photoURL||u.photo))||"").trim();
+          if(ph){
+            const donor=DB.donors.find(x=>x.id===approvedDonorId);
+            if(donor&&!String(donor.photo||"").trim()){donor.photo=ph;persist();}
+          }
+        }).catch(e=>console.warn("donor approve photo:",e&&e.message));
       }
     }
     if(q.kind==="donation"&&ok){const d=DB.donors.find(x=>x.name===q.name);

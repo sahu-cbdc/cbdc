@@ -4060,7 +4060,7 @@ function initPage() {
       if(d.is&&d.status==="pending"){
         const q={kind:"donor",id:qid,donorId:d.donorId,name:a.name,group:d.bloodGroup,area:a.area,
           dob:d.ov.dob||a.dob||"",health:d.health||"",last:d.lastDonation||"",gender:a.gender,
-          phone:a.phone,whatsapp:d.whatsapp||"",ownerUid:owner,at:new Date().toISOString()};
+          phone:a.phone,whatsapp:d.whatsapp||"",photo:a.photo||"",ownerUid:owner,at:new Date().toISOString()};
         oldQ<0?st.queue.unshift(q):st.queue[oldQ]={...st.queue[oldQ],...q};
       }else if(oldQ>=0)st.queue.splice(oldQ,1);
       /* Approved donor records are created only from Admin/Moderator approval.
@@ -4448,7 +4448,7 @@ function initPage() {
     const show=k=>mine||pv[k]!==false;
     return {
       mine, raw:d,
-      name:d.name, photo:d.photo, gender:d.gender, donorId:d.donorId,
+      name:d.name, photo:d.photo||d.photoURL||"", gender:d.gender, donorId:d.donorId,
       verified:d.verified, bio:d.bio||"",
       group:show("showGroup")&&d.group?d.group:null,
       area:show("showArea")&&d.area?d.area:null,
@@ -4536,7 +4536,7 @@ function initPage() {
     if(!v)return;
     if(v.mine){CARD_FOR=null;sheetDownload();return}
     CARD_FOR={name:v.name,gender:v.raw.gender,area:v.area,phone:v.phone,
-      photo:v.raw.photo||"",donorId:v.donorId,group:v.group,
+      photo:v.photo||"",donorId:v.donorId,group:v.group,
       age:v.age,lastDonation:v.last};
     const s=sheetDownload();
     /* whichever way the sheet closes, the subject must go back to me */
@@ -4558,7 +4558,8 @@ function initPage() {
     el.innerHTML=`
       <div class="pcard">
         <div class="phead2">
-          <img class="pav" src="${AV(v.gender,v.photo)}" alt="">
+          <img class="pav" src="${AV(v.gender,v.photo)}" alt="" data-ph="${AV(v.gender,"")}"
+            onerror="this.onerror=null;this.src=this.dataset.ph">
           ${v.group?`<span class="pgrp">${esc(v.group)}</span>`:""}
         </div>
         <div class="pnm">
@@ -4741,7 +4742,8 @@ function initPage() {
     $("#s-set").innerHTML=`
       <h2 class="ptitle">সেটিংস</h2>
       <button class="card" style="display:block;width:100%;text-align:left" data-sub="account">
-        <div class="per lg"><img src="${AV(a.gender,a.photo)}" alt="">
+        <div class="per lg"><img src="${AV(a.gender,a.photo)}" alt="" data-ph="${AV(a.gender,"")}"
+          onerror="this.onerror=null;this.src=this.dataset.ph">
           <div class="i"><b style="font-size:.95rem">${esc(a.name)}</b>
             <small>${a.username?"@"+esc(a.username):"প্রোফাইল সম্পূর্ণ করুন"}</small><small>${esc(a.email||"")}</small></div>
           <span style="color:var(--mut)">${ICON.right(19)}</span></div></button>
@@ -4765,7 +4767,8 @@ function initPage() {
   
     P.account=()=>`
       <div class="card" style="text-align:center">
-        <img src="${AV(a.gender,a.photo)}" style="width:88px;height:88px;border-radius:50%;object-fit:cover;margin-bottom:11px">
+        <img src="${AV(a.gender,a.photo)}" style="width:88px;height:88px;border-radius:50%;object-fit:cover;margin-bottom:11px"
+          alt="" data-ph="${AV(a.gender,"")}" onerror="this.onerror=null;this.src=this.dataset.ph">
         <div style="display:flex;gap:8px;justify-content:center">
           <button class="btn gh sm" data-act="photo">${ICON.cam(15)} ছবি বদলান</button>
           ${a.photo?`<button class="btn gh sm" data-act="photoRm">সরান</button>`:""}</div>

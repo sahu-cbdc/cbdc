@@ -359,6 +359,8 @@ const toAdminDonor = (d: any) => ({
   joined: d.joined || "",
   donations: Number(d.donations ?? d.totalDonations) || 0,
   whatsapp: d.whatsapp || "",
+  /* প্রোফাইল ছবি (ImgBB link) — admin round-trip-এ কখনো বাদ পড়ে না */
+  photo: d.photo || d.photoURL || "",
   ownerUid: d.ownerUid || d.uid || "",
 });
 
@@ -382,6 +384,7 @@ const fromAdminDonor = (d: any) => ({
   suspended: !!d.suspended,
   joined: d.joined || "",
   occupation: d.occupation || "",
+  photo: d.photo || d.photoURL || "",
   ownerUid: d.ownerUid || "",
 });
 
@@ -390,7 +393,7 @@ const toDonerDonor = (d: any) => ({
   donorId: d.id || d.donorId,
   name: d.name || "",
   gender: d.gender || "",
-  photo: d.photo || "",
+  photo: d.photo || d.photoURL || "",
   group: d.bloodGroup || d.group || "",
   area: d.area || "",
   dob: d.dob || "",
