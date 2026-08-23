@@ -11,7 +11,7 @@ import "../lib/store";
 import { initFirebase as initSharedFirebase, NODES } from "../lib/firebase";
 import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
 import { authErrorMessage, resolveUserRole, panelForRole } from "../lib/authx";
-import { getRow, setRow, updateRow, removeRow, watchList, watchRow, findBy, nowIso, nextDonorId, updatePaths, serverTime } from "../lib/rtdb";
+import { getRow, setRow, updateRow, removeRow, watchList, watchRow, findBy, nowIso, nextDonorId, updatePaths, serverTime, getPath, setPath, removePath, watchPath } from "../lib/rtdb";
 import { ageText, ageFromDob, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
@@ -2284,7 +2284,7 @@ function initPage() {
     "আবেদন":["request.view","request.approve","request.resolve"],
     "ব্যবহারকারী":["user.view","user.suspend","group.approve","report.resolve"],
     "ওয়েবসাইট":["website.view","website.edit","gallery.manage","notice.manage"],
-    "নিয়ন্ত্রণ":["team.view","team.manage","access.manage","settings.manage","audit.view","data.export"]
+    "নিয়ন্ত্রণ":["team.view","team.manage","access.manage","settings.manage","audit.view","data.export","database.manage"]
   };
   const PERMS=Object.values(PERM_GROUPS).flat();
   const ROLES={
@@ -2436,7 +2436,8 @@ function initPage() {
     target:s=>I(`<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.4"/><circle cx="12" cy="12" r="1.1" fill="currentColor"/>`,s),
     moon:s=>I(`<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>`,s),
     more:s=>I(`<circle cx="5" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.7" fill="currentColor" stroke="none"/>`,s),
-    key:s=>I(`<circle cx="7.5" cy="12" r="3.8"/><path d="M11.3 12H21"/><path d="M17.5 12v3.6"/><path d="M20.5 12v2.4"/>`,s)
+    key:s=>I(`<circle cx="7.5" cy="12" r="3.8"/><path d="M11.3 12H21"/><path d="M17.5 12v3.6"/><path d="M20.5 12v2.4"/>`,s),
+    db:s=>I(`<ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/><path d="M4 11.5v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>`,s)
   });
   
   /* ══════════ NAVIGATION ══════════
@@ -2464,6 +2465,7 @@ function initPage() {
     audit:{title:"অডিট লগ",perm:"audit.view"},
     rules:{title:"নিয়ম ও সেটিংস",perm:"settings.manage"},
     access:{title:"অ্যাক্সেস ও ভূমিকা",perm:"access.manage"},
+    database:{title:"ডেটাবেস ব্যবস্থাপনা",perm:"database.manage"},
     search:{title:"খুঁজুন",perm:null}
   };
   let CUR="home", SUB=null, ARG=null;
@@ -3380,7 +3382,7 @@ function initPage() {
     "report.resolve":"অভিযোগ নিষ্পত্তি","website.view":"ওয়েবসাইট দেখা","website.edit":"ওয়েবসাইট সম্পাদনা",
     "gallery.manage":"গ্যালারি ব্যবস্থাপনা","notice.manage":"নোটিশ ব্যবস্থাপনা",
     "team.view":"টিম দেখা","team.manage":"ভূমিকা বদল","settings.manage":"সেটিংস বদল",
-    "audit.view":"অডিট লগ দেখা","data.export":"তথ্য রপ্তানি"
+    "audit.view":"অডিট লগ দেখা","data.export":"তথ্য রপ্তানি","database.manage":"ডেটাবেস ব্যবস্থাপনা"
   };
   
   /* ══════════════════ SCREEN 1: HOME ══════════════════ */
@@ -3780,10 +3782,8 @@ function initPage() {
         row("access.manage","access","key","অ্যাক্সেস ও ভূমিকা","কাকে অ্যাডমিন বা মডারেটর করবেন",""),
         row("team.view","team","shield","টিম ও ভূমিকা","কে কী করতে পারবে",""),
         row("settings.manage","rules","gear","নিয়ম ও সেটিংস","বয়স, বিশ্রাম, অনুমোদন, সংযোগ","")])
-    +sect("ওয়েবসাইট",[
-        row("website.view","site","globe","হোমপেজ ও তথ্য","শিরোনাম, যোগাযোগ, কোন অংশ দেখাবে",""),
-        row("website.view","gallery","cam","গ্যালারি","ছবি যোগ, প্রকাশ বা লুকানো",bn(DB.gallery.length)),
-        row("website.view","notice","bell","নোটিশ ও ঘোষণা","ওয়েবসাইট ও অ্যাপে পাঠান",bn(DB.notices.length))])
+    +sect("ডেটাবেস",[
+        row("database.manage","database","db","ডেটাবেস ব্যবস্থাপনা","Firebase Realtime Database — সব node দেখুন ও সম্পাদনা করুন","")])
     +sect("বিশ্লেষণ",[
         row("donor.view","stats","chart","পরিসংখ্যান","গ্রুপ, এলাকা, প্রবণতা",""),
         row("audit.view","audit","file","অডিট লগ","কে কখন কী করেছে",bn(DB.audit.length)),
@@ -4665,6 +4665,418 @@ function initPage() {
       toast(ok?"ওয়েবসাইট হালনাগাদ হয়েছে":"সেভ করা যায়নি — dev সার্ভার (npm run dev) চালু নেই",ok?"ok":"er")};
   };
   
+  /* ══════════════════════════════════════════════════════════════
+     DATABASE MANAGER — Firebase Realtime Database-এর সরাসরি দর্শন ও সম্পাদনা
+     • সব মূল node (NODES) লিস্ট হিসেবে দেখায়, expand করলে লোড হয় (lazy)
+     • প্রতিটি node/child দেখা, সম্পাদনা, যোগ, মুছা, rename
+     • সব মানের ধরন: string/number/boolean/null/object/array + raw JSON
+     • Security Rules পুরোপুরি কাজ করে — permission না থাকলে Firebase-ই বাধা দেবে
+     • কোনো RTDB data স্বয়ংক্রিয়ভাবে বদলানো/মুছা/মাইগ্রেট হয় না — শুধু admin-এর নিজের ক্লিকে
+     ══════════════════════════════════════════════════════════════ */
+  const DB_ROOTS=Object.keys(NODES);
+  const DB_MAX_CHILDREN=120;
+  const _DEL={};  /* sentinel: in-memory value deletion */
+  let dbEl=null, dbValues={}, dbOpen=new Set(), dbLoading=new Set(), dbErrors={}, dbQuery="";
+
+  /* একটি value-র RTDB ধরন */
+  function dbType(v){
+    if(v===null)return "null";
+    if(Array.isArray(v))return "array";
+    const t=typeof v;
+    if(t==="object")return "object";
+    if(t==="number")return "number";
+    if(t==="boolean")return "boolean";
+    if(t==="string")return "string";
+    return "unknown";
+  }
+  /* container-এ child-সংখ্যা (circular-safe) */
+  function dbCount(v){
+    if(!v||typeof v!=="object")return 0;
+    try{return Object.keys(v).length;}catch(e){return 0;}
+  }
+  /* scalar value-র সংক্ষিপ্ত প্রিভিউ (object/array এর জন্য count) */
+  function dbPreview(v){
+    const t=dbType(v);
+    if(t==="null")return "null";
+    if(t==="object"||t==="array")return `${dbCount(v)}টি আইটেম`;
+    if(t==="string"){const s=v;return s.length>60?s.slice(0,60)+"…":s.length?s:'""';}
+    return String(v);
+  }
+  function dbTypeTag(t){
+    const m={object:["b","object"],array:["b","array"],string:["m","টেক্সট"],
+      number:["a","সংখ্যা"],boolean:["g","বুলিয়ান"],null:["m","null"],unknown:["m","?"]};
+    const [c,lb]=m[t]||["m",t];
+    return `<span class="tag ${c}">${lb}</span>`;
+  }
+  /* child keys: array index ছাড়া বাকিগুলো সাজানো (numeric-aware) */
+  function dbSortKeys(v){
+    const keys=Object.keys(v||{});
+    keys.sort((a,b)=>{
+      const an=/^\d+$/.test(a),bn=/^\d+$/.test(b);
+      if(an&&bn)return Number(a)-Number(b);
+      if(an)return 1;
+      if(bn)return -1;
+      return a.localeCompare(b,"en",{numeric:true});
+    });
+    return keys;
+  }
+  function dbRootOf(path){return path.split("/")[0];}
+  /* ইন-মেমরি root value থেকে নির্দিষ্ট পথের value বের করো */
+  function dbValueAt(path){
+    const root=dbRootOf(path);
+    const rv=dbValues[root];
+    if(rv===undefined)return undefined;
+    if(path===root)return rv;
+    const segs=path.split("/").slice(1);
+    let cur=rv;
+    for(const s of segs){
+      if(cur==null||typeof cur!=="object")return undefined;
+      cur=cur[s];
+    }
+    return cur;
+  }
+  /* লোকাল value-ট্রি আশাবাদীভাবে আপডেট (network round-trip ছাড়া) */
+  function dbApplyLocal(path,newVal){
+    const root=dbRootOf(path);
+    if(path===root){
+      if(newVal===_DEL){delete dbValues[root];dbOpen.delete(root);}
+      else dbValues[root]=newVal;
+      return;
+    }
+    const rv=dbValues[root];
+    if(!rv||typeof rv!=="object")return;
+    const segs=path.split("/").slice(1);
+    let cur=rv;
+    for(let i=0;i<segs.length-1;i++){
+      if(!cur[segs[i]]||typeof cur[segs[i]]!=="object"){return;}
+      cur=cur[segs[i]];
+    }
+    const last=segs[segs.length-1];
+    if(newVal===_DEL)delete cur[last];
+    else cur[last]=newVal;
+  }
+  /* একটি মূল node লোড করো (RTDB পুরো subtree একসাথে দেয়) */
+  async function dbLoadRoot(root){
+    dbLoading.add(root);delete dbErrors[root];dbRender();
+    try{
+      const v=await getPath(root);
+      dbValues[root]=v;dbOpen.add(root);
+    }catch(e){
+      dbErrors[root]=(e&&e.message)||String(e);
+    }finally{
+      dbLoading.delete(root);dbRender();
+    }
+  }
+  /* expand/collapse (বা scalar হলে সম্পাদনা) */
+  function dbToggle(path){
+    const root=dbRootOf(path);
+    if(!(root in dbValues)){dbLoadRoot(root);return;}
+    const val=dbValueAt(path);
+    if(val&&typeof val==="object"){
+      if(dbOpen.has(path))dbOpen.delete(path);else dbOpen.add(path);
+      dbRender();
+    }else{
+      dbEditSheet(path);
+    }
+  }
+  /* tree-র ভেতরে delegated click — action আগে, toggle পরে */
+  function dbClick(e){
+    const actEl=e.target.closest("[data-act]");
+    if(actEl){
+      const a=actEl.dataset.act,p=actEl.dataset.p||"";
+      if(a==="edit")dbEditSheet(p);
+      else if(a==="add")dbAddSheet(p);
+      else if(a==="rename")dbRenameSheet(p);
+      else if(a==="del")dbDelete(p);
+      else if(a==="retry"){const r=dbRootOf(p);delete dbErrors[r];dbLoadRoot(r);}
+      return;
+    }
+    const tg=e.target.closest("[data-toggle]");
+    if(tg)dbToggle(tg.dataset.toggle);
+  }
+  /* রিফ্রেশ: আগে লোড করা সব node আবার লোড */
+  async function dbRefresh(){
+    const roots=Object.keys(dbValues);
+    if(!roots.length){toast("কিছু লোড করা হয়নি","er");return;}
+    for(const r of roots){delete dbValues[r];}
+    dbOpen.clear();dbErrors={};dbRender();
+    for(const r of roots){await dbLoadRoot(r);}
+    toast("রিফ্রেশ হয়েছে","ok");
+  }
+  function dbRender(){
+    const tree=dbEl&&dbEl.querySelector("#dbtree");
+    if(tree)tree.innerHTML=dbTreeHtml();
+  }
+  function dbTreeHtml(){
+    if(dbQuery.trim())return dbSearchHtml();
+    return DB_ROOTS.map(r=>{
+      if(dbLoading.has(r))return dbRowHtml(r,0,undefined,"loading");
+      if(r in dbErrors)return dbRowHtml(r,0,undefined,"error");
+      if(!(r in dbValues))return dbRowHtml(r,0,undefined,"unloaded");
+      return dbRowHtml(r,0,dbValues[r],"loaded");
+    }).join("");
+  }
+  function chevR(s){return I('<path d="M9 5l7 7-7 7"/>',s);}
+  function chevD(s){return I('<path d="M5 9l7 7 7-7"/>',s);}
+  function actBtn(a,p){
+    const ic={edit:SI.edit(13),add:SI.plus(13),rename:SI.key(13),del:SI.trash(13),retry:SI.refresh(13)}[a];
+    const tt={edit:"সম্পাদনা",add:"চাইল্ড যোগ",rename:"rename",del:"মুছুন",retry:"আবার"}[a];
+    return `<button class="btn gh sm" title="${esc(tt)}" data-act="${a}" data-p="${esc(p)}" style="min-height:34px;padding:6px 8px">${ic}</button>`;
+  }
+  function addChildRow(path,depth){
+    const pad=10+depth*16;
+    return `<div style="padding:8px ${pad}px;border-bottom:1px solid var(--line);cursor:pointer" data-act="add" data-p="${esc(path)}">
+      <span style="display:inline-flex;align-items:center;gap:6px;color:var(--grn);font-size:.77rem;font-weight:700">${SI.plus(13)} চাইল্ড যোগ করুন</span></div>`;
+  }
+  function dbRowHtml(path,depth,val,state){
+    const key=path.split("/").pop();
+    const pad=10+depth*16;
+    let chev,metaHtml,acts="";
+    if(state==="unloaded"){
+      chev=chevR(13);
+      metaHtml=`<span class="tag m">ক্লিক করে লোড করুন</span>`;
+    }else if(state==="loading"){
+      chev=SI.refresh(13);
+      metaHtml=`<span style="color:var(--mut)">লোড হচ্ছে…</span>`;
+    }else if(state==="error"){
+      chev=SI.warn(13);
+      metaHtml=`<span class="tag r">ত্রুটি</span><span style="color:var(--red-d);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(String(dbErrors[dbRootOf(path)]||"").slice(0,100))}</span>`;
+      acts=actBtn("retry",path)+actBtn("del",path);
+    }else{
+      const t=dbType(val);
+      const isC=(t==="object"||t==="array");
+      const open=dbOpen.has(path);
+      chev=isC?(open?chevD(13):chevR(13)):'<span style="color:var(--line)">•</span>';
+      const after=isC
+        ?(dbCount(val)?`<span style="color:var(--mut)">${bn(dbCount(val))}টি</span>`:`<span class="tag a">খালি</span>`)
+        :`<span style="font-family:monospace;color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(dbPreview(val))}</span>`;
+      metaHtml=dbTypeTag(t)+after;
+      acts=actBtn("edit",path)+(isC?actBtn("add",path):"")+(depth>0?actBtn("rename",path):"")+actBtn("del",path);
+    }
+    let html=`<div style="display:flex;align-items:center;gap:7px;padding:8px 10px;padding-left:${pad}px;border-bottom:1px solid var(--line);cursor:pointer" data-toggle="${esc(path)}">`
+      +`<span style="flex:none;color:var(--mut);width:16px;display:grid;place-items:center;overflow:hidden">${chev}</span>`
+      +`<span style="flex:none;font-weight:700;font-size:.8rem;font-family:monospace;max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(key)}</span>`
+      +`<span style="flex:1;min-width:0;font-size:.73rem;display:flex;align-items:center;gap:6px;overflow:hidden">${metaHtml}</span>`
+      +`<span style="flex:none;display:flex;gap:1px">${acts}</span>`
+      +`</div>`;
+    if(state==="loaded"){
+      const t=dbType(val);
+      if((t==="object"||t==="array")&&dbOpen.has(path)){
+        const keys=dbSortKeys(val);
+        const shown=keys.slice(0,DB_MAX_CHILDREN);
+        html+=shown.map(k=>dbRowHtml(path+"/"+k,depth+1,val[k],"loaded")).join("");
+        if(keys.length>DB_MAX_CHILDREN){
+          const mp=10+(depth+1)*16;
+          html+=`<div style="padding:7px ${mp}px;color:var(--mut);font-size:.72rem;border-bottom:1px solid var(--line)">… আরও ${bn(keys.length-DB_MAX_CHILDREN)}টি (প্রথম ${bn(DB_MAX_CHILDREN)}টি দেখানো হয়েছে)</div>`;
+        }
+        html+=addChildRow(path,depth+1);
+      }
+    }
+    return html;
+  }
+  /* search: শুধু লোড করা node-গুলোর key-এর ভেতরে খোঁজে */
+  function dbSearchHtml(){
+    const q=dbQuery.trim().toLowerCase();
+    const out=[];
+    for(const root of Object.keys(dbValues))dbCollect(root,dbValues[root],q,out);
+    if(!out.length){
+      return `<div class="card"><div class="empty"><div class="ic">${SI.search(26)}</div><b>কিছু পাওয়া যায়নি</b><p>শুধু লোড করা (expand করা) node-এর ভেতরেই খোঁজা হয়। উপরের মূল node গুলো expand করলে আরও ফলাফল আসবে।</p></div></div>`;
+    }
+    out.sort((a,b)=>a.path.localeCompare(b.path,"en",{numeric:true}));
+    return `<div style="padding:8px 12px;color:var(--mut);font-size:.74rem;border-bottom:1px solid var(--line)">${bn(out.length)}টি মিল (লোড করা node-এ)</div>`
+      +out.map(o=>{
+        const t=dbType(o.val);
+        const prev=o.val&&typeof o.val==="object"?`${bn(dbCount(o.val))}টি আইটেম`:dbPreview(o.val);
+        return `<div style="display:flex;align-items:center;gap:7px;padding:9px 12px;border-bottom:1px solid var(--line);cursor:pointer" data-toggle="${esc(o.path)}">
+          <span style="flex:none;color:var(--grn)">${SI.search(13)}</span>
+          <span style="flex:none;font-weight:700;font-size:.8rem;font-family:monospace">${esc(o.path.split("/").pop())}</span>
+          ${dbTypeTag(t)}
+          <span style="flex:1;min-width:0;font-size:.72rem;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(prev)} <span style="color:var(--line)">·</span> /${esc(o.path)}</span>
+          <span style="flex:none;display:flex;gap:1px">${actBtn("edit",o.path)+actBtn("del",o.path)}</span></div>`;
+      }).join("");
+  }
+  function dbCollect(path,val,q,out){
+    if(val&&typeof val==="object"){
+      for(const k of Object.keys(val)){
+        const cp=path+"/"+k,cv=val[k];
+        if(String(k).toLowerCase().includes(q))out.push({path:cp,val:cv});
+        if(cv&&typeof cv==="object")dbCollect(cp,cv,q,out);
+      }
+    }
+  }
+  /* ---------- value editor (sheet) ---------- */
+  function dbEditorHtml(v,pre){
+    const has=v!==undefined&&v!==null;
+    const t=has?dbType(v):"string";
+    const init=(t==="object"||t==="array")?"json":t;
+    const TYPES=[["string","টেক্সট"],["number","সংখ্যা"],["boolean","বুলিয়ান"],["null","শূন্য"],["json","JSON"]];
+    const seg=`<div class="strip seg" id="${pre}_seg">${TYPES.map(([k,lb])=>`<button data-ty="${k}" class="${k===init?"on":""}">${lb}</button>`).join("")}</div>`;
+    const fld=(ty,inner,extra)=>`<div class="f" data-field="${ty}" style="${init!==ty?"display:none":""}margin-top:10px">${inner}${extra||""}</div>`;
+    const strVal=t==="string"?String(v??""):"";
+    const numVal=t==="number"?String(v):"";
+    const boolVal=t==="boolean"?(v?"true":"false"):"false";
+    const jsonVal=(t==="object"||t==="array")?JSON.stringify(v,null,2)
+      :(t==="string"?JSON.stringify(String(v??""))
+      :((t==="number"||t==="boolean")?String(v):"{}"));
+    return seg
+      +fld("string",`<input id="${pre}_str" value="${esc(strVal)}" placeholder="টেক্সট লিখুন">`)
+      +fld("number",`<input id="${pre}_num" type="number" step="any" value="${esc(numVal)}" placeholder="সংখ্যা">`)
+      +fld("boolean",`<div class="strip seg" id="${pre}_bool"><button data-bv="true" class="${boolVal==="true"?"on":""}">true</button><button data-bv="false" class="${boolVal==="false"?"on":""}">false</button></div>`)
+      +fld("null",`<p class="hint2">মান <b>null</b> — RTDB-তে এই পথ মুছে যাবে।</p>`)
+      +fld("json",`<textarea id="${pre}_json" rows="9" spellcheck="false" style="font-family:monospace;font-size:.78rem">${esc(jsonVal)}</textarea>`,`<small class="hint2">সম্পূর্ণ object/array বা যেকোনো valid JSON।</small>`);
+  }
+  function dbWireEditor(s,pre){
+    const seg=s.q("#"+pre+"_seg");
+    seg.querySelectorAll("button").forEach(b=>b.onclick=()=>{
+      seg.querySelectorAll("button").forEach(x=>x.classList.remove("on"));
+      b.classList.add("on");
+      const ty=b.dataset.ty;
+      s.querySelectorAll("[data-field]").forEach(f=>f.style.display=f.dataset.field===ty?"":"none");
+    });
+    const bs=s.q("#"+pre+"_bool");
+    if(bs)bs.querySelectorAll("button").forEach(b=>b.onclick=()=>{
+      bs.querySelectorAll("button").forEach(x=>x.classList.remove("on"));
+      b.classList.add("on");
+    });
+  }
+  function dbReadEditor(s,pre){
+    const on=s.q("#"+pre+"_seg").querySelector("button.on");
+    if(!on)return {err:"ধরন বেছে নিন"};
+    const ty=on.dataset.ty;
+    if(ty==="string")return {v:s.q("#"+pre+"_str").value};
+    if(ty==="number"){
+      const raw=s.q("#"+pre+"_num").value;
+      if(raw===""||raw==="-"||raw===".")return {v:0};
+      const n=Number(raw);
+      if(!Number.isFinite(n))return {err:"সঠিক সংখ্যা দিন"};
+      return {v:n};
+    }
+    if(ty==="boolean")return {v:s.q("#"+pre+"_bool").querySelector("button.on").dataset.bv==="true"};
+    if(ty==="null")return {v:null};
+    if(ty==="json"){
+      const raw=s.q("#"+pre+"_json").value;
+      try{return {v:JSON.parse(raw)};}
+      catch(e){return {err:"JSON সঠিক নয়: "+(e&&e.message||e)};}
+    }
+    return {err:"ধরন বেছে নিন"};
+  }
+  /* ---------- মুছুন ---------- */
+  async function dbDelete(path){
+    const isRoot=!path.includes("/");
+    const desc=isRoot
+      ?`/${path} সহ এর সমস্ত child মুছে যাবে। এটি একটি মূল node — অত্যন্ত সতর্কতার সাথে।`
+      :`/${path} মুছে ফেলা হবে (সহ সব child)।`;
+    if(!await confirmS({title:"মুছে ফেলবেন?",desc,ok:"মুছে ফেলুন",danger:true}))return;
+    try{await removePath(path);}
+    catch(e){toast("মুছতে ব্যর্থ: "+(e&&e.message||e),"er");return;}
+    dbApplyLocal(path,_DEL);
+    if(isRoot){delete dbValues[path];dbOpen.delete(path);delete dbErrors[path];}
+    dbRender();toast("মুছে ফেলা হয়েছে","ok");
+    logAudit("ডেটাবেস মুছা","/"+path,"database");
+  }
+  /* ---------- সম্পাদনা ---------- */
+  async function dbEditSheet(path){
+    let cur;
+    try{cur=await getPath(path);}
+    catch(e){toast("পড়া যায়নি: "+(e&&e.message||e),"er");return;}
+    const s=sheet("মান সম্পাদনা — /"+path,`
+      <p class="hint2" style="margin-bottom:9px">পথ: <b style="font-family:monospace;word-break:break-all">/${esc(path)}</b></p>
+      ${dbEditorHtml(cur,"ed")}
+      <p class="hint2" style="margin-top:10px;color:var(--amb)">সেভ করলে সরাসরি Realtime Database-এ লেখা হবে। "শূন্য/null" ধরন বেছে নিলে এই পথ মুছে যাবে।</p>`,
+      `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="ed_ok">সংরক্ষণ</button>`);
+    dbWireEditor(s,"ed");
+    s.q("#ed_ok").onclick=async()=>{
+      const r=dbReadEditor(s,"ed");
+      if(r.err)return toast(r.err,"er");
+      if(!await confirmS({title:"সেভ করবেন?",desc:`/${path} এই মান দিয়ে প্রতিস্থাপন হবে।`,ok:"সেভ",danger:true}))return;
+      try{await setPath(path,r.v);}
+      catch(e){toast("সেভ ব্যর্থ: "+(e&&e.message||e),"er");return;}
+      dbApplyLocal(path,r.v===null?_DEL:r.v);
+      s.close();dbRender();toast("সংরক্ষণ হয়েছে","ok");
+      logAudit("ডেটাবেস সম্পাদনা","/"+path,"database");
+    };
+  }
+  /* ---------- চাইল্ড যোগ ---------- */
+  async function dbAddSheet(parentPath){
+    let parent;
+    try{parent=await getPath(parentPath);}
+    catch(e){toast("পড়া যায়নি: "+(e&&e.message||e),"er");return;}
+    const isArr=Array.isArray(parent);
+    const s=sheet("নতুন চাইল্ড — /"+parentPath,`
+      <p class="hint2" style="margin-bottom:9px">parent: <b style="font-family:monospace;word-break:break-all">/${esc(parentPath)}</b> (${isArr?"array":"object"})</p>
+      ${isArr?"":`<div class="f"><label>key <i>*</i></label><input id="ad_k" placeholder="যেমন: name"></div>`}
+      ${dbEditorHtml(undefined,"ad")}
+      <p class="hint2" style="margin-top:8px">${isArr?"array-তে শেষে যোগ হবে।":"এই key-তে মান সেভ হবে।"}</p>`,
+      `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="ad_ok">যোগ করুন</button>`);
+    dbWireEditor(s,"ad");
+    s.q("#ad_ok").onclick=async()=>{
+      const r=dbReadEditor(s,"ad");
+      if(r.err)return toast(r.err,"er");
+      let key;
+      if(isArr){key=Array.isArray(parent)?parent.length:0;}
+      else{
+        key=(s.q("#ad_k").value||"").trim();
+        if(!key)return toast("key দিন","er");
+        if(/[.#$\[\]]/.test(key))return toast("key-এ . # $ [ ] অক্ষর চলবে না","er");
+      }
+      const childPath=parentPath+"/"+key;
+      if(!await confirmS({title:"যোগ করবেন?",desc:`/${childPath} তৈরি হবে।`,ok:"যোগ"}))return;
+      try{await setPath(childPath,r.v);}
+      catch(e){toast("যোগ ব্যর্থ: "+(e&&e.message||e),"er");return;}
+      dbApplyLocal(childPath,r.v===null?_DEL:r.v);
+      dbOpen.add(parentPath);
+      s.close();dbRender();toast("যোগ হয়েছে","ok");
+      logAudit("ডেটাবেস চাইল্ড যোগ","/"+childPath,"database");
+    };
+  }
+  /* ---------- rename ---------- */
+  async function dbRenameSheet(path){
+    const segs=path.split("/");const oldKey=segs.pop();const parent=segs.join("/");
+    let cur;
+    try{cur=await getPath(path);}
+    catch(e){toast("পড়া যায়নি: "+(e&&e.message||e),"er");return;}
+    const s=sheet("পথ পরিবর্তন (rename)",`
+      <p class="hint2">বর্তমান: <b style="font-family:monospace;word-break:break-all">/${esc(path)}</b></p>
+      <div class="f" style="margin-top:8px"><label>নতুন key <i>*</i></label><input id="rn_k" value="${esc(oldKey)}"></div>
+      <p class="hint2" style="color:var(--amb);margin-top:6px">সতর্কতা: rename একসাথে (atomic) হয় না — প্রথমে নতুন key-তে মান লেখা হয়, তারপর পুরোনোটি মুছে যায়।</p>`,
+      `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="rn_ok">পরিবর্তন</button>`);
+    s.q("#rn_ok").onclick=async()=>{
+      const nk=(s.q("#rn_k").value||"").trim();
+      if(!nk)return toast("key দিন","er");
+      if(nk===oldKey)return toast("একই key, কিছু বদলানো হয়নি","er");
+      if(/[.#$\[\]]/.test(nk))return toast("key-এ . # $ [ ] অক্ষর চলবে না","er");
+      const realNp=parent+"/"+nk;
+      if(!await confirmS({title:"rename করবেন?",desc:`/${path} → /${realNp}`,ok:"পরিবর্তন",danger:true}))return;
+      try{
+        await setPath(realNp,cur===undefined?null:cur);
+        await removePath(path);
+      }catch(e){toast("rename ব্যর্থ: "+(e&&e.message||e),"er");return;}
+      dbApplyLocal(path,_DEL);
+      dbApplyLocal(realNp,cur);
+      s.close();dbRender();toast("পরিবর্তন হয়েছে","ok");
+      logAudit("ডেটাবেস rename",`/${path} → /${realNp}`,"database");
+    };
+  }
+  /* ---------- ডেটাবেস পেজ ---------- */
+  SUBP.database=el=>{
+    dbEl=el;
+    el.innerHTML=ptitle("ডেটাবেস ব্যবস্থাপনা","Firebase Realtime Database — সরাসরি দেখুন ও সম্পাদনা করুন")
+    +`<div class="note w">${SI.warn(17)}<span><b>শুধু অ্যাডমিন।</b> এখানকার প্রতিটি পরিবর্তন সরাসরি Realtime Database-এ লেখা হয় এবং সাথে সাথে কার্যকর হয়। সাবধানে ব্যবহার করুন — Security Rules কাজ করবে, তাই permission না থাকলে Firebase নিজেই error দেখাবে।</span></div>`
+    +`<div class="frow">
+        <input class="gw" id="dbq" value="${esc(dbQuery)}" placeholder="লোড করা node-এ key দিয়ে খুঁজুন…" autocomplete="off">
+        <button class="btn gh" id="dbr">${SI.refresh(15)} রিফ্রেশ</button>
+      </div>`
+    +`<p class="hint2" style="margin-bottom:8px">${bn(DB_ROOTS.length)}টি মূল node। যেকোনো node ক্লিক করে expand করুন (expand করলে সেটি লোড হয়)।</p>`
+    +`<div class="card pad0" id="dbtree"></div>`
+    +`<p class="hint2" style="margin-top:8px">মূল node: ${DB_ROOTS.map(r=>`<span class="tag" style="margin:2px">${esc(r)}</span>`).join("")}</p>`;
+    let t;
+    const qi=$("#dbq");
+    qi.oninput=e=>{clearTimeout(t);const v=e.target.value;t=setTimeout(()=>{dbQuery=v;dbRender();},250);};
+    $("#dbr").onclick=dbRefresh;
+    $("#dbtree").onclick=dbClick;
+    dbRender();
+  };
+  
   /* ---------- gallery ---------- */
   SUBP.gallery=el=>{
     const may=can("gallery.manage");
@@ -4848,7 +5260,7 @@ function initPage() {
   /* ---------- audit ---------- */
   SUBP.audit=el=>{
     const mods={donor:"ডোনার",donation:"রক্তদান",request:"আবেদন",gallery:"গ্যালারি",
-      team:"টিম",website:"ওয়েবসাইট",notice:"নোটিশ",data:"তথ্য",settings:"সেটিংস"};
+      team:"টিম",website:"ওয়েবসাইট",notice:"নোটিশ",data:"তথ্য",settings:"সেটিংস",database:"ডেটাবেস"};
     const list=DB.audit.filter(a=>!aFil||a.mod===aFil);
     el.innerHTML=`<div class="strip chips" id="afil">
         <button class="${aFil===""?"on":""}" data-f="">সব</button>
