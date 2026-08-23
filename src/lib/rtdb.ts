@@ -216,14 +216,15 @@ export async function updateRow(node: string, id: string, patch: Record<string, 
 /** রেকর্ড মুছে ফেলা — যুক্ত সব স্ক্রিন থেকেই সঙ্গে সঙ্গে চলে যায়। */
 export async function removeRow(node: string, id: string): Promise<void> {
   const d = db();
-  if (!d) return;
+  if (!d) throw new Error("Realtime Database সংযোগ নেই।");
   await remove(child(ref(d, node), String(id)));
 }
 
 /** একটি রেকর্ডের numeric field atomic ভাবে বাড়ায় — যেমন applicationCount। */
 export async function incrementField(node: string, id: string, field: string, amount = 1): Promise<number> {
   const d = db();
-  if (!d || !id || !field) return 0;
+  if (!d) throw new Error("Realtime Database সংযোগ নেই。");
+  if (!id || !field) throw new Error("RTDB field is required.");
   const target = child(child(ref(d, node), String(id)), field);
   const result = await runTransaction(target, (current) => {
     const value = Number(current ?? 0);
@@ -235,7 +236,8 @@ export async function incrementField(node: string, id: string, field: string, am
 /** numeric field-কে কমপক্ষে নির্দিষ্ট মানে atomic ভাবে আনে। */
 export async function ensureFieldAtLeast(node: string, id: string, field: string, minimum: number): Promise<number> {
   const d = db();
-  if (!d || !id || !field) return 0;
+  if (!d) throw new Error("Realtime Database সংযোগ নেই。");
+  if (!id || !field) throw new Error("RTDB field is required.");
   const target = child(child(ref(d, node), String(id)), field);
   const floor = Math.max(0, Number(minimum) || 0);
   const result = await runTransaction(target, (current) => {
@@ -248,7 +250,7 @@ export async function ensureFieldAtLeast(node: string, id: string, field: string
 /** একাধিক path একসাথে (atomic) আপডেট — যেমন `{"users/u1/role":"admin"}`। */
 export async function updatePaths(paths: Record<string, any>): Promise<void> {
   const d = db();
-  if (!d) return;
+  if (!d) throw new Error("Realtime Database সংযোগ নেই।");
   await rtdbUpdate(ref(d), paths);
 }
 

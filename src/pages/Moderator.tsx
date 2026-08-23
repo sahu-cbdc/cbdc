@@ -17,6 +17,7 @@ import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERR
 import { logoUrl, applyLogo } from "../config/logo";
 import { uploadImage as imgbbUploadImage } from "../lib/imgbb";
 import SITE from "../config/site";
+import { noticeVisibleTo, noticeReadKey, markNoticeRead, markAllNoticesRead, watchNoticeReads } from "../lib/notice";
 
 /* ═══════════════════════════════════════════════════════════════════
    CSS — মূল moderator.html-এর <style> ব্লক হুবহু কপি
@@ -2328,7 +2329,10 @@ function initPage() {
         heroText:SITE.hero.text,
         phone:SITE.phone,email:SITE.email,address:SITE.address,
         facebook:SITE.facebookHandle,showStats:SITE.showStats,showGallery:SITE.showGallery,showEmergency:SITE.showEmergency},
-      rules:{minAge:SITE.rules.minAge,maxAge:SITE.rules.maxAge,interval:SITE.rules.interval,donorApproval:true,reqApproval:true},
+      rules:{minAge:SITE.rules.minAge,maxAge:SITE.rules.maxAge,interval:SITE.rules.interval,
+        donorApproval:true,emergencyApproval:true,bloodGroupApproval:true,
+        /* legacy key retained for old settings rows */
+        reqApproval:true},
       integr:{imgbbKey:"",firebase:true}};
   }
   let DB=seed(), SHARED_PULLING=false;
@@ -2372,16 +2376,15 @@ function initPage() {
   let SETTINGS_PULLING=false;
   function persist(){
     publishSharedState();
-    if(!SETTINGS_PULLING)queueMicrotask(pushSettings);
+    if(!SETTINGS_PULLING&&ME.role==="admin")queueMicrotask(()=>pushSettings().catch(e=>console.warn("settings push:",e&&e.message)));
   }
   async function pushSettings(){
+    if(ME.role!=="admin")throw new Error("Only an authorized Admin may change approval settings.");
     if(SETTINGS_PULLING)return;
-    try{
-      await setRow(NODES.settings,"app",{
-        rules:DB.rules||{},
-        autoApproveEmergency:!(DB.rules&&DB.rules.reqApproval)
-      });
-    }catch(e){ console.warn("settings push:", e && e.message); }
+    await setRow(NODES.settings,"app",{
+      rules:DB.rules||{},
+      autoApproveEmergency:DB.rules&&DB.rules.emergencyApproval===false
+    });
   }
   /* settings live listener — এক প্যানেলে বদলালে অন্য প্যানেল ও ওয়েবসাইটেও সাথে সাথে
      (শুধু rules — ওয়েবসাইট site-সেটিংস এখানে নেই, সেগুলো src/config/site.ts থেকে আসে) */
@@ -2390,6 +2393,10 @@ function initPage() {
     if(!app)return;
     SETTINGS_PULLING=true;
     if(app.rules&&typeof app.rules==="object")Object.assign(DB.rules,app.rules);
+    if(app.rules?.emergencyApproval===undefined && typeof app.autoApproveEmergency==="boolean")
+      DB.rules.emergencyApproval=!app.autoApproveEmergency;
+    if(DB.rules.reqApproval===undefined && DB.rules.emergencyApproval!==undefined)
+      DB.rules.reqApproval=DB.rules.emergencyApproval;
     SETTINGS_PULLING=false;
     try{ if(!document.querySelector(".sheet"))go(CUR,SUB,false,ARG); }catch(e){}
   });
@@ -2531,6 +2538,10 @@ function initPage() {
   window.addEventListener("hashchange",reRoute); /* পুরোনো #hash লিংক compat */
   
   /* ══════════ notification panel (same shape as the app's) ══════════ */
+  let NOTICE_READS={};
+  let stopNoticeReads=()=>{};
+  const moderatorNotices=()=>DB.notices.filter(n=>noticeVisibleTo(n,"moderator"));
+  const noticeUnread=n=>!NOTICE_READS[noticeReadKey(n.id)];
   function openNotifs(){
     const items=[];
     DB.queue.filter(q=>q.kind==="request").forEach(q=>items.push({ic:"warn",cl:"var(--red)",
@@ -2540,6 +2551,12 @@ function initPage() {
       b:"নতুন ডোনার আবেদন",s:q.name+" · "+q.group,at:q.at,go:()=>{wTab="donor";go("work")}}));
     DB.messages.filter(m=>!m.read).forEach(m=>items.push({ic:"mail",cl:"var(--blu)",
       b:"নতুন বার্তা",s:m.name+" — "+m.text.slice(0,40),at:m.at,go:()=>go(CUR,"inbox")}));
+    moderatorNotices().forEach(n=>items.push({ic:"bell",cl:"var(--blu)",
+      b:n.title||"নোটিশ",s:(n.body||"").slice(0,80)+(noticeUnread(n)?" · নতুন":""),at:n.updatedAt||n.createdAt||new Date().toISOString(),
+      noticeId:n.id,go:async()=>{
+        try{await markNoticeRead(ME.uid,n.id);NOTICE_READS[noticeReadKey(n.id)]=true;paintTop();}catch(e){toast("নোটিশ পড়া হিসেবে চিহ্নিত করা যায়নি","er");}
+        sheet(n.title||"নোটিশ",`<p style="white-space:pre-wrap;line-height:1.9">${esc(n.body||"")}</p>`,`<button class="btn gh" data-close>বন্ধ</button>`);
+      }}));
     const low=GROUPS.filter(g=>bloodCounts()[g]<3);
     if(low.length)items.push({ic:"drop",cl:"var(--amb)",b:"রক্তের ঘাটতি",
       s:low.join(", ")+" গ্রুপে ৩ জনের কম প্রস্তুত",at:new Date().toISOString(),go:()=>go(CUR,"stats")});
@@ -2552,8 +2569,15 @@ function initPage() {
           <span class="rt">${timeAgo(x.at)}</span></button>`).join("")}</div>`
       : `<div class="empty"><div class="ic">${SI.check(26)}</div><b>নতুন কিছু নেই</b>
          <p>সব কাজ শেষ — চমৎকার!</p></div>`,
-      `<button class="btn gh w" data-close>বন্ধ</button>`);
-    s.querySelectorAll("[data-n]").forEach(b=>b.onclick=()=>{s.close();items[+b.dataset.n].go()});
+      `<button class="btn gh" data-close>বন্ধ</button>${moderatorNotices().some(noticeUnread)?`<button class="btn" id="markNoticeAll">সব notice পড়া</button>`:""}`);
+    s.querySelectorAll("[data-n]").forEach(b=>b.onclick=async()=>{s.close();await items[+b.dataset.n].go()});
+    s.q("#markNoticeAll")?.addEventListener("click",async()=>{
+      try{
+        await markAllNoticesRead(ME.uid,moderatorNotices().map(n=>n.id));
+        moderatorNotices().forEach(n=>NOTICE_READS[noticeReadKey(n.id)]=true);
+        s.close();paintTop();toast("সব notice পড়া হিসেবে চিহ্নিত হয়েছে","ok");
+      }catch(e){toast("notice read state সংরক্ষণ করা যায়নি","er");}
+    });
   }
   
   /* ══════════ shared bits ══════════ */
@@ -2798,6 +2822,12 @@ function initPage() {
   /* replaces the plain object created in the data block */
   ME=Object.assign(loadMe(),{role:ME.role||PANEL.role});
   if(!ROLES[ME.role])ME.role=PANEL.role;
+  function watchModeratorNoticeReads(){
+    stopNoticeReads();
+    if(!ME.uid)return;
+    stopNoticeReads=watchNoticeReads(ME.uid,reads=>{NOTICE_READS=reads||{};paintTop();});
+  }
+  watchModeratorNoticeReads();
   
   /* ---------- small shared rows (same look as app.html) ---------- */
   const sRow=(t,v,act,flag)=>`<button class="row" data-act="${act}">
@@ -3585,11 +3615,13 @@ function initPage() {
     s.querySelectorAll("#rj_chips button").forEach(b=>b.onclick=()=>{
       s.querySelectorAll("#rj_chips button").forEach(x=>x.classList.remove("on"));
       b.classList.add("on");const t=s.q("#rj_txt");if(!t.value.trim())t.value=b.dataset.r});
-    s.q("#rj_ok").onclick=()=>{
+    s.q("#rj_ok").onclick=async()=>{
       const txt=s.q("#rj_txt").value.trim();
       if(!txt)return toast("কারণ লিখতে হবে","er");
-      ids.forEach(id=>{ void decide(id,false,txt,true); });
-      persist();s.close();after?after():RENDER.work();paintNav();paintTop();
+      const btn=s.q("#rj_ok");btn.disabled=true;
+      const results=await Promise.all(ids.map(id=>decide(id,false,txt,true)));
+      if(results.some(x=>x!==true)){btn.disabled=false;return toast("এক বা একাধিক পরিবর্তন RTDB-তে সংরক্ষণ করা যায়নি","er");}
+      s.close();after?after():RENDER.work();paintNav();paintTop();
       toast(bn(ids.length)+"টি বাতিল করা হয়েছে")};
   }
   /* বাতিল করা জরুরি আবেদনের status ব্যবহারকারীর "আমার আবেদন"-এ (users/{uid}/data/mine)
@@ -3621,53 +3653,46 @@ function initPage() {
   async function decide(id,ok,note,quiet){
     const i=DB.queue.findIndex(x=>x.id===id);if(i<0)return;
     const q=DB.queue[i];
-    if(q.kind==="donor"&&ok){
-      let approvedDonorId = q.donorId || "";
-      if(!approvedDonorId){
-        try{ approvedDonorId = await nextDonorId(); }
-        catch(e){
-          console.warn("donor id:",e&&e.message);
-          toast("Donor UID তৈরি করা যায়নি — অনুমোদন সম্পন্ন হয়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।","er");
-          return;
+    const paths={};
+    let approvedDonorId="", approvedDonor=null, approvedDonation=null, approvedRequest=null, approvedGroup=null;
+    try{
+      if(q.kind==="donor"&&ok){
+        approvedDonorId=String(q.donorId||"");
+        if(!approvedDonorId)approvedDonorId=await nextDonorId();
+        const at=nowIso(), count=q.last?1:0;
+        approvedDonor={id:approvedDonorId,donorId:approvedDonorId,uid:q.ownerUid||"",ownerUid:q.ownerUid||"",
+          name:q.name||"",bloodGroup:q.group||"",group:q.group||"",area:q.area||"",phone:q.phone||"",
+          whatsapp:q.whatsapp||q.phone||"",gender:q.gender||"",dob:q.dob||"",lastDonationDate:q.last||"",
+          status:"approved",available:true,verified:true,suspended:false,joined:at,photo:q.photo||"",
+          donations:count,totalDonations:count,createdAt:at,updatedAt:at};
+        paths[`donors/${approvedDonorId}`]=approvedDonor;
+        if(q.ownerUid){
+          paths[`users/${q.ownerUid}/donorStatus`]="approved";
+          paths[`users/${q.ownerUid}/donorId`]=approvedDonorId;
+          paths[`users/${q.ownerUid}/bloodGroup`]=q.group||"";
+          if(q.memberId){paths[`members/${q.memberId}/status`]="approved";paths[`members/${q.memberId}/donorId`]=approvedDonorId;}
         }
-      }
-      DB.donors.unshift({id:approvedDonorId,
-        name:q.name,group:q.group,area:q.area,phone:q.phone,whatsapp:q.whatsapp||q.phone,gender:q.gender,dob:q.dob||"",last:q.last,
-        photo:q.photo||"",ownerUid:q.ownerUid||"",available:true,verified:true,suspended:false,joined:iso(now()),donations:q.last?1:0});
-      if(q.ownerUid){
-        updateRow(NODES.users, q.ownerUid, {donorStatus:"approved", donorId:approvedDonorId, bloodGroup:q.group||""})
-          .catch(e=>console.warn("donor approve user:",e&&e.message));
-        if(q.memberId) updateRow(NODES.members, q.memberId, {status:"approved", donorId:approvedDonorId})
-          .catch(e=>console.warn("donor approve member:",e&&e.message));
-        /* প্রোফাইল ছবি (ImgBB link) — queue-তে না থাকলে users/{uid}/photoURL থেকে অনুলিপি */
-        getRow(NODES.users, q.ownerUid).then(u=>{
-          const ph=String((u&&(u.photoURL||u.photo))||"").trim();
-          if(ph){
-            const donor=DB.donors.find(x=>x.id===approvedDonorId);
-            if(donor&&!String(donor.photo||"").trim()){donor.photo=ph;persist();}
-          }
-        }).catch(e=>console.warn("donor approve photo:",e&&e.message));
-      }
-    }
-    if(q.kind==="donation"&&ok){const d=DB.donors.find(x=>x.name===q.name);
-      if(d){d.donations++;if(!d.last||q.date>d.last)d.last=q.date}}
-    if(q.kind==="request"&&ok){
-      DB.live.unshift({id:q.id,patient:q.patient,group:q.group,bags:q.bags,
-        urgency:q.urgency,status:"searching",responders:0,hospital:q.hospital,area:q.area,requester:q.requester||"স্বজন",
-        phone:q.phone,whatsapp:q.whatsapp||q.phone,expiresAt:q.expiresAt||"",at:new Date().toISOString(),
-        ownerUid:q.ownerUid||""});
-    }
-    if(q.kind==="group"&&ok){
-      const d=(q.ownerUid&&DB.donors.find(x=>String(x.ownerUid)===String(q.ownerUid)))||DB.donors.find(x=>x.name===q.name);
-      if(d)d.group=q.to;
-      /* অনুমোদনের পর স্থায়ীভাবে আপডেট — users/{uid} ও donors নোডে; এরপরই ডোনার
-         প্যানেল ও মূল ওয়েবসাইটে নতুন গ্রুপ realtime-এ দেখা যায় */
-      if(q.ownerUid){
-        /* Keep account, public donor and decision state in one atomic RTDB update. */
-        try{
-          const donor=await findBy(NODES.donors, "ownerUid", q.ownerUid);
+      } else if(q.kind==="donation"&&ok){
+        const d=DB.donors.find(x=>x.id===q.donorId||x.name===q.name);
+        if(d){
+          const count=(Number(d.donations)||0)+1;
+          approvedDonation={d,count,last:!d.last||q.date>d.last?q.date:d.last};
+          paths[`donors/${d.id}/donations`]=count;
+          paths[`donors/${d.id}/totalDonations`]=count;
+          if(approvedDonation.last)paths[`donors/${d.id}/lastDonationDate`]=approvedDonation.last;
+        }
+      } else if(q.kind==="request"&&ok){
+        approvedRequest={id:q.id,patient:q.patient,group:q.group,bags:q.bags,urgency:q.urgency,status:"searching",
+          responders:0,hospital:q.hospital,area:q.area,requester:q.requester||"স্বজন",phone:q.phone,
+          whatsapp:q.whatsapp||q.phone||"",expiresAt:q.expiresAt||"",at:q.at||nowIso(),ownerUid:q.ownerUid||""};
+        paths[`requests/${q.id}/status`]="approved";
+        paths[`requests/${q.id}/workflowStatus`]="searching";
+      } else if(q.kind==="group"&&ok){
+        if(q.ownerUid){
+          const donor=await findBy(NODES.donors,"ownerUid",q.ownerUid);
           if(!donor||!donor.id)throw new Error("অনুমোদিত ডোনার রেকর্ড পাওয়া যায়নি");
-          const decidedAt=new Date().toISOString(),paths={};
+          approvedGroup={ownerUid:q.ownerUid,donorId:donor.id,to:q.to};
+          const decidedAt=nowIso();
           paths[`users/${q.ownerUid}/bloodGroup`]=q.to;
           paths[`users/${q.ownerUid}/donorStatus`]="approved";
           paths[`users/${q.ownerUid}/groupChange/status`]="approved";
@@ -3676,27 +3701,57 @@ function initPage() {
           if(note)paths[`users/${q.ownerUid}/groupChange/note`]=String(note).slice(0,200);
           paths[`donors/${donor.id}/bloodGroup`]=q.to;
           paths[`donors/${donor.id}/group`]=q.to;
-          await updatePaths(paths);
-        }catch(e){
-          console.warn("atomic group approval:",e&&e.message);
-          toast("রক্তের গ্রুপ একসাথে হালনাগাদ করা যায়নি — আবেদনটি আবার চেষ্টা করুন।","er");
-          return;
         }
       }
+
+      if(!ok){
+        const owner=String(q.ownerUid||q.uid||"").trim();
+        if(q.kind==="request"){
+          paths[`requests/${q.id}/status`]="rejected";
+          if(owner){
+            const u=await getRow(NODES.users,owner);
+            const mine=Array.isArray(u&&u.data&&u.data.mine)?u.data.mine:[];
+            const mi=mine.findIndex(m=>String(m&&m.id||"")===String(q.id));
+            if(mi>=0){paths[`users/${owner}/data/mine/${mi}/status`]="rejected";
+              if(note)paths[`users/${owner}/data/mine/${mi}/rejectNote`]=String(note).slice(0,200);}
+          }
+        }
+        if(q.kind==="group"&&owner){
+          paths[`users/${owner}/groupChange/status`]="rejected";
+          paths[`users/${owner}/groupChange/decidedAt`]=nowIso();
+          paths[`users/${owner}/groupChange/decidedAtTs`]=serverTime();
+          if(note)paths[`users/${owner}/groupChange/note`]=String(note).slice(0,200);
+        }
+        if(q.kind==="donor"&&owner){
+          paths[`users/${owner}/donorStatus`]="rejected";
+          if(q.memberId)paths[`members/${q.memberId}/status`]="rejected";
+        }
+      }
+      paths[`queue/${id}`]=null;
+      /* All moderation effects and queue removal commit before any success UI. */
+      await updatePaths(paths);
+    }catch(e){
+      console.warn("moderation write:",e&&e.message);
+      if(!quiet)toast("RTDB-তে পরিবর্তন সংরক্ষণ করা যায়নি — কোনো সফলতা দেখানো হয়নি","er");
+      return false;
     }
-    if(!ok){
-      /* বাতিলের status main RTDB data-তে (users/{uid}/data/mine) লেখা হয় —
-         ডোনার প্যানেল সেটি দেখে নিজের notification তৈরি করে (আলাদা storage-এ) */
-      const owner=String(q.ownerUid||q.uid||"").trim();
-      if(q.kind==="request"&&owner)markRequestRejected(owner,q.id,note);
-      /* গ্রুপ-বদল অনুরোধ বাতিল — status Rejected; রক্তের গ্রুপ অপরিবর্তিত থাকে */
-      if(q.kind==="group"&&owner)markGroupChangeStatus(owner,"rejected",note);
+
+    /* Local state is only changed after the atomic RTDB operation succeeds. */
+    if(approvedDonor){
+      DB.donors.unshift({id:approvedDonor.id,name:approvedDonor.name,group:approvedDonor.group,area:approvedDonor.area,
+        phone:approvedDonor.phone,whatsapp:approvedDonor.whatsapp,gender:approvedDonor.gender,dob:approvedDonor.dob,
+        last:approvedDonor.lastDonationDate,photo:approvedDonor.photo,ownerUid:approvedDonor.ownerUid,available:true,
+        verified:true,suspended:false,joined:approvedDonor.joined,donations:approvedDonor.donations});
     }
+    if(approvedDonation){approvedDonation.d.donations=approvedDonation.count;approvedDonation.d.last=approvedDonation.last;}
+    if(approvedRequest)DB.live.unshift(approvedRequest);
+    if(approvedGroup){const d=DB.donors.find(x=>String(x.ownerUid)===String(approvedGroup.ownerUid));if(d)d.group=approvedGroup.to;}
     DB.queue.splice(i,1);
     logAudit(ok?QK[q.kind].t+" অনুমোদন":QK[q.kind].t+" বাতিল",id+(note?" — "+note.slice(0,40):""),q.kind);
     if(!quiet){persist();RENDER.work();paintNav();paintTop();toast(ok?"অনুমোদন করা হয়েছে":"বাতিল করা হয়েছে",ok?"ok":"")}
+    return true;
   }
-  
+
   /* ══════════════════ SCREEN 3: PEOPLE ══════════════════ */
   RENDER.people=()=>{
     const el=$("#s-people");
@@ -4852,11 +4907,15 @@ function initPage() {
       </div>
       <p class="hint2" style="margin-top:9px">এই নিয়মগুলো আবেদন যাচাইয়ের সময় সতর্কতা হিসেবে দেখানো হয়।</p></div>
       <div class="sec-t">অনুমোদন প্রক্রিয়া</div>
-      <div class="card pad0">${[["donorApproval","নতুন ডোনার অনুমোদন লাগবে"],["reqApproval","জরুরি আবেদন অনুমোদন লাগবে"]]
-        .map(([k,t])=>`<label class="row" style="cursor:pointer">
-          <span class="tx"><b>${t}</b><small>${r[k]?"চালু":"বন্ধ"}</small></span>
-          <input type="checkbox" data-rl="${k}" ${r[k]?"checked":""}
+      <div class="card pad0">${[
+        ["donorApproval","নতুন ডোনার approval","নতুন valid Donor application-এ approval লাগবে"],
+        ["emergencyApproval","Emergency approval","নতুন জরুরি আবেদন approval queue-তে যাবে"],
+        ["bloodGroupApproval","Blood Group change approval","রক্তের গ্রুপ বদলালে approval লাগবে"]
+      ].map(([k,t,help])=>`<label class="row" style="cursor:${ME.role==="admin"?"pointer":"default"}">
+          <span class="tx"><b>${t}</b><small>${help} · ${r[k]!==false?"চালু":"বন্ধ"}</small></span>
+          <input type="checkbox" data-rl="${k}" ${r[k]!==false?"checked":""} ${ME.role!=="admin"?"disabled":""}
             style="width:20px;height:20px;accent-color:var(--grn);flex:none"></label>`).join("")}</div>
+      ${ME.role!=="admin"?`<p class="hint2" style="margin-top:8px">এই approval সেটিংস শুধু authorized Admin পরিবর্তন করতে পারবেন।</p>`:""}
       <div class="sec-t">সংযোগ</div>
       <div class="card"><div class="f">
         <label>ImgBB API কী</label><input id="i_key" value="${esc(DB.integr.imgbbKey)}"></div>
@@ -4870,13 +4929,23 @@ function initPage() {
           <div><span>অপেক্ষমাণ</span><b>${bn(DB.queue.length)}</b></div>
           <div><span>অডিট রেকর্ড</span><b>${bn(DB.audit.length)}</b></div>
           <div><span>সংরক্ষণ</span><b>Firebase Cloud</b></div></div></div>
-      <button class="btn w" style="margin-top:12px" id="rSave">${SI.check(16)} সংরক্ষণ করুন</button>`;
-    el.querySelectorAll("[data-rl]").forEach(c=>c.onchange=()=>{r[c.dataset.rl]=c.checked;persist();renderSub("rules")});
-    $("#rSave").onclick=()=>{
+      <button class="btn w" style="margin-top:12px" id="rSave" ${ME.role!=="admin"?"disabled":""}>${SI.check(16)} সংরক্ষণ করুন</button>`;
+    el.querySelectorAll("[data-rl]").forEach(c=>c.onchange=async()=>{
+      if(ME.role!=="admin")return;
+      const key=c.dataset.rl,previous=r[key];r[key]=c.checked;
+      if(key==="emergencyApproval")r.reqApproval=r.emergencyApproval;
+      c.disabled=true;
+      try{await pushSettings();logAudit("অনুমোদন সেটিংস হালনাগাদ",key+" → "+(c.checked?"ON":"OFF"),"settings");
+        toast("সেটিংস RTDB-তে সংরক্ষিত হয়েছে","ok");renderSub("rules");}
+      catch(e){r[key]=previous;if(key==="emergencyApproval")r.reqApproval=previous;c.checked=!!previous;
+        toast("সেটিংস সংরক্ষণ করা যায়নি","er");}
+    });
+    $("#rSave").onclick=async()=>{
       r.minAge=+$("#r_min").value||18;r.maxAge=+$("#r_max").value||60;r.interval=+$("#r_int").value||90;
       DB.integr.imgbbKey=$("#i_key").value.trim();
-      logAudit("সেটিংস হালনাগাদ","নিয়ম ও সংযোগ","settings");persist();
-      toast("সেটিংস সংরক্ষিত","ok")};
+      try{await pushSettings();logAudit("সেটিংস হালনাগাদ","নিয়ম ও সংযোগ","settings");
+        toast("সেটিংস RTDB-তে সংরক্ষিত হয়েছে","ok");}
+      catch(e){toast("সেটিংস সংরক্ষণ করা যায়নি","er");}};
   };
   
   /* ---------- global search ---------- */
@@ -4971,7 +5040,7 @@ function initPage() {
           saveMe();
           /* live sync — নিজের অ্যাকাউন্ট (users/{uid}), টিম (admins),
              অডিট লগ ও বার্তা: সব RTDB থেকে, সব প্যানেলে একই তথ্য */
-          watchMe(user.uid);watchTeam();watchAudit();watchMessages();
+          watchMe(user.uid);watchModeratorNoticeReads();watchTeam();watchAudit();watchMessages();
           applyLogo(document);
           paintTop();paintNav();
           proceed();
