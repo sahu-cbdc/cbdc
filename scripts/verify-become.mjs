@@ -198,7 +198,38 @@ await new Promise((r) => setTimeout(r, 100));
 check("pending user sees status instead of duplicate form", $("#s-become").classList.contains("on") && !$("#becomeForm") && $("#s-become").textContent.includes("যাচাই করা হচ্ছে"));
 check("pending user can withdraw the application", $("#s-become") && !!$("#s-become").querySelector('[data-act="withdraw"]'));
 
-// ── Scenario 2: already-approved donor sees the approved status page ──
+// ── Scenario 2: account already has a blood group → become form locks it ──
+w.STORE.donor.is = false;
+w.STORE.donor.status = "none";
+w.STORE.donor.donorId = "";
+w.STORE.donor.bloodGroup = "B+";
+w.STORE.donor.lastDonation = "";
+w.STORE.donor.whatsapp = "";
+w.STORE.donor.health = "";
+w.STORE.donor.appliedAt = "";
+w.go("become");
+await new Promise((r) => setTimeout(r, 100));
+const lockedGroup = $("#bc_group");
+check("pre-set account blood group is loaded on become form", !!lockedGroup && lockedGroup.value === "B+");
+check("pre-set account blood group field is disabled/locked", !!lockedGroup && lockedGroup.disabled === true && lockedGroup.getAttribute("data-locked") === "1");
+if (lockedGroup) {
+  // Simulate a malicious/devtools change: submission must still keep the account group.
+  lockedGroup.disabled = false;
+  lockedGroup.value = "A+";
+}
+$("#bc_name").value = "রাহাত আলী";
+$("#bc_gender").value = "পুরুষ";
+$("#bc_dob").value = "1995-03-15";
+$("#bc_area").value = "চকবাজার";
+$("#bc_phone").value = "01612345678";
+$("#bc_last").value = "";
+$("#bc_wa").value = "";
+$("#bc_ok").checked = true;
+$("#becomeForm").dispatchEvent(new w.Event("submit", { bubbles: true, cancelable: true }));
+await new Promise((r) => setTimeout(r, 300));
+check("locked blood group is preserved on donor application submit", w.STORE && w.STORE.donor.bloodGroup === "B+");
+
+// ── Scenario 3: already-approved donor sees the approved status page ──
 w.STORE.donor.is = true;
 w.STORE.donor.status = "approved";
 w.STORE.donor.donorId = "CBDC-2026-0001";

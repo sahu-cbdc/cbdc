@@ -210,21 +210,21 @@ check("pending view shows a readable sent time", sheet && sheet.textContent.incl
 closeSheet();
 await sleep(100);
 
-// ── 3.1 admin approves → row and sheet show Approved, new group live ──
+// ── 3.1 admin approves → pending state disappears, new group live ──
 w.STORE.donor.groupChange.status = "approved";
 w.STORE.donor.groupChange.decidedAt = new Date().toISOString();
 w.STORE.donor.bloodGroup = "B+";
 w.renderSub("donor");
 await sleep(100);
 const bgRowA = $$("#s-sub button.row[data-act='editBloodGroup']")[0];
-check("row shows the approved text after approval", !!bgRowA && bgRowA.textContent.includes("অনুমোদিত"));
+check("row does not keep approved/pending request text after approval", !!bgRowA && !bgRowA.textContent.includes("অনুমোদিত") && !bgRowA.textContent.includes("অপেক্ষমাণ"));
 check("row shows the NEW blood group", !!bgRowA && bgRowA.textContent.includes("B+"));
 if (bgRowA) { bgRowA.click(); await sleep(150); }
 sheet = $(".sheet");
-check("approved view opens (no pending state left)", !!sheet && sheet.textContent.includes("অনুরোধ অনুমোদিত") && !sheet.textContent.includes("অনুরোধ অপেক্ষমাণ"));
-check("approved view names the new group", sheet && sheet.textContent.includes("B+"));
-check("approved view has no 'Invalid Date'", sheet && !sheet.textContent.includes("Invalid Date"));
-check("approved view offers a fresh request", !!$(".sheet #gc_again"));
+check("fresh request form opens after approval (no old status view)", !!sheet && !!$(".sheet #gc_send") && !sheet.textContent.includes("অনুরোধ অপেক্ষমাণ") && !sheet.textContent.includes("অনুরোধ অনুমোদিত"));
+check("fresh request form uses the new group as current group", sheet && sheet.textContent.includes("B+"));
+check("fresh request form has no 'Invalid Date'", sheet && !sheet.textContent.includes("Invalid Date"));
+check("fresh request form offers send button", !!$(".sheet #gc_send"));
 closeSheet();
 await sleep(100);
 

@@ -2796,8 +2796,6 @@ function initPage() {
         ${(()=>{const gc=typeof gcState==="function"?gcState():null;
           const sub=gc&&gc.status==="pending"
             ?`${d.bloodGroup} · পরিবর্তনের অনুরোধ অপেক্ষমাণ (${gc.from||d.bloodGroup} → ${gc.to||""})`
-            :gc&&gc.status==="approved"
-            ?`${d.bloodGroup} · পরিবর্তনের অনুরোধ অনুমোদিত`
             :gc&&gc.status==="rejected"
             ?`${d.bloodGroup} · সর্বশেষ অনুরোধ বাতিল হয়েছে`
             :d.bloodGroup;
@@ -3264,6 +3262,9 @@ function initPage() {
       return;
     }
     const dobBounds_=dobBounds(SITE.rules.minAge,SITE.rules.maxAge);
+    /* Account/Donor profile-এ রক্তের গ্রুপ আগে থেকেই থাকলে এখানে আর বদলানো যাবে না।
+       পরিবর্তন লাগলে শুধু Donor settings → রক্তের গ্রুপ পরিবর্তনের অনুরোধ → Admin approval। */
+    const lockedBloodGroup=GROUPS.includes(d.bloodGroup)?d.bloodGroup:"";
     $("#s-become").innerHTML=`
       <h2 class="ptitle">রক্তদাতা হিসেবে যুক্ত হন<small>নিচের তথ্য পূরণ করে আবেদন জমা দিন — অনুমোদনের পর পাবলিক রক্তদাতা তালিকায় যুক্ত হবেন।</small></h2>
       <div class="card">
@@ -3287,10 +3288,11 @@ function initPage() {
         <div class="f"><label>মোবাইল নম্বর <i>*</i></label>
           <input id="bc_phone" name="bc_phone" value="${esc(a.phone||"")}" inputmode="numeric" maxlength="11"></div>
         <div class="f"><label>রক্তের গ্রুপ <i>*</i></label>
-          <select id="bc_group" name="bc_group">
+          <select id="bc_group" name="bc_group" ${lockedBloodGroup?"disabled aria-disabled=\"true\" data-locked=\"1\"":""}>
             <option value="">রক্তের গ্রুপ নির্বাচন করুন</option>
             ${GROUPS.map(g=>`<option ${d.bloodGroup===g?"selected":""}>${esc(g)}</option>`).join("")}
-          </select></div>
+          </select>
+          ${lockedBloodGroup?`<span class="hint">রক্তের গ্রুপ পরিবর্তন করতে Donor → রক্তের গ্রুপ পরিবর্তনের অনুরোধ থেকে Admin approval request পাঠান।</span>`:""}</div>
         <div class="f"><label>সর্বশেষ রক্তদান <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
           <input id="bc_last" name="bc_last" type="date" max="${iso(now())}" value="${esc(d.lastDonation||"")}">
           <span class="hint">মনে না থাকলে খালি রাখুন।</span></div>
@@ -3328,7 +3330,9 @@ function initPage() {
       a.area=$("#bc_area").value;
       a.phone=$("#bc_phone").value.trim();
       d.is=true; d.status="pending";
-      d.bloodGroup=$("#bc_group").value;
+      /* lockedBloodGroup থাকলে DOM/devtools দিয়ে select বদলালেও account-এর
+         সংরক্ষিত blood group-ই আবেদন ও donor data-তে যাবে। */
+      d.bloodGroup=lockedBloodGroup||$("#bc_group").value;
       d.lastDonation=$("#bc_last").value||"";
       d.health=$("#bc_health").value.trim()||"";
       d.whatsapp=$("#bc_wa").value.trim()||"";
@@ -3737,18 +3741,32 @@ function initPage() {
         ["users/"+uid+"/groupChange/decidedAt"]:gc.decidedAt
       }).catch(e=>console.warn("gc heal:",e&&e.message));
     }
+    /* Approve snapshot আগে এসে bloodGroup snapshot পরে এলেও Donor page যেন
+       পুরোনো/pending state না দেখায় — approved request-এর target group-টাই
+       তখন কার্যকর local value হিসেবে ধরা হয়; RTDB users/donors update পরের
+       snapshot-এ একই value confirm করবে। */
+    if(gc.status==="approved"&&gc.to&&d.bloodGroup!==gc.to){
+      d.bloodGroup=gc.to;
+    }
     return gc;
   }
   /* Sheet খোলা থাকা অবস্থায় Admin Approve/Reject করলে — watchMyProfile-এর
-     callback থেকে এটি ডাকা হয়; pending sheet-টি বন্ধ করে নতুন status-এর
-     view খোলে (form-এ টাইপ চলাকালীন কিছুই স্পর্শ করা হয় না)। */
+     callback থেকে এটি ডাকা হয়। Approve হলে pending popup সম্পূর্ণ বন্ধ হয়ে
+     Donor page স্বাভাবিক অবস্থায় ফিরে আসে; Reject হলে আগের মতো status দেখায়। */
   function refreshGroupChangeSheet(){
     const sh=document.querySelector(".sheet[data-gc='pending']");
     if(!sh)return;
     const gc=gcState();
     if(gc&&gc.status==="pending")return;   /* এখনো pending — কিছু করার নেই */
     try{sh.close();}catch(e){}
-    try{if(CUR==="set")renderSub(SUB);}catch(e){}
+    try{
+      if(gc&&gc.status==="approved"){
+        if(!PUBLIC_MODE)go(CUR,SUB,false);
+        toast("রক্তের গ্রুপ আপডেট হয়েছে","ok");
+        return;
+      }
+      if(CUR==="set")renderSub(SUB);
+    }catch(e){}
     sheetGroupChange();
   }
   function sheetGroupChange(forceForm){
@@ -3792,24 +3810,9 @@ function initPage() {
       };
       return;
     }
-    /* Approved — নতুন গ্রুপ কার্যকর; status view দেখাই (নতুন অনুরোধ চাইলে ফর্মে যাওয়া যায়) */
-    if(gc&&gc.status==="approved"&&!forceForm){
-      const s=sheet("রক্তের গ্রুপ পরিবর্তনের অনুরোধ",`
-        <div class="note g" style="margin-bottom:12px">${ICON.checkC(17)}<span><b>অনুরোধ অনুমোদিত</b> —
-          আপনার নতুন রক্তের গ্রুপ <b>${esc(gc.to||d.bloodGroup)}</b> কার্যকর হয়েছে এবং ডোনার প্যানেল ও
-          মূল ওয়েবসাইটে আপডেট হয়ে গেছে।</span></div>
-        <div class="card pad0" style="margin:0 0 10px">
-          <div class="row"><span class="tx"><b>পরিবর্তন</b><small>${esc(gc.from||"")} → ${esc(gc.to||"")}</small></span>
-            <span class="rt"><span class="pill g">অনুমোদিত</span></span></div>
-          ${(()=>{const t=gcWhen(gc.atTs||gc.at);return t?`<div class="row"><span class="tx"><b>পাঠানো হয়েছে</b><small>${esc(t)}</small></span></div>`:""})()}
-          ${(()=>{const t=gcWhen(gc.decidedAtTs||gc.decidedAt);return t?`<div class="row"><span class="tx"><b>অনুমোদিত হয়েছে</b><small>${esc(t)}</small></span></div>`:""})()}
-        </div>`,
-        `<button class="btn gh" data-close>বন্ধ</button>
-         <button class="btn" id="gc_again">নতুন অনুরোধ পাঠান</button>`);
-      s.dataset.gc="approved";
-      s.q("#gc_again").onclick=()=>{s.close();sheetGroupChange(true);};
-      return;
-    }
+    /* Approved request is not an active/pending state anymore. Once approved,
+       the Donor page stays normal and this action opens the regular new-request
+       form using the freshly effective blood group. */
     /* নতুন অনুরোধ ফর্ম — কারণ ও প্রমাণ (রিপোর্টের ছবি) দুটোই বাধ্যতামূলক */
     const s=sheet("রক্তের গ্রুপ পরিবর্তনের অনুরোধ",`
       ${gc&&gc.status==="rejected"?`<div class="note r" style="margin-bottom:12px">${ICON.x(17)}<span>
@@ -4877,6 +4880,9 @@ function initPage() {
     /* রক্তের গ্রুপ পরিবর্তনের অনুরোধ — একমাত্র উৎস users/{uid}/groupChange।
        Admin Approve/Reject করলে এই field-ই বদলায়, watchRow দিয়ে realtime এখানে আসে। */
     STORE.donor.groupChange = row.groupChange && typeof row.groupChange==="object" ? {...row.groupChange} : null;
+    if(STORE.donor.groupChange&&STORE.donor.groupChange.status==="approved"&&STORE.donor.groupChange.to){
+      STORE.donor.bloodGroup=String(STORE.donor.groupChange.to);
+    }
     if(row.data&&typeof row.data==="object"){
       /* `mine` is applied by setMyApplicationsFromUser() so it is always
          scoped to this Auth UID and merged with the live requests listener. */
