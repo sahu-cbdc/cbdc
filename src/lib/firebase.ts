@@ -120,6 +120,8 @@ export const NODES = {
   notices: "notices", // published notices
   accounts: "accounts", // panel / team account records
   settings: "settings", // app settings (e.g. settings/imgbb — ImgBB API key)
+  audit: "audit",       // panel audit log entries (append-only; staff write)
+  messages: "messages", // website contact-form messages → panel inbox
   _meta: "_meta",       // internal counters (e.g. _meta/donorCounter/<year>)
 } as const;
 
