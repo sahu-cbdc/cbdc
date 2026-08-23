@@ -1691,7 +1691,7 @@ function initPage() {
                               সংরক্ষিত হয়, তাই যেকোনো ডিভাইসে লগইন করলেই পাওয়া যায়
        • localStorage       → শুধু দ্রুত লোডের জন্য cache, উৎস নয় */
   const LS_DATA="cbdc.data";
-  const RAW={ donations:[], incoming:[], mine:[], notifs:[], activity:[], sessions:[], donors:[] };
+  const RAW={ donations:[], incoming:[], mine:[], notifs:[], activity:[], sessions:[], donors:[], notices:[] };
 
   /*
      "আমার আবেদন" is private data.  It must not be reconstructed from the
@@ -1816,6 +1816,7 @@ function initPage() {
     const st=CBDCShared.load();
     RAW.donors=st.donors.filter(d=>d.status!=="pending"&&!d.suspended).map(CBDCShared.toDonerDonor);
     RAW.incoming=st.requests.filter(r=>r.status!=="cancelled"&&r.status!=="resolved").map(requestForDoner);
+    RAW.notices=(st.notices||[]).filter(n=>n.status==="published");
     /* Personal applications are loaded only by watchMyProfile/watchMyApplications
        below.  Never use st.queue or the public shared cache here: either can be
        incomplete for a donor and neither is a safe source for another user's
@@ -1907,6 +1908,14 @@ function initPage() {
     if(!uid)return;
     const seen=loadSeen();
     const d=STORE.donor;
+    /* Published RTDB notices are delivered without removing the legacy notification system. */
+    RAW.notices.forEach(n=>{
+      const target=String(n.target||"all").toLowerCase();
+      if(target!=="all"&&target!=="donor")return;
+      const today=new Date().toISOString().slice(0,10);
+      if(n.from&&today<n.from||n.to&&today>n.to)return;
+      addNotif({id:"notice-"+sanitizeKey(n.id),title:n.title,body:n.body||"",type:"info",ref:n.id,go:"home"});
+    });
     /* প্রথম সিঙ্ক — শুধু baseline ধরি, পুরোনো অবস্থার notification বানাই না */
     if(!seen.booted){
       RAW.mine.forEach(m=>{ if(m&&m.id&&m.status)seen.reqStatus[m.id]=m.status; });

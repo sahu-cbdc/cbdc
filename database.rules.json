@@ -82,7 +82,7 @@
       ".read": "auth != null && root.child('admins').child(auth.uid).exists()",
       "$uid": {
         ".read": "auth != null && $uid === auth.uid",
-        ".write": "auth != null && (root.child('admins').child(auth.uid).child('role').val() === 'admin' || (!newData.exists() && $uid === auth.uid))",
+        ".write": "auth != null && root.child('admins').child(auth.uid).child('role').val() === 'admin'",
         "role": {
           ".validate": "newData.val() === 'admin' || newData.val() === 'moderator'"
         }
@@ -102,14 +102,14 @@
     },
     "accounts": {
       ".read": "auth != null && root.child('admins').child(auth.uid).exists()",
-      ".write": "auth != null && root.child('admins').child(auth.uid).exists()",
+      ".write": "auth != null && root.child('admins').child(auth.uid).child('role').val() === 'admin'",
       ".indexOn": [
         "email",
         "uid",
         "role"
       ],
       "$id": {
-        ".write": "auth != null && (root.child('admins').child(auth.uid).exists() || (!newData.exists() && (data.child('uid').val() === auth.uid || data.child('email').val() === root.child('users').child(auth.uid).child('email').val())))"
+        ".write": "auth != null && root.child('admins').child(auth.uid).child('role').val() === 'admin'"
       }
     },
     "notices": {
@@ -131,7 +131,7 @@
     },
     "settings": {
       ".read": true,
-      ".write": "auth != null && root.child('admins').child(auth.uid).exists()"
+      ".write": "auth != null && root.child('admins').child(auth.uid).child('role').val() === 'admin'"
     },
     "audit": {
       ".read": "auth != null && root.child('admins').child(auth.uid).exists()",
