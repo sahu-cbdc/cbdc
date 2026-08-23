@@ -17,6 +17,8 @@ import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERR
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage, getImgbbKey, saveImgbbKey } from "../lib/imgbb";
+import { deleteAccountCompletely } from "../lib/cloud";
+import { noticeIsActive, noticeTarget } from "../lib/notice";
 
 /* ═══════════════════════════════════════════════════════════════════
    CSS — মূল admin.html-এর <style> ব্লক হুবহু কপি
@@ -2330,13 +2332,17 @@ function initPage() {
         heroText:SITE.hero.text,
         phone:SITE.phone,email:SITE.email,address:SITE.address,
         facebook:SITE.facebookHandle,showStats:SITE.showStats,showGallery:SITE.showGallery,showEmergency:SITE.showEmergency},
-      rules:{minAge:SITE.rules.minAge,maxAge:SITE.rules.maxAge,interval:SITE.rules.interval,donorApproval:true,reqApproval:true},
+      rules:{minAge:SITE.rules.minAge,maxAge:SITE.rules.maxAge,interval:SITE.rules.interval,
+        donorApproval:true,emergencyApproval:true,bloodGroupApproval:true,
+        /* legacy key retained so existing settings continue to work */
+        reqApproval:true},
       integr:{imgbbKey:"",firebase:true}};
   }
   let DB=seed(), SHARED_PULLING=false;
+  let lastPersistedDB=null;
   function publishSharedState(){
-    if(SHARED_PULLING||!window.CBDCShared)return;
-    CBDCShared.update(st=>{
+    if(SHARED_PULLING||!window.CBDCShared)return Promise.resolve();
+    return CBDCShared.updateAsync(st=>{
       st.donors=DB.donors.map(CBDCShared.fromAdminDonor);
       st.queue=DB.queue.map(x=>CBDCShared.clone(x));
       st.requests=DB.live.map(r=>({id:r.id,patientName:r.patient,bloodGroup:r.group,bags:r.bags,
@@ -2366,24 +2372,40 @@ function initPage() {
     DB.notices=st.notices.map(x=>CBDCShared.clone(x));
     if(st.accounts.length)DB.accounts=st.accounts.map(x=>CBDCShared.clone(x));
     SHARED_PULLING=false;
+    lastPersistedDB=CBDCShared.clone(DB);
+  }
+  function restoreLastPersistedDB(){
+    if(!lastPersistedDB)return;
+    Object.keys(DB).forEach(k=>{if(!(k in lastPersistedDB))delete DB[k]});
+    Object.assign(DB,CBDCShared.clone(lastPersistedDB));
   }
   /* persist() — পরিবর্তন Realtime Database-এ। donors/queue/requests/gallery/
      notices/accounts যায় shared store দিয়ে; rules-এর মতো সেটিংস `settings`
      নোডে। ওয়েবসাইট (site) সেটিংস RTDB-তে যায় না — সেগুলো saveSiteToSource()
      সরাসরি Main Website-এর src/config/site.ts-এ লেখে। */
   let SETTINGS_PULLING=false;
+  let persistChain=Promise.resolve();
   function persist(){
-    publishSharedState();
-    if(!SETTINGS_PULLING)queueMicrotask(pushSettings);
+    const run=async()=>{
+      try{
+        const result=await Promise.all([publishSharedState(),auditChain]);
+        lastPersistedDB=CBDCShared.clone(DB);
+        return result;
+      }catch(error){
+        restoreLastPersistedDB();
+        throw error;
+      }
+    };
+    persistChain=persistChain.catch(()=>undefined).then(run);
+    return persistChain;
   }
   async function pushSettings(){
     if(SETTINGS_PULLING)return;
-    try{
-      await setRow(NODES.settings,"app",{
-        rules:DB.rules||{},
-        autoApproveEmergency:!(DB.rules&&DB.rules.reqApproval)
-      });
-    }catch(e){ console.warn("settings push:", e && e.message); }
+    await setRow(NODES.settings,"app",{
+      rules:DB.rules||{},
+      /* keep the old flat key readable by existing website builds */
+      autoApproveEmergency:DB.rules&&DB.rules.emergencyApproval===false
+    });
   }
   /* settings live listener — এক প্যানেলে বদলালে অন্য প্যানেল ও ওয়েবসাইটেও সাথে সাথে
      (শুধু rules — ওয়েবসাইট site-সেটিংস এখানে নেই, সেগুলো src/config/site.ts থেকে আসে) */
@@ -2392,10 +2414,16 @@ function initPage() {
     if(!app)return;
     SETTINGS_PULLING=true;
     if(app.rules&&typeof app.rules==="object")Object.assign(DB.rules,app.rules);
+    /* Old installations only have autoApproveEmergency. Preserve it while the
+       new explicit approval flags are introduced; never touch queue data. */
+    if(app.rules?.emergencyApproval===undefined && typeof app.autoApproveEmergency==="boolean")
+      DB.rules.emergencyApproval=!app.autoApproveEmergency;
+    if(DB.rules.reqApproval===undefined && DB.rules.emergencyApproval!==undefined)
+      DB.rules.reqApproval=DB.rules.emergencyApproval;
     SETTINGS_PULLING=false;
     try{ if(!document.querySelector(".sheet"))go(CUR,SUB,false,ARG); }catch(e){}
   });
-  pullSharedState();persist();
+  pullSharedState();
   /* পুরোনো/ব্যাকফিল: ডোনার রেকর্ডে প্রোফাইল ছবি (ImgBB link) না থাকলে
      users/{uid}/photoURL থেকে এক-বার অনুলিপি — পাবলিক প্রোফাইলে সঠিক ছবি দেখাতে */
   function backfillDonorPhotos(){
@@ -2409,12 +2437,13 @@ function initPage() {
     });
   }
   backfillDonorPhotos();
+  let auditChain=Promise.resolve();
   function logAudit(act,target,mod){
     const e={at:new Date().toISOString(),who:ME.name,role:ME.role,act,target,mod};
     DB.audit.unshift(e);
     if(DB.audit.length>300)DB.audit.length=300;
-    pushAudit(e);   /* RTDB-তে স্থায়ীভাবে থাকে — refresh/login-এর পরেও */
-    persist();
+    auditChain=auditChain.catch(()=>undefined).then(()=>{return pushAudit(e);});
+    return auditChain;
   }
   const maskPhone=p=>can("contact.reveal")?p:String(p).slice(0,5)+"•••••";
   const REST=()=>DB.rules.interval;
@@ -2641,14 +2670,26 @@ function initPage() {
         prefs:Object.assign(defaultMe().prefs,d.prefs||{})})}catch(e){}
     return defaultMe();
   }
-  function saveMe(){try{localStorage.setItem(ACC_LS,JSON.stringify(ME))}catch(e){}
-    const t=DB.team.find(x=>x.uid===ME.uid);
-    if(t){t.name=ME.name;t.role=ME.role;persist()}
-    /* localStorage এখানে শুধু cache — আসল উৎস RTDB (users/{uid}) */
-    if(!ME_PULLING&&ME.uid)queueMicrotask(pushMePanel)}
-  function logMe(title,detail,type="account"){
+  function restoreLastPersistedME(){
+    if(lastPersistedME)Object.assign(ME,CBDCShared.clone(lastPersistedME));
+  }
+  async function saveMe(){
+    try{
+      const t=DB.team.find(x=>x.uid===ME.uid);
+      if(t){t.name=ME.name;t.role=ME.role;await persist()}
+      /* localStorage এখানে শুধু cache — আসল উৎস RTDB (users/{uid}) */
+      if(!ME_PULLING&&ME.uid)await pushMePanel();
+      try{localStorage.setItem(ACC_LS,JSON.stringify(ME))}catch(e){}
+      lastPersistedME=CBDCShared.clone(ME);
+    }catch(error){
+      if(lastPersistedME)Object.assign(ME,CBDCShared.clone(lastPersistedME));
+      throw error;
+    }
+  }
+  async function logMe(title,detail,type="account"){
     ME.activity.unshift({at:new Date().toISOString(),title,detail,type});
-    if(ME.activity.length>60)ME.activity.length=60;saveMe();
+    if(ME.activity.length>60)ME.activity.length=60;
+    await await saveMe();
   }
 
   /* ══════════════════════════════════════════════════════════════
@@ -2662,30 +2703,27 @@ function initPage() {
      শুধু দ্রুত first-paint-এর cache; RTDB-তে মান থাকলে সেটিই জেতে, default
      শুধু fallback। */
   let ME_PULLING=false;
+  let lastPersistedME=null;
   const ME_PROFILE_KEYS=["name","username","phone","dob","gender","area","address",
     "designation","bloodGroup","lastDonation","health","whatsapp"];
   /* প্রোফাইল বদল → users/{uid} (owner-ই লিখছে — rules অনুমোদিত) */
-  function pushMeProfile(patch){
+  async function pushMeProfile(patch){
     if(!ME.uid)return;
     const clean={};
     ME_PROFILE_KEYS.concat(["email","photo","photoURL"]).forEach(k=>{
       if(patch[k]!==undefined)clean[k]=String(patch[k]).trim()});
     if(!Object.keys(clean).length)return;
-    updateRow(NODES.users,ME.uid,clean)
-      .then(()=>syncAdminDonorPublicRecord(clean))
-      .catch(e=>console.warn("profile push:",e&&e.message));
-    /* অ্যাডমিন হলে staff রেকর্ডেও (admins/{uid}) নাম/username/পদবি সদ্য রাখা হয়,
-       যাতে টিম তালিকা ও role resolve সবসময় হালনাগাদ মান দেখে।
-       (rules: admins/{uid} শুধু অ্যাডমিন role আপডেট করতে পারে — না পারলে চুপচাপ
-       থাকে, users/{uid}-ই তখন canonical) */
+    await updateRow(NODES.users,ME.uid,clean);
+    await syncAdminDonorPublicRecord(clean);
+    /* Admin staff metadata is written only after the canonical profile write. */
     if(ME.role==="admin"&&["name","username","designation"].some(k=>clean[k]!==undefined)){
       const ap={updatedAt:nowIso()};
       ["name","username","designation"].forEach(k=>{if(clean[k]!==undefined)ap[k]=clean[k]});
-      updateRow(NODES.admins,ME.uid,ap).catch(e=>console.warn("admins push:",e&&e.message));
+      await updateRow(NODES.admins,ME.uid,ap);
     }
   }
   /* প্যানেল সেটিংস/সেশন/কার্যকলাপ → users/{uid}/data/panel */
-  function pushMePanel(){
+  async function pushMePanel(){
     if(!ME.uid||ME_PULLING)return;
     const paths={};
     paths[`users/${ME.uid}/data/panel`]={
@@ -2693,7 +2731,7 @@ function initPage() {
       isDonor:ME.isDonor!==false,
       sessions:(ME.sessions||[]).slice(0,8),
       activity:(ME.activity||[]).slice(0,60)};
-    updatePaths(paths).catch(e=>console.warn("panel data push:",e&&e.message));
+    await updatePaths(paths);
   }
   /* users/{uid} row → ME। RTDB-তে খালি মান লোকাল cache-কে override করে না। */
   function applyMeRow(row){
@@ -2774,35 +2812,41 @@ function initPage() {
     accountUsers.forEach(u=>{const uid=String(u.uid||u.id);if(!uid)return;by.set(uid,{...by.get(uid),...u,uid,role:by.get(uid)?.role||u.role||"user"});});
     accountAdmins.forEach(a=>{const uid=String(a.uid||a.id);if(!uid)return;by.set(uid,{...by.get(uid),...a,uid,role:a.role||by.get(uid)?.role||"mod",permissions:a.permissions||by.get(uid)?.permissions||[]});});
     DB.accounts=Array.from(by.values()).map(a=>({...a,role:normRole(a.role),phone:a.phone||a.mobile||"",photo:a.photo||a.photoURL||"",status:a.status||"active"}));
-    if(!document.querySelector(".sheet")&&SUB==="access")renderSub("access");
+    /* Build the team from the same two listeners. There is deliberately no
+       second admins fetch: profile changes in users/{uid} also update the
+       existing team row without reloading the database. */
+    const users=new Map(accountUsers.map(u=>[String(u.uid||u.id),u]));
+    const team=accountAdmins.filter(r=>String(r.status||"")!=="disabled").map(r=>{
+      const uid=String(r.uid||r.id),profile=users.get(uid)||{},raw=String(r.role||"").toLowerCase();
+      const permissions=Array.isArray(r.permissions)?r.permissions:
+        (raw==="admin"?PERMS.slice():ROLES.mod.perms.slice());
+      return {uid,name:r.name||profile.name||r.email||profile.email||"—",
+        username:r.username||profile.username||"",email:r.email||profile.email||"",
+        photo:r.photo||r.photoURL||profile.photo||profile.photoURL||"",
+        role:raw==="admin"?"admin":"mod",status:r.status||"active",permissions,
+        last:r.updatedAt||r.createdAt||""};
+    }).sort((a,b)=>(a.role==="admin"?0:1)-(b.role==="admin"?0:1)
+      ||String(a.name).localeCompare(String(b.name),"bn"));
+    if(JSON.stringify(team)!==JSON.stringify(DB.team))DB.team=team;
+    try{paintNav();if(!document.querySelector(".sheet")&&["team","access"].includes(SUB))go(CUR,SUB,false,ARG)}catch(e){}
   }
   function watchAccounts(){
     stopAccountWatch();
     const u=watchList(NODES.users,rows=>{accountUsers=rows.map(x=>({...x,uid:x.uid||x.id}));refreshAccounts()});
-    const a=watchList(NODES.admins,rows=>{accountAdmins=rows.map(x=>({...x,uid:x.uid||x.id}));refreshAccounts()});
-    stopAccountWatch=()=>{u();a()};
+    stopAccountWatch=()=>u();
   }
   function watchTeam(){
     stopTeamWatch();
     stopTeamWatch=watchList(NODES.admins,(rows)=>{
-      const t=rows.filter(r=>String(r.status||"")!=="disabled").map(r=>{
-        const raw=String(r.role||"").toLowerCase();
-        return {uid:r.uid||r.id,name:r.name||r.email||"—",
-          role:raw==="admin"?"admin":"mod",last:r.updatedAt||""};
-      });
-      t.sort((a,b)=>(a.role==="admin"?0:1)-(b.role==="admin"?0:1)
-        ||String(a.name).localeCompare(String(a.name),"bn"));
-      if(JSON.stringify(t)===JSON.stringify(DB.team))return;
-      DB.team=t;
-      try{paintNav();
-        if(!document.querySelector(".sheet")&&["team","access"].includes(SUB))go(CUR,SUB,false,ARG)}catch(e){}
+      accountAdmins=rows.map(x=>({...x,uid:x.uid||x.id}));
+      refreshAccounts();
     });
   }
 
   /* ── Audit log — RTDB-তে persist (refresh/login-এর পরেও থাকে) ── */
   function pushAudit(e){
     const id="A-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,6).toUpperCase();
-    setRow(NODES.audit,id,e).catch(err=>console.warn("audit push:",err&&err.message));
+    return setRow(NODES.audit,id,e);
   }
   let stopAuditWatch=()=>{};
   function watchAudit(){
@@ -2836,6 +2880,7 @@ function initPage() {
   /* replaces the plain object created in the data block */
   ME=Object.assign(loadMe(),{role:ME.role||PANEL.role});
   if(!ROLES[ME.role])ME.role=PANEL.role;
+  lastPersistedME=CBDCShared.clone(ME);
   
   /* ---------- small shared rows (same look as app.html) ---------- */
   const sRow=(t,v,act,flag)=>`<button class="row" data-act="${act}">
@@ -2916,7 +2961,7 @@ function initPage() {
         available:ME.available!==false,photo:ME.photo||"",bloodGroup:ME.bloodGroup||""};
       await updateRow(NODES.donors,id,patch);
       updateLocalAdminDonor(id,{...patch,lastDonation:ME.lastDonation,joined:(row&&row.joined)||ME.joined});
-    }catch(e){console.warn("admin donor public sync:",e&&e.message)}
+    }catch(e){console.warn("admin donor public sync:",e&&e.message);throw e}
   }
   function adminDonorForm(page){
     const a=ME,bounds=dobBounds(SITE.rules.minAge,SITE.rules.maxAge);
@@ -3036,8 +3081,8 @@ function initPage() {
         updateLocalAdminDonor(donorId,{...identity,bloodGroup,lastDonation,whatsapp,available:true,photo,joined,
           donations:isNew?(lastDonation?1:0):Number(donor&&donor.donations)||0});
         DB.queue=DB.queue.filter(q=>!(q.kind==="donor"&&String(q.ownerUid||"")===uid));
-        logMe("রক্তদাতা হিসেবে যুক্ত হয়েছেন",donorId,"donor");
-        logAudit("অ্যাডমিন রক্তদাতা হিসেবে যুক্ত",donorId,"donor");
+        await logMe("রক্তদাতা হিসেবে যুক্ত হয়েছেন",donorId,"donor");
+        await logAudit("অ্যাডমিন রক্তদাতা হিসেবে যুক্ত",donorId,"donor");
         s.close();renderSub(page);toast("রক্তদাতা তথ্য সংরক্ষণ হয়েছে","ok");
       }catch(e){
         console.warn("admin donor save:",e&&e.message);
@@ -3063,8 +3108,8 @@ function initPage() {
       DB.donors=DB.donors.filter(d=>String(d.ownerUid||"")!==uid&&String(d.id||"")!==id);
       DB.queue=DB.queue.filter(q=>!(q.kind==="donor"&&String(q.ownerUid||"")===uid));
       Object.assign(ME,{isDonor:false,donorStatus:"none",donorId:"",lastDonation:"",health:"",whatsapp:"",available:true});
-      logMe("ডোনার তালিকা থেকে সরে গেছেন",id||"নিজের প্রোফাইল","donor");
-      logAudit("অ্যাডমিন ডোনার তালিকা থেকে সরে গেছেন",id||ME.name,"donor");
+      await logMe("ডোনার তালিকা থেকে সরে গেছেন",id||"নিজের প্রোফাইল","donor");
+      await logAudit("অ্যাডমিন ডোনার তালিকা থেকে সরে গেছেন",id||ME.name,"donor");
       renderSub(page);toast("ডোনার তালিকা থেকে সরানো হয়েছে","ok");
     }catch(e){console.warn("admin donor remove:",e&&e.message);toast("ডোনার তথ্য সরানো যায়নি","er")}
   }
@@ -3074,7 +3119,7 @@ function initPage() {
       if(!ME.uid||!id)throw new Error("ডোনার রেকর্ড পাওয়া যায়নি");
       await updatePaths({[`users/${ME.uid}/available`]:next,[`donors/${id}/available`]:next});
       ME.available=next;const local=localAdminDonor();if(local)local.available=next;
-      saveMe();renderSub(page);toast(next?"প্রাপ্যতা চালু করা হয়েছে":"প্রাপ্যতা বন্ধ করা হয়েছে",next?"ok":"");
+      await await saveMe();renderSub(page);toast(next?"প্রাপ্যতা চালু করা হয়েছে":"প্রাপ্যতা বন্ধ করা হয়েছে",next?"ok":"");
     }catch(e){console.warn("admin donor availability:",e&&e.message);toast("প্রাপ্যতা বদলানো যায়নি","er")}
   }
   
@@ -3268,11 +3313,11 @@ function initPage() {
         ${tgRow("বিজ্ঞপ্তির সংখ্যা দেখান","আইকনে লাল সংখ্যা","prefs.badge")}
       </div>`;
     bindMe(el,"prefs");
-    el.querySelectorAll("[data-dn]").forEach(b=>b.onclick=()=>{
-      ME.prefs.dense=b.dataset.dn==="1";saveMe();applyPrefs();paintTop();paintNav();renderSub("prefs")});
-    el.querySelectorAll("[data-lg]").forEach(b=>b.onclick=()=>{
+    el.querySelectorAll("[data-dn]").forEach(b=>b.onclick=async()=>{
+      ME.prefs.dense=b.dataset.dn==="1";await saveMe();applyPrefs();paintTop();paintNav();renderSub("prefs")});
+    el.querySelectorAll("[data-lg]").forEach(b=>b.onclick=async()=>{
       if(ME.prefs.lang===b.dataset.lg)return;
-      ME.prefs.lang=b.dataset.lg;saveMe();applyLang();
+      ME.prefs.lang=b.dataset.lg;await saveMe();applyLang();
       toast(isEN()?"Language changed to English":"ভাষা বাংলা করা হয়েছে","ok")});
   };
   
@@ -3333,24 +3378,24 @@ function initPage() {
       }
       if(k==="available"&&ME.isDonor){await setAdminDonorAvailability(ME.available===false,page);return;}
       o[k]=!o[k];b.classList.toggle("on",o[k]);b.setAttribute("aria-checked",o[k]);
-      saveMe();applyPrefs();
+      await saveMe();applyPrefs();
       /* anything that changes the shell must repaint it */
       if(p[0]==="prefs"){paintTop();paintNav()}
       toast(o[k]?"চালু করা হয়েছে":"বন্ধ করা হয়েছে",o[k]?"ok":"");
       if(k==="dense"||k==="anim")renderSub(page);
     });
-    el.querySelectorAll("[data-pv]").forEach(s=>s.onchange=()=>{
-      ME.privacy[s.dataset.pv]=s.value;saveMe();toast("সংরক্ষিত","ok")});
-    el.querySelectorAll("[data-pv2]").forEach(s=>s.onchange=()=>{
-      ME.prefs[s.dataset.pv2]=s.value;saveMe();toast("সংরক্ষিত","ok")});
-    el.querySelectorAll("[data-th]").forEach(b=>b.onclick=()=>{
-      ME.prefs.theme=b.dataset.th;saveMe();applyPrefs();renderSub(page)});
+    el.querySelectorAll("[data-pv]").forEach(s=>s.onchange=async()=>{
+      ME.privacy[s.dataset.pv]=s.value;await saveMe();toast("সংরক্ষিত","ok")});
+    el.querySelectorAll("[data-pv2]").forEach(s=>s.onchange=async()=>{
+      ME.prefs[s.dataset.pv2]=s.value;await saveMe();toast("সংরক্ষিত","ok")});
+    el.querySelectorAll("[data-th]").forEach(b=>b.onclick=async()=>{
+      ME.prefs.theme=b.dataset.th;await saveMe();applyPrefs();renderSub(page)});
     el.querySelectorAll("[data-kick]").forEach(b=>b.onclick=async()=>{
       if(!await confirmS({title:"এই ডিভাইস বের করবেন?",desc:"ওই ডিভাইসে আবার লগইন করতে হবে।",danger:true}))return;
       ME.sessions=ME.sessions.filter(x=>x.id!==b.dataset.kick);
-      logMe("ডিভাইস বের করা হয়েছে","একটি সেশন বন্ধ","security");saveMe();renderSub("devices");
+      await logMe("ডিভাইস বের করা হয়েছে","একটি সেশন বন্ধ","security");await saveMe();renderSub("devices");
       toast("ডিভাইস বের করা হয়েছে","ok")});
-    el.querySelectorAll("[data-act]").forEach(b=>b.onclick=()=>meAction(b.dataset.act,page));
+    el.querySelectorAll("[data-act]").forEach(b=>b.onclick=async()=>await meAction(b.dataset.act,page));
   }
   function applyPrefs(){
     /* ডিফল্ট ও স্থায়ী Theme = Light; System (Dark/Light) auto-follow বন্ধ */
@@ -3364,8 +3409,8 @@ function initPage() {
   }
   
   /* ---------- every account action ---------- */
-  function meAction(a,page){
-    const back=()=>{saveMe();renderSub(page);paintTop()};
+  async function meAction(a,page){
+    const back=async()=>{await await saveMe();renderSub(page);paintTop()};
     const askText=(title,label,val,ok,opts={})=>{
       const s=sheet(title,`<div class="f"><label>${esc(label)}</label>
         ${opts.type==="date"?`<input id="mi" type="date" value="${esc(val||"")}" max="${iso(now())}">`
@@ -3376,51 +3421,51 @@ function initPage() {
              ${opts.mode?`inputmode="${opts.mode}"`:""}>`}
         </div>${opts.hint?`<p class="hint2" style="margin-top:8px">${esc(opts.hint)}</p>`:""}`,
         `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="mok">সংরক্ষণ</button>`);
-      s.q("#mok").onclick=()=>{const v=s.q("#mi").value.trim();if(ok(v,s)!==false)s.close()};
+      s.q("#mok").onclick=async()=>{const v=s.q("#mi").value.trim();try{if(await ok(v,s)!==false)s.close()}catch(e){restoreLastPersistedME();toast("তথ্য সংরক্ষণ করা যায়নি","er")}};
       return s;
     };
-    if(a==="editName")askText("নাম বদলান","পুরো নাম",ME.name,v=>{
+    if(a==="editName")askText("নাম বদলান","পুরো নাম",ME.name,async v=>{
       if(v.length<3){toast("নাম খুব ছোট","er");return false}
-      ME.name=v;pushMeProfile({name:v});logMe("নাম পরিবর্তন",v);back();toast("নাম হালনাগাদ হয়েছে","ok")});
-    if(a==="editUser")askText("Username বদলান","Username",ME.username,v=>{
+      ME.name=v;await await pushMeProfile({name:v});await await logMe("নাম পরিবর্তন",v);await back();toast("নাম হালনাগাদ হয়েছে","ok")});
+    if(a==="editUser")askText("Username বদলান","Username",ME.username,async v=>{
       if(!/^[a-z0-9._]{3,20}$/.test(v)){toast("৩–২০ অক্ষর, ছোট হাতের ইংরেজি/সংখ্যা","er");return false}
-      ME.username=v;pushMeProfile({username:v});logMe("Username পরিবর্তন","@"+v);back();toast("হালনাগাদ হয়েছে","ok")},
+      ME.username=v;await await pushMeProfile({username:v});await await logMe("Username পরিবর্তন","@"+v);await back();toast("হালনাগাদ হয়েছে","ok")},
       {hint:"ছোট হাতের ইংরেজি অক্ষর, সংখ্যা, . ও _ ব্যবহার করা যাবে"});
-    if(a==="editMail")askText("ইমেইল বদলান","ইমেইল",ME.email,v=>{
+    if(a==="editMail")askText("ইমেইল বদলান","ইমেইল",ME.email,async v=>{
       if(!/^\S+@\S+\.\S+$/.test(v)){toast("সঠিক ইমেইল দিন","er");return false}
-      ME.email=v;ME.emailVerified=false;pushMeProfile({email:v});logMe("ইমেইল পরিবর্তন",v,"security");back();
+      ME.email=v;ME.emailVerified=false;await await pushMeProfile({email:v});await await logMe("ইমেইল পরিবর্তন",v,"security");await back();
       toast("ইমেইল বদলেছে — যাচাই করতে হবে")},
       {hint:"নতুন ইমেইলে একটি যাচাই লিংক পাঠানো হবে।"});
-    if(a==="editPhone")askText("মোবাইল বদলান","মোবাইল নম্বর",ME.phone,v=>{
+    if(a==="editPhone")askText("মোবাইল বদলান","মোবাইল নম্বর",ME.phone,async v=>{
       if(!phoneOK(v)){toast("সঠিক নম্বর দিন (০১…, ১১ সংখ্যা)","er");return false}
-      ME.phone=v;ME.phoneVerified=false;pushMeProfile({phone:v});logMe("মোবাইল পরিবর্তন",v,"security");back();
+      ME.phone=v;ME.phoneVerified=false;await await pushMeProfile({phone:v});await await logMe("মোবাইল পরিবর্তন",v,"security");await back();
       toast("নম্বর হালনাগাদ হয়েছে","ok")},{max:11,mode:"numeric"});
-    if(a==="editDob")askText("জন্মতারিখ","জন্মতারিখ",ME.dob,v=>{
-      ME.dob=v;pushMeProfile({dob:v});logMe("জন্মতারিখ হালনাগাদ",v?dL(v):"—");back();toast("সংরক্ষিত","ok")},{type:"date"});
-    if(a==="editGender")askText("লিঙ্গ","লিঙ্গ",ME.gender,v=>{
-      ME.gender=v;pushMeProfile({gender:v});logMe("লিঙ্গ হালনাগাদ",v);back();toast("সংরক্ষিত","ok")},
+    if(a==="editDob")askText("জন্মতারিখ","জন্মতারিখ",ME.dob,async v=>{
+      ME.dob=v;await await pushMeProfile({dob:v});await await logMe("জন্মতারিখ হালনাগাদ",v?dL(v):"—");await back();toast("সংরক্ষিত","ok")},{type:"date"});
+    if(a==="editGender")askText("লিঙ্গ","লিঙ্গ",ME.gender,async v=>{
+      ME.gender=v;await await pushMeProfile({gender:v});await await logMe("লিঙ্গ হালনাগাদ",v);await back();toast("সংরক্ষিত","ok")},
       {type:"select",options:["পুরুষ","মহিলা"]});
-    if(a==="editArea")askText("এলাকা","এলাকা",ME.area,v=>{
-      ME.area=v;pushMeProfile({area:v});logMe("এলাকা হালনাগাদ",v);back();toast("সংরক্ষিত","ok")},
+    if(a==="editArea")askText("এলাকা","এলাকা",ME.area,async v=>{
+      ME.area=v;await await pushMeProfile({area:v});await await logMe("এলাকা হালনাগাদ",v);await back();toast("সংরক্ষিত","ok")},
       {type:"select",options:AREAS});
-    if(a==="editAddr")askText("ঠিকানা","সম্পূর্ণ ঠিকানা",ME.address,v=>{
-      ME.address=v;pushMeProfile({address:v});logMe("ঠিকানা হালনাগাদ",v||"—");back();toast("সংরক্ষিত","ok")},
+    if(a==="editAddr")askText("ঠিকানা","সম্পূর্ণ ঠিকানা",ME.address,async v=>{
+      ME.address=v;await await pushMeProfile({address:v});await await logMe("ঠিকানা হালনাগাদ",v||"—");await back();toast("সংরক্ষিত","ok")},
       {type:"textarea",hint:"পাবলিক তালিকায় সম্পূর্ণ ঠিকানা কখনো দেখানো হয় না।"});
-    if(a==="editDesig")askText("পদবি","সংগঠনে আপনার পদবি",ME.designation,v=>{
-      ME.designation=v;pushMeProfile({designation:v});logMe("পদবি হালনাগাদ",v||"—");back();toast("সংরক্ষিত","ok")});
-    if(a==="editBlood")askText("রক্তের গ্রুপ","রক্তের গ্রুপ",ME.bloodGroup,v=>{
-      ME.bloodGroup=v;pushMeProfile({bloodGroup:v});logMe("রক্তের গ্রুপ হালনাগাদ",v,"donor");back();toast("সংরক্ষিত","ok")},
+    if(a==="editDesig")askText("পদবি","সংগঠনে আপনার পদবি",ME.designation,async v=>{
+      ME.designation=v;await await pushMeProfile({designation:v});await await logMe("পদবি হালনাগাদ",v||"—");await back();toast("সংরক্ষিত","ok")});
+    if(a==="editBlood")askText("রক্তের গ্রুপ","রক্তের গ্রুপ",ME.bloodGroup,async v=>{
+      ME.bloodGroup=v;await await pushMeProfile({bloodGroup:v});await await logMe("রক্তের গ্রুপ হালনাগাদ",v,"donor");await back();toast("সংরক্ষিত","ok")},
       {type:"select",options:GROUPS});
-    if(a==="editLastD")askText("সর্বশেষ রক্তদান","তারিখ",ME.lastDonation,v=>{
-      ME.lastDonation=v;pushMeProfile({lastDonation:v});logMe("রক্তদানের তারিখ হালনাগাদ",v?dL(v):"—","donor");back();toast("সংরক্ষিত","ok")},
+    if(a==="editLastD")askText("সর্বশেষ রক্তদান","তারিখ",ME.lastDonation,async v=>{
+      ME.lastDonation=v;await await pushMeProfile({lastDonation:v});await await logMe("রক্তদানের তারিখ হালনাগাদ",v?dL(v):"—","donor");await back();toast("সংরক্ষিত","ok")},
       {type:"date"});
-    if(a==="editDonorWa")askText("WhatsApp নম্বর","WhatsApp নম্বর",ME.whatsapp,v=>{
+    if(a==="editDonorWa")askText("WhatsApp নম্বর","WhatsApp নম্বর",ME.whatsapp,async v=>{
       if(v&&!phoneOK(v)){toast("সঠিক নম্বর দিন (০১…, ১১ সংখ্যা)","er");return false}
-      ME.whatsapp=v;pushMeProfile({whatsapp:v});logMe("WhatsApp নম্বর হালনাগাদ",v||"—","donor");back();toast("সংরক্ষিত","ok")},
+      ME.whatsapp=v;await await pushMeProfile({whatsapp:v});await await logMe("WhatsApp নম্বর হালনাগাদ",v||"—","donor");await back();toast("সংরক্ষিত","ok")},
       {max:11,mode:"numeric"});
-    if(a==="editDonorHealth")askText("স্বাস্থ্য তথ্য","স্বাস্থ্য সম্পর্কিত সংক্ষিপ্ত তথ্য",ME.health,v=>{
+    if(a==="editDonorHealth")askText("স্বাস্থ্য তথ্য","স্বাস্থ্য সম্পর্কিত সংক্ষিপ্ত তথ্য",ME.health,async v=>{
       if(v.length>300){toast("সর্বোচ্চ ৩০০ অক্ষর লিখুন","er");return false}
-      ME.health=v;pushMeProfile({health:v});logMe("স্বাস্থ্য তথ্য হালনাগাদ",v||"—","donor");back();toast("সংরক্ষিত","ok")},
+      ME.health=v;await await pushMeProfile({health:v});await await logMe("স্বাস্থ্য তথ্য হালনাগাদ",v||"—","donor");await back();toast("সংরক্ষিত","ok")},
       {type:"textarea"});
   
     if(a==="editPass"){
@@ -3447,7 +3492,7 @@ function initPage() {
         try{
           await panelChangePassword(p0,p1);
           ME.security.passwordChangedAt=iso(now());
-          logMe("পাসওয়ার্ড পরিবর্তন","এই ডিভাইস থেকে","security");
+          await logMe("পাসওয়ার্ড পরিবর্তন","এই ডিভাইস থেকে","security");
           s.close();renderSub("security");toast("পাসওয়ার্ড বদলানো হয়েছে","ok");
         }catch(e){
           toast(authErrorMessage(e,{wrongCredentials:"বর্তমান পাসওয়ার্ড সঠিক নয়",fallback:"পাসওয়ার্ড পরিবর্তন করা যায়নি"}),"er");
@@ -3461,15 +3506,15 @@ function initPage() {
           /* ছবি ImgBB-তে upload → পাওয়া linkটাই প্রোফাইলে সেভ */
           const res=await imgbbUploadImage(f);
           ME.photo=res.url;ME.photoSource="upload";
-          pushMeProfile({photo:res.url,photoURL:res.url});
-          logMe("প্রোফাইল ছবি বদলানো হয়েছে","");back();toast("ছবি হালনাগাদ হয়েছে","ok");
+          await pushMeProfile({photo:res.url,photoURL:res.url});
+          await logMe("প্রোফাইল ছবি বদলানো হয়েছে","");await back();toast("ছবি হালনাগাদ হয়েছে","ok");
         }catch(e){toast(e&&e.message?e.message:"ছবি আপলোড করা যায়নি","er")}
       };
       inp.click();
     }
     if(a==="photoRm"){ME.photo="";ME.photoSource="";
-      pushMeProfile({photo:"",photoURL:""});
-      logMe("প্রোফাইল ছবি সরানো হয়েছে","");
+      await pushMeProfile({photo:"",photoURL:""});
+      await logMe("প্রোফাইল ছবি সরানো হয়েছে","");
       back();toast("ছবি সরানো হয়েছে")}
     if(a==="dlMe"){
       const data={profile:{name:ME.name,username:ME.username,email:ME.email,phone:ME.phone,
@@ -3481,19 +3526,19 @@ function initPage() {
       const u=URL.createObjectURL(b),el2=document.createElement("a");
       el2.href=u;el2.download=`cbdc-আমার-তথ্য-${iso(now())}.json`;el2.click();
       setTimeout(()=>URL.revokeObjectURL(u),1500);
-      logMe("নিজের তথ্য নামানো হয়েছে","JSON");toast("ফাইল নামছে","ok");
+      await logMe("নিজের তথ্য নামানো হয়েছে","JSON");toast("ফাইল নামছে","ok");
     }
     if(a==="forgotPass")sheetForgot();
     if(a==="delMe")sheetDeleteMe();
     if(a==="pol_terms"||a==="pol_privacy"||a==="pol_donate")sheetPolicy(a);
     if(a==="logout")doLogout();
     if(a==="logoutAll")confirmS({title:"সব ডিভাইস থেকে লগআউট?",
-      desc:"এই ডিভাইস ছাড়া বাকি সব সেশন বন্ধ হবে।",danger:true}).then(y=>{
+      desc:"এই ডিভাইস ছাড়া বাকি সব সেশন বন্ধ হবে।",danger:true}).then(async y=>{
       if(!y)return;ME.sessions=ME.sessions.filter(s=>s.cur);
-      logMe("সব ডিভাইস থেকে লগআউট","","security");saveMe();
+      await logMe("সব ডিভাইস থেকে লগআউট","","security");await saveMe();
       renderSub(page==="devices"?"devices":page);toast("বাকি সব সেশন বন্ধ হয়েছে","ok")});
     if(a==="resetMe")confirmS({title:"আমার সেটিংস রিসেট?",
-      desc:"নাম, ছবি, গোপনীয়তা ও পছন্দ ডিফল্ট অবস্থায় ফিরবে। কাজের ডেটা মুছবে না।",danger:true}).then(y=>{
+      desc:"নাম, ছবি, গোপনীয়তা ও পছন্দ ডিফল্ট অবস্থায় ফিরবে। কাজের ডেটা মুছবে না।",danger:true}).then(async y=>{
       if(!y)return;
       /* আইডেন্টিটি (নাম, ছবি, ইমেইল…) RTDB users/{uid}-এ canonical — মুছবে না;
          শুধু সেটিংস/সেশন/কার্যকলাপ ডিফল্টে ফেরে ও RTDB-তে সেটাই সেভ হয় */
@@ -3504,7 +3549,7 @@ function initPage() {
         available:ME.available,donorId:ME.donorId,donorStatus:ME.donorStatus,
         cardTheme:ME.cardTheme,isDonor:ME.isDonor};
       ME=Object.assign(defaultMe(),keep);
-      upsertMySession();saveMe();applyPrefs();
+      upsertMySession();await saveMe();applyPrefs();
       go("set");toast("রিসেট হয়েছে","ok")});
   }
   
@@ -3608,9 +3653,9 @@ function initPage() {
       ? `<button class="btn" data-close style="flex:1">বুঝেছি</button>`
       : `<button class="btn gh" data-close>বাতিল</button><button class="btn red" id="dmok">অনুরোধ পাঠান</button>`);
     if(isAdminAccount)return;
-    s.q("#dmok").onclick=()=>{
+    s.q("#dmok").onclick=async()=>{
       if(s.q("#dmt").value.trim()!=="মুছে ফেলুন")return toast('হুবহু "মুছে ফেলুন" লিখুন',"er");
-      logMe("অ্যাকাউন্ট মুছে ফেলার অনুরোধ","২৪ ঘণ্টার মধ্যে কার্যকর","security");
+      await logMe("অ্যাকাউন্ট মুছে ফেলার অনুরোধ","২৪ ঘণ্টার মধ্যে কার্যকর","security");
       if(typeof logAudit==="function")logAudit("অ্যাকাউন্ট মুছে ফেলার অনুরোধ",ME.name+" নিজের অ্যাকাউন্ট মুছতে চেয়েছেন");
       s.q(".bd").innerHTML=`<div style="text-align:center;padding:8px 0">
         <div style="width:56px;height:56px;margin:0 auto 12px;border-radius:50%;background:var(--card2);
@@ -3763,8 +3808,11 @@ function initPage() {
     if(!ok)return rejectSheet([...wSel],()=>{wSel.clear();RENDER.work()});
     const n=wSel.size;
     /* Serial Donor UID হিসাবের জন্য সব approve সম্পূর্ণ হওয়া পর্যন্ত অপেক্ষা */
-    await Promise.all([...wSel].map(id=>decide(id,true,"",true)));
-    wSel.clear();persist();RENDER.work();paintNav();paintTop();
+    const results=await Promise.all([...wSel].map(id=>decide(id,true,"",true)));
+    if(results.some(result=>result!==true))return toast("এক বা একাধিক পরিবর্তন RTDB-তে সংরক্ষণ করা যায়নি","er");
+    try{await persist();}
+    catch(e){return toast("পরিবর্তন RTDB-তে সংরক্ষণ করা যায়নি — সফলতা দেখানো হয়নি","er");}
+    wSel.clear();RENDER.work();paintNav();paintTop();
     toast(bn(n)+"টি অনুমোদন করা হয়েছে","ok");
   }
   function reviewWarning(q){
@@ -3854,11 +3902,13 @@ function initPage() {
     s.querySelectorAll("#rj_chips button").forEach(b=>b.onclick=()=>{
       s.querySelectorAll("#rj_chips button").forEach(x=>x.classList.remove("on"));
       b.classList.add("on");const t=s.q("#rj_txt");if(!t.value.trim())t.value=b.dataset.r});
-    s.q("#rj_ok").onclick=()=>{
+    s.q("#rj_ok").onclick=async()=>{
       const txt=s.q("#rj_txt").value.trim();
       if(!txt)return toast("কারণ লিখতে হবে","er");
-      ids.forEach(id=>{ void decide(id,false,txt,true); });
-      persist();s.close();after?after():RENDER.work();paintNav();paintTop();
+      const btn=s.q("#rj_ok");btn.disabled=true;
+      const results=await Promise.all(ids.map(id=>decide(id,false,txt,true)));
+      if(results.some(x=>x!==true)){btn.disabled=false;return toast("এক বা একাধিক পরিবর্তন RTDB-তে সংরক্ষণ করা যায়নি","er");}
+      s.close();after?after():RENDER.work();paintNav();paintTop();
       toast(bn(ids.length)+"টি বাতিল করা হয়েছে")};
   }
   /* বাতিল করা জরুরি আবেদনের status ব্যবহারকারীর "আমার আবেদন"-এ (users/{uid}/data/mine)
@@ -3879,69 +3929,58 @@ function initPage() {
      Pending → Approved/Rejected। ডোনার প্যানেল নিজের প্রোফাইল watchRow করে বলে
      status পরিবর্তন realtime-এ পৌঁছায়। Approve হলে আসল গ্রুপ-আপডেট আলাদাভাবে
      users/donors নোডে লেখা হয়; Reject হলে পুরোনো গ্রুপই থেকে যায়। */
-  function markGroupChangeStatus(ownerUid,status,note){
-    if(!ownerUid)return;
-    const paths={};
+  function markGroupChangeStatus(ownerUid,status,note,paths={}){
+    if(!ownerUid)return paths;
     paths[`users/${ownerUid}/groupChange/status`]=status;
     paths[`users/${ownerUid}/groupChange/decidedAt`]=new Date().toISOString();
     /* Firebase server timestamp — client-এর ঘড়ি ভুল থাকলেও সঠিক সময় */
     paths[`users/${ownerUid}/groupChange/decidedAtTs`]=serverTime();
     if(note)paths[`users/${ownerUid}/groupChange/note`]=String(note).slice(0,200);
-    updatePaths(paths).catch(e=>console.warn("mark group change:",e&&e.message));
+    return paths;
   }
   async function decide(id,ok,note,quiet){
     const i=DB.queue.findIndex(x=>x.id===id);if(i<0)return;
     const q=DB.queue[i];
-    if(q.kind==="donor"&&ok){
-      let approvedDonorId = q.donorId || "";
-      if(!approvedDonorId){
-        try{ approvedDonorId = await nextDonorId(); }
-        catch(e){
-          console.warn("donor id:",e&&e.message);
-          toast("Donor UID তৈরি করা যায়নি — অনুমোদন সম্পন্ন হয়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।","er");
-          return;
+    const paths={};
+    let approvedDonorId="", approvedDonor=null, approvedDonation=null, approvedRequest=null, approvedGroup=null;
+    try{
+      if(q.kind==="donor"&&ok){
+        approvedDonorId=String(q.donorId||"");
+        if(!approvedDonorId)approvedDonorId=await nextDonorId();
+        const at=nowIso(), count=q.last?1:0;
+        approvedDonor={id:approvedDonorId,donorId:approvedDonorId,uid:q.ownerUid||"",ownerUid:q.ownerUid||"",
+          name:q.name||"",bloodGroup:q.group||"",group:q.group||"",area:q.area||"",phone:q.phone||"",
+          whatsapp:q.whatsapp||q.phone||"",gender:q.gender||"",dob:q.dob||"",lastDonationDate:q.last||"",
+          status:"approved",available:true,verified:true,suspended:false,joined:at,photo:q.photo||"",
+          donations:count,totalDonations:count,createdAt:at,updatedAt:at};
+        paths[`donors/${approvedDonorId}`]=approvedDonor;
+        if(q.ownerUid){
+          paths[`users/${q.ownerUid}/donorStatus`]="approved";
+          paths[`users/${q.ownerUid}/donorId`]=approvedDonorId;
+          paths[`users/${q.ownerUid}/bloodGroup`]=q.group||"";
+          if(q.memberId){paths[`members/${q.memberId}/status`]="approved";paths[`members/${q.memberId}/donorId`]=approvedDonorId;}
         }
-      }
-      DB.donors.unshift({id:approvedDonorId,
-        name:q.name,group:q.group,area:q.area,phone:q.phone,whatsapp:q.whatsapp||q.phone,gender:q.gender,dob:q.dob||"",last:q.last,
-        photo:q.photo||"",ownerUid:q.ownerUid||"",available:true,verified:true,suspended:false,joined:iso(now()),donations:q.last?1:0});
-      if(q.ownerUid){
-        updateRow(NODES.users, q.ownerUid, {donorStatus:"approved", donorId:approvedDonorId, bloodGroup:q.group||""})
-          .catch(e=>console.warn("donor approve user:",e&&e.message));
-        if(q.memberId) updateRow(NODES.members, q.memberId, {status:"approved", donorId:approvedDonorId})
-          .catch(e=>console.warn("donor approve member:",e&&e.message));
-        /* প্রোফাইল ছবি (ImgBB link) — queue-তে না থাকলে users/{uid}/photoURL থেকে অনুলিপি,
-           যাতে অনুমোদিত ডোনারের পাবলিক প্রোফাইলে সঠিক ছবি দেখায় */
-        getRow(NODES.users, q.ownerUid).then(u=>{
-          const ph=String((u&&(u.photoURL||u.photo))||"").trim();
-          if(ph){
-            const donor=DB.donors.find(x=>x.id===approvedDonorId);
-            if(donor&&!String(donor.photo||"").trim()){donor.photo=ph;persist();}
-          }
-        }).catch(e=>console.warn("donor approve photo:",e&&e.message));
-      }
-    }
-    if(q.kind==="donation"&&ok){const d=DB.donors.find(x=>x.name===q.name);
-      if(d){d.donations++;if(!d.last||q.date>d.last)d.last=q.date}}
-    if(q.kind==="request"&&ok){
-      DB.live.unshift({id:q.id,patient:q.patient,group:q.group,bags:q.bags,
-        urgency:q.urgency,status:"searching",responders:0,hospital:q.hospital,area:q.area,requester:q.requester||"স্বজন",
-        phone:q.phone,whatsapp:q.whatsapp||q.phone,expiresAt:q.expiresAt||"",at:new Date().toISOString(),
-        ownerUid:q.ownerUid||""});
-    }
-    if(q.kind==="group"&&ok){
-      const d=(q.ownerUid&&DB.donors.find(x=>String(x.ownerUid)===String(q.ownerUid)))||DB.donors.find(x=>x.name===q.name);
-      if(d)d.group=q.to;
-      /* অনুমোদনের পর স্থায়ীভাবে আপডেট — users/{uid} ও donors নোডে (আইটেম ১০) */
-      if(q.ownerUid){
-        /* Account group, public donor group, and request decision must commit
-           together. A root multi-location update is atomic in RTDB, so a
-           network/rules failure cannot leave one of the three stale. */
-        try{
-          const donor=await findBy(NODES.donors, "ownerUid", q.ownerUid);
+      } else if(q.kind==="donation"&&ok){
+        const d=DB.donors.find(x=>x.id===q.donorId||x.name===q.name);
+        if(d){
+          const count=(Number(d.donations)||0)+1;
+          approvedDonation={d,count,last:!d.last||q.date>d.last?q.date:d.last};
+          paths[`donors/${d.id}/donations`]=count;
+          paths[`donors/${d.id}/totalDonations`]=count;
+          if(approvedDonation.last)paths[`donors/${d.id}/lastDonationDate`]=approvedDonation.last;
+        }
+      } else if(q.kind==="request"&&ok){
+        approvedRequest={id:q.id,patient:q.patient,group:q.group,bags:q.bags,urgency:q.urgency,status:"searching",
+          responders:0,hospital:q.hospital,area:q.area,requester:q.requester||"স্বজন",phone:q.phone,
+          whatsapp:q.whatsapp||q.phone||"",expiresAt:q.expiresAt||"",at:q.at||nowIso(),ownerUid:q.ownerUid||""};
+        paths[`requests/${q.id}/status`]="approved";
+        paths[`requests/${q.id}/workflowStatus`]="searching";
+      } else if(q.kind==="group"&&ok){
+        if(q.ownerUid){
+          const donor=await findBy(NODES.donors,"ownerUid",q.ownerUid);
           if(!donor||!donor.id)throw new Error("অনুমোদিত ডোনার রেকর্ড পাওয়া যায়নি");
-          const decidedAt=new Date().toISOString();
-          const paths={};
+          approvedGroup={ownerUid:q.ownerUid,donorId:donor.id,to:q.to};
+          const decidedAt=nowIso();
           paths[`users/${q.ownerUid}/bloodGroup`]=q.to;
           paths[`users/${q.ownerUid}/donorStatus`]="approved";
           paths[`users/${q.ownerUid}/groupChange/status`]="approved";
@@ -3950,28 +3989,58 @@ function initPage() {
           if(note)paths[`users/${q.ownerUid}/groupChange/note`]=String(note).slice(0,200);
           paths[`donors/${donor.id}/bloodGroup`]=q.to;
           paths[`donors/${donor.id}/group`]=q.to;
-          await updatePaths(paths);
-        }catch(e){
-          console.warn("atomic group approval:",e&&e.message);
-          toast("রক্তের গ্রুপ একসাথে হালনাগাদ করা যায়নি — আবেদনটি আবার চেষ্টা করুন।","er");
-          return;
         }
       }
+
+      if(!ok){
+        const owner=String(q.ownerUid||q.uid||"").trim();
+        if(q.kind==="request"){
+          paths[`requests/${q.id}/status`]="rejected";
+          if(owner){
+            const u=await getRow(NODES.users,owner);
+            const mine=Array.isArray(u&&u.data&&u.data.mine)?u.data.mine:[];
+            const mi=mine.findIndex(m=>String(m&&m.id||"")===String(q.id));
+            if(mi>=0){paths[`users/${owner}/data/mine/${mi}/status`]="rejected";
+              if(note)paths[`users/${owner}/data/mine/${mi}/rejectNote`]=String(note).slice(0,200);}
+          }
+        }
+        if(q.kind==="group"&&owner){
+          markGroupChangeStatus(owner,"rejected",note,paths);
+        }
+        if(q.kind==="donor"&&owner){
+          paths[`users/${owner}/donorStatus`]="rejected";
+          if(q.memberId)paths[`members/${q.memberId}/status`]="rejected";
+        }
+      }
+      paths[`queue/${id}`]=null;
+      /* All moderation effects and queue removal commit before any success UI. */
+      await updatePaths(paths);
+    }catch(e){
+      console.warn("moderation write:",e&&e.message);
+      if(!quiet)toast("RTDB-তে পরিবর্তন সংরক্ষণ করা যায়নি — কোনো সফলতা দেখানো হয়নি","er");
+      return false;
     }
-    if(!ok){
-      /* বাতিলের status main RTDB data-তে (users/{uid}/data/mine) লেখা হয় —
-         ডোনার প্যানেল সেটি দেখে নিজের notification তৈরি করে (আলাদা storage-এ) */
-      const owner=String(q.ownerUid||q.uid||"").trim();
-      if(q.kind==="request"&&owner)markRequestRejected(owner,q.id,note);
-      /* গ্রুপ-বদল অনুরোধ বাতিল — status Rejected হয়ে ডোনার প্যানেলে realtime যায়;
-         রক্তের গ্রুপ অপরিবর্তিত (পুরোনোটাই) থাকে */
-      if(q.kind==="group"&&owner)markGroupChangeStatus(owner,"rejected",note);
+
+    /* Local state is only changed after the atomic RTDB operation succeeds. */
+    if(approvedDonor){
+      DB.donors.unshift({id:approvedDonor.id,name:approvedDonor.name,group:approvedDonor.group,area:approvedDonor.area,
+        phone:approvedDonor.phone,whatsapp:approvedDonor.whatsapp,gender:approvedDonor.gender,dob:approvedDonor.dob,
+        last:approvedDonor.lastDonationDate,photo:approvedDonor.photo,ownerUid:approvedDonor.ownerUid,available:true,
+        verified:true,suspended:false,joined:approvedDonor.joined,donations:approvedDonor.donations});
     }
+    if(approvedDonation){approvedDonation.d.donations=approvedDonation.count;approvedDonation.d.last=approvedDonation.last;}
+    if(approvedRequest)DB.live.unshift(approvedRequest);
+    if(approvedGroup){const d=DB.donors.find(x=>String(x.ownerUid)===String(approvedGroup.ownerUid));if(d)d.group=approvedGroup.to;}
     DB.queue.splice(i,1);
     logAudit(ok?QK[q.kind].t+" অনুমোদন":QK[q.kind].t+" বাতিল",id+(note?" — "+note.slice(0,40):""),q.kind);
-    if(!quiet){persist();RENDER.work();paintNav();paintTop();toast(ok?"অনুমোদন করা হয়েছে":"বাতিল করা হয়েছে",ok?"ok":"")}
+    if(!quiet){
+      try{await persist();}
+      catch(e){if(!quiet)toast("পরিবর্তন RTDB-তে সংরক্ষণ করা যায়নি — সফলতা দেখানো হয়নি","er");return false;}
+      RENDER.work();paintNav();paintTop();toast(ok?"অনুমোদন করা হয়েছে":"বাতিল করা হয়েছে",ok?"ok":"");
+    }
+    return true;
   }
-  
+
   /* ══════════════════ SCREEN 3: PEOPLE ══════════════════ */
   RENDER.people=()=>{
     const el=$("#s-people");
@@ -4060,7 +4129,7 @@ function initPage() {
     if(!await confirmS({title:"লগআউট করবেন?",
       desc:"প্যানেল থেকে বের হয়ে মূল ওয়েবসাইটে ফিরে যাবেন। আবার ঢুকতে হলে নতুন করে লগইন করতে হবে।",
       ok:"লগআউট",danger:true}))return;
-    logMe("লগআউট","প্যানেল থেকে বের হয়েছেন","security");
+    await logMe("লগআউট","প্যানেল থেকে বের হয়েছেন","security");
     try{
       /* the session ends; work data stays for the next person who logs in */
       localStorage.removeItem(ACC_LS);
@@ -4084,7 +4153,7 @@ function initPage() {
       `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="ex_ok">${SI.dl(15)} নামান</button>`);
     s.querySelectorAll("[data-x]").forEach(b=>b.onclick=()=>{
       s.querySelectorAll("[data-x]").forEach(x=>x.classList.remove("on"));b.classList.add("on");pick=b.dataset.x});
-    s.q("#ex_ok").onclick=()=>{
+    s.q("#ex_ok").onclick=async()=>{
       let csv="";
       if(pick==="donors")csv=toCSV(DB.donors.map(d=>[d.id,d.name,d.group,d.area,maskPhone(d.phone),
         d.dob||"",ageText(d),d.gender,d.last,d.donations,d.suspended?"স্থগিত":"সক্রিয়"]),
@@ -4096,7 +4165,9 @@ function initPage() {
       if(pick==="audit")csv=toCSV(DB.audit.map(a=>[a.at,a.who,ROLES[a.role].label,a.act,a.target]),
         ["সময়","কে","ভূমিকা","কাজ","লক্ষ্য"]);
       dlFile(`cbdc-${pick}-${iso(now())}.csv`,csv);
-      logAudit("তথ্য রপ্তানি",pick,"data");persist();s.close();toast("ফাইল নামছে","ok")};
+      logAudit("তথ্য রপ্তানি",pick,"data");
+      try{await persist();}catch(e){return toast("রপ্তানি audit RTDB-তে সংরক্ষণ করা যায়নি","er");}
+      s.close();toast("ফাইল নামছে","ok")};
   }
   
   /* ══════════════════ SUB-PAGES ══════════════════ */
@@ -4187,7 +4258,9 @@ function initPage() {
         catch(e){ console.warn("donor id:",e&&e.message); toast("Donor UID তৈরি করা যায়নি — সংরক্ষণ হয়নি। আবার চেষ্টা করুন।","er"); return; }
         DB.donors.unshift({id:newId,...o,available:true,verified:true,
           suspended:false,joined:iso(now()),donations:0});logAudit("নতুন ডোনার যোগ",n,"donor")}
-      persist();s.close();renderSub("donors");toast("সংরক্ষণ হয়েছে","ok")};
+      try{await persist();}
+      catch(e){toast("রক্তদাতা সংরক্ষণ করা যায়নি — কোনো সফলতা দেখানো হয়নি","er");return;}
+      s.close();renderSub("donors");toast("সংরক্ষণ হয়েছে","ok")};
   }
   
   /* ---------- live requests ---------- */
@@ -4221,18 +4294,23 @@ function initPage() {
     el.querySelectorAll("[data-dn2]").forEach(b=>b.onclick=async()=>{
       if(!await confirmS({title:"আবেদন সম্পন্ন?",desc:"রোগী রক্ত পেয়েছেন বলে চিহ্নিত হবে।"}))return;
       const r=DB.live.find(x=>x.id===b.dataset.dn2);
+      if(!r)return;
+      const before=CBDCShared.clone(DB);
       DB.live=DB.live.filter(x=>x.id!==r.id);
-      logAudit("আবেদন সম্পন্ন",r.id,"request");persist();renderSub("live");paintTop();
-      toast("সম্পন্ন হিসেবে চিহ্নিত","ok")});
+      logAudit("আবেদন সম্পন্ন",r.id,"request");
+      try{await persist();}catch(e){Object.assign(DB,before);return toast("আবেদন সম্পন্ন করা যায়নি","er");}
+      renderSub("live");paintTop();toast("সম্পন্ন হিসেবে চিহ্নিত","ok")});
     el.querySelectorAll("[data-cx]").forEach(b=>b.onclick=()=>{
       const id=b.dataset.cx;
       const s=sheet("আবেদন বাতিল",`<p class="hint2" style="margin-bottom:9px">কারণ লিখুন — আবেদনকারীর অ্যাপে দেখানো হবে।</p>
         <textarea id="lv_t" rows="3"></textarea>`,
         `<button class="btn gh" data-close>ফিরে যান</button><button class="btn red" id="lv_ok">বাতিল করুন</button>`);
-      s.q("#lv_ok").onclick=()=>{
+      s.q("#lv_ok").onclick=async()=>{
         if(!s.q("#lv_t").value.trim())return toast("কারণ লিখতে হবে","er");
+        const before=CBDCShared.clone(DB);
         DB.live=DB.live.filter(x=>x.id!==id);logAudit("আবেদন বাতিল",id,"request");
-        persist();s.close();renderSub("live");paintTop();toast("বাতিল করা হয়েছে")}});
+        try{await persist();}catch(e){Object.assign(DB,before);return toast("আবেদন বাতিল করা যায়নি","er");}
+        s.close();renderSub("live");paintTop();toast("বাতিল করা হয়েছে")}});
   };
   function liveSheet(id){go(CUR,"live")}
   
@@ -4270,13 +4348,15 @@ function initPage() {
   /* ---------- team & roles ---------- */
   SUBP.team=el=>{
     el.innerHTML=`<div class="card pad0">${DB.team.map(t=>`<div class="prow">
-        <span class="bg2" style="background:var(--grn-s);color:var(--grn)">${ROLES[t.role].icon}</span>
+        ${t.photo?`<img src="${esc(t.photo)}" alt="" style="width:40px;height:40px;border-radius:11px;object-fit:cover;background:var(--card2)">`
+          :`<span class="bg2" style="background:var(--grn-s);color:var(--grn)">${ROLES[t.role].icon}</span>`}
         <span class="tx"><b>${esc(t.name)}${t.uid===ME.uid?tp(" (আপনি)"," (you)"):""}</b>
-          <small>${ROLES[t.role].label} · ${tp(timeAgo(t.last)+" সক্রিয়","active "+timeAgo(t.last))}</small></span>
+          <small>${ROLES[t.role].label} · ${esc(t.status||"active")} · ${t.last?timeAgo(t.last):"—"}</small>
+          <small>${bn((t.permissions||[]).length)}টি permission/access</small></span>
         ${can("team.manage")?`<button class="btn gh sm" data-mr="${t.uid}">${SI.edit(14)}</button>`
           :`<span class="tag">${ROLES[t.role].label}</span>`}</div>`).join("")}</div>`
     +`<div class="sec-t">ভূমিকা অনুযায়ী অনুমতি</div>
-      <div class="card pad0">${Object.entries(ROLES).map(([k,r])=>`<div class="row">
+      <div class="card pad0">${Object.entries(ROLES).filter(([k])=>k!=="admin"||DB.team.some(t=>t.role===k)).map(([k,r])=>`<div class="row">
         <span class="ic">${r.icon}</span>
         <span class="tx"><b>${r.label}</b><small>${tp(bn(r.perms.length)+"টি অনুমতি",r.perms.length+" permissions")}</small></span>
         <span class="rt">${tp(bn(DB.team.filter(t=>t.role===k).length)+" জন",DB.team.filter(t=>t.role===k).length+" people")}</span></div>`).join("")}</div>`
@@ -4287,37 +4367,17 @@ function initPage() {
         <li>নিজের অ্যাডমিন অ্যাক্সেস নিজে সরানো যায় না</li>
         <li>অডিট লগ একবার লেখা হলে বদলানো যায় না</li>
         <li>ফোন নম্বর দেখলে তা লগে থেকে যায়</li></ul></div>`
-    +`<div class="sec-t">আপনার অনুমতি</div>
-      <div class="card">${Object.entries(PERM_GROUPS).map(([g,ps])=>`
-        <div class="sec-t" style="margin:10px 0 6px">${g}</div>
-        <div class="pms">${ps.map(p=>`<span class="${can(p)?"on":""}">${p}</span>`).join("")}</div>`).join("")}</div>`
+    +`<div class="sec-t">টিম সদস্যদের permission/access</div>
+      <div class="card"><p class="hint2">প্রতিটি সদস্যের Edit থেকে তার role ও নির্দিষ্ট access customize করা যাবে।</p></div>`
     +(can("team.manage")?`<button class="btn gh w" style="margin-top:12px" id="tAdd">${SI.plus(15)} সদস্য যোগ</button>`:"");
     el.querySelectorAll("[data-mr]").forEach(b=>b.onclick=()=>roleSheet(b.dataset.mr));
-    $("#tAdd")&&($("#tAdd").onclick=()=>toast("সদস্য যোগ ডেটাবেজ যুক্ত হলে চালু হবে — শীঘ্রই আসছে"));
+    $("#tAdd")&&($("#tAdd").onclick=()=>toast("সদস্য যোগ করতে আগে একটি registered account নির্বাচন করুন"));
   };
-  function roleSheet(uid){
-    const t=DB.team.find(x=>x.uid===uid);if(!t)return;
-    t.role=t.role==="admin"?"admin":(t.role==="moderator"||t.role==="mod")?"mod":"mod";
-    const isMe=uid===ME.uid;
-    let pick=t.role;
-    const s=sheet("ভূমিকা ও অনুমতি",`
-      <div class="per"><span class="bg2" style="width:44px;height:44px;border-radius:50%;background:var(--grn-s);color:var(--grn);font-size:1.05rem">${ROLES[t.role].icon}</span>
-        <div class="i"><b>${esc(t.name)}</b><small>${ROLES[t.role].label}</small></div></div>
-      ${isMe?`<p class="hint2" style="margin-top:10px">নিরাপত্তার জন্য নিজের ভূমিকা নিজে বদলানো যায় না।</p>`:""}
-      <div class="sec-t">ভূমিকা</div>
-      <div class="strip wrap chips" id="rl">${Object.entries(ROLES).map(([k,r])=>
-        `<button data-r="${k}" class="${t.role===k?"on":""}" ${isMe?"disabled style=opacity:.5":""}>${r.icon} ${r.label}</button>`).join("")}</div>
-      <div class="sec-t">এই ভূমিকা যা পারবে</div>
-      <div class="pms">${PERMS.map(p=>`<span class="${ROLES[t.role].perms.includes(p)?"on":""}">${p}</span>`).join("")}</div>`,
-      isMe?`<button class="btn gh w" data-close>বন্ধ</button>`
-        :`<button class="btn gh" data-close>বাতিল</button><button class="btn" id="rl_ok">সংরক্ষণ</button>`);
-    s.querySelectorAll("#rl button").forEach(b=>b.onclick=()=>{
-      if(isMe)return;
-      s.querySelectorAll("#rl button").forEach(x=>x.classList.remove("on"));b.classList.add("on");pick=b.dataset.r});
-    s.q("#rl_ok")&&(s.q("#rl_ok").onclick=()=>{
-      t.role=pick;logAudit("ভূমিকা পরিবর্তন",t.name+" → "+ROLES[pick].label,"team");
-      persist();s.close();renderSub("team");toast("ভূমিকা হালনাগাদ হয়েছে","ok")});
-  }
+
+  /* Team editing and the account directory use one guarded editor. This
+     avoids a role being changed in one screen while its permissions remain
+     stale in the other. */
+  function roleSheet(uid){ accessSheet(uid); }
   
   /* ══════════════════════════════════════════════════════════════
      DONOR WORKSPACE — one page, tabbed, for everything about a donor
@@ -4476,11 +4536,12 @@ function initPage() {
     const paint=()=>{
       body.innerHTML=(P[dvTab]||P.over)();
       body.querySelectorAll("[data-de]").forEach(b=>b.onclick=()=>editDonorField(d,b.dataset.de));
-      body.querySelectorAll("[data-dtg]").forEach(b=>b.onclick=()=>{
+      body.querySelectorAll("[data-dtg]").forEach(b=>b.onclick=async()=>{
         const k=b.dataset.dtg;
         d[k]=!d[k];b.classList.toggle("on",d[k]);
         logAudit(({available:"প্রাপ্যতা",verified:"যাচাই",suspended:"স্থগিত"})[k]+" পরিবর্তন",d.id,"donor");
-        persist();paint();toast("হালনাগাদ হয়েছে","ok")});
+        try{await persist();}catch(e){restoreLastPersistedDB();paint();return toast("হালনাগাদ সংরক্ষণ করা যায়নি","er");}
+        paint();toast("হালনাগাদ হয়েছে","ok")});
       body.querySelectorAll("[data-rq]").forEach(b=>b.onclick=()=>go(CUR,"live"));
       body.querySelectorAll("[data-dact]").forEach(b=>b.onclick=()=>donorAction(b.dataset.dact,d));
     };
@@ -4518,7 +4579,7 @@ function initPage() {
         :F.type==="date"?`<input id="di" type="date" value="${esc(cur||"")}" max="${iso(now())}">`
         :`<input id="di" type="${F.type}" value="${esc(cur||"")}" ${F.max?`maxlength="${F.max}"`:""}>`}
       </div>`,`<button class="btn gh" data-close>বাতিল</button><button class="btn" id="dok">সংরক্ষণ</button>`);
-    s.q("#dok").onclick=()=>{
+    s.q("#dok").onclick=async()=>{
       let v=s.q("#di").value.trim();
       if(key==="name"&&v.length<3)return toast("নাম খুব ছোট","er");
       if(key==="phone"&&!phoneOK(v))return toast("সঠিক নম্বর দিন","er");
@@ -4528,7 +4589,8 @@ function initPage() {
         if(a===null||a<DB.rules.minAge||a>DB.rules.maxAge)
           return toast(`জন্ম তারিখ অনুযায়ী বয়স ${bn(DB.rules.minAge)}–${bn(DB.rules.maxAge)} বছরের মধ্যে হতে হবে`,"er");
       }
-      d[key]=v;logAudit("ডোনার তথ্য সম্পাদনা — "+F.t,d.id,"donor");persist();
+      d[key]=v;logAudit("ডোনার তথ্য সম্পাদনা — "+F.t,d.id,"donor");
+      try{await persist();}catch(e){restoreLastPersistedDB();return toast("ডোনার তথ্য সংরক্ষণ করা যায়নি","er");}
       s.close();renderSub("donor");toast("সংরক্ষণ হয়েছে","ok")};
   }
   function donorAction(a,d){
@@ -4539,12 +4601,13 @@ function initPage() {
         <label>স্থান</label><input id="ad_p">
         <label>ব্যাগ</label><input id="ad_b" type="number" value="1" min="1" max="3"></div>`,
         `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="ad_ok">যোগ করুন</button>`);
-      s.q("#ad_ok").onclick=()=>{
+      s.q("#ad_ok").onclick=async()=>{
         const dt=s.q("#ad_d").value,pl=s.q("#ad_p").value.trim()||"অজানা স্থান";
         if(!dt)return toast("তারিখ দিন","er");
         d.log=d.log||[];d.log.push({date:dt,place:pl,bags:+s.q("#ad_b").value||1,ok:true});
         d.donations++;if(!d.last||dt>d.last)d.last=dt;
-        logAudit("রক্তদান যোগ",d.id+" — "+dL(dt),"donation");persist();
+        logAudit("রক্তদান যোগ",d.id+" — "+dL(dt),"donation");
+        try{await persist();}catch(e){restoreLastPersistedDB();return toast("রক্তদান সংরক্ষণ করা যায়নি","er");}
         s.close();renderSub("donor");toast("রক্তদান যোগ হয়েছে","ok")};
       return;
     }
@@ -4570,26 +4633,29 @@ function initPage() {
       s.querySelectorAll("[data-m]").forEach(b=>b.onclick=async()=>{
         const m=b.dataset.m;s.close();
         if(m==="verify"){d.verified=!d.verified;
-          logAudit(d.verified?"ডোনার যাচাই":"যাচাই বাতিল",d.id,"donor");persist();renderSub("donor");
-          toast("হালনাগাদ হয়েছে","ok")}
+          logAudit(d.verified?"ডোনার যাচাই":"যাচাই বাতিল",d.id,"donor");
+          try{await persist();}catch(e){restoreLastPersistedDB();return toast("হালনাগাদ সংরক্ষণ করা যায়নি","er");}
+          renderSub("donor");toast("হালনাগাদ হয়েছে","ok")}
         if(m==="susp"){
           if(!await confirmS({title:d.suspended?"স্থগিত তুলবেন?":"অ্যাকাউন্ট স্থগিত?",
             desc:d.suspended?"আবার পাবলিক তালিকায় দেখা যাবে।":"পাবলিক তালিকা থেকে লুকানো হবে।",
             danger:!d.suspended}))return;
           d.suspended=!d.suspended;logAudit(d.suspended?"ডোনার স্থগিত":"স্থগিত প্রত্যাহার",d.id,"donor");
-          persist();renderSub("donor");toast("হালনাগাদ হয়েছে","ok")}
+          try{await persist();}catch(e){restoreLastPersistedDB();return toast("হালনাগাদ সংরক্ষণ করা যায়নি","er");}
+          renderSub("donor");toast("হালনাগাদ হয়েছে","ok")}
         if(m==="flag"){
           const fs=sheet("অ্যাডমিনের নজরে আনুন",
             `<p class="hint2" style="margin-bottom:9px">কেন এই রক্তদাতাকে অ্যাডমিনের দেখা দরকার তা লিখুন।
                এটি অপেক্ষমাণ কাজে রিপোর্ট হিসেবে যুক্ত হবে।</p>
              <textarea id="fl_t" rows="3"></textarea>`,
             `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="fl_ok">${SI.send(15)} পাঠান</button>`);
-          fs.q("#fl_ok").onclick=()=>{
+          fs.q("#fl_ok").onclick=async()=>{
             const t=fs.q("#fl_t").value.trim();
             if(!t)return toast("কারণ লিখতে হবে","er");
             DB.queue.unshift({kind:"report",id:"RP-"+(600+DB.queue.length),name:d.name,
               type:"মডারেটরের রিপোর্ট",text:t+" ("+d.id+")",at:new Date().toISOString()});
-            logAudit("অ্যাডমিনের নজরে আনা",d.id,"report");persist();
+            logAudit("অ্যাডমিনের নজরে আনা",d.id,"report");
+            try{await persist();}catch(e){restoreLastPersistedDB();return toast("রিপোর্ট সংরক্ষণ করা যায়নি","er");}
             fs.close();paintTop();paintNav();toast("অ্যাডমিনকে জানানো হয়েছে","ok")};
         }
         if(m==="copy"){
@@ -4605,7 +4671,8 @@ function initPage() {
             desc:"এই রক্তদাতার সব তথ্য মুছে যাবে। সাধারণত স্থগিত করাই ভালো — মুছলে ফেরানো যায় না।",
             ok:"মুছে ফেলুন",danger:true}))return;
           DB.donors=DB.donors.filter(x=>x.id!==d.id);
-          logAudit("ডোনার মুছে ফেলা",d.id+" — "+d.name,"donor");persist();
+          logAudit("ডোনার মুছে ফেলা",d.id+" — "+d.name,"donor");
+          try{await persist();}catch(e){restoreLastPersistedDB();return toast("ডোনার মুছে ফেলা যায়নি","er");}
           go(CUR,"donors");toast("মুছে ফেলা হয়েছে")}
       });
     }
@@ -4714,104 +4781,156 @@ function initPage() {
       cant:all.filter(p=>!perms.includes(p)).slice(0,4).map(nice)};
   }
   
-  function accessSheet(uid){
-    const a=DB.accounts.find(x=>x.uid===uid);if(!a)return;
+  const permissionKeyMap=ps=>Object.fromEntries((ps||[]).map(p=>[String(p).replace(/\./g,"_"),true]));
+  const accountPermissionList=a=>{
+    const role=normRole(a&&a.role);
+    if(role==="user")return [];
+    return Array.isArray(a&&a.permissions)&&a.permissions.length
+      ?a.permissions.slice():(role==="mod"?ROLES.mod.perms.slice():PERMS.slice());
+  };
+
+  async function deleteManagedAccount(uid){
+    if(!can("access.manage")||String(uid)===String(ME.uid))return toast("নিজের অ্যাকাউন্ট মুছতে পারবেন না","er");
+    const a=DB.accounts.find(x=>String(x.uid)===String(uid));
+    if(!a)return;
+    if(!await confirmS({title:"অ্যাকাউন্ট সম্পূর্ণ মুছবেন?",
+      desc:`${a.name||a.email||uid}-এর Firebase Authentication account, Donor ID এবং RTDB-র সকল related data মুছে যাবে। এটি ফেরানো যাবে না।`,
+      ok:"সম্পূর্ণ মুছুন",danger:true}))return;
+    try{
+      await deleteAccountCompletely(uid);
+      DB.accounts=DB.accounts.filter(x=>String(x.uid)!==String(uid));
+      DB.team=DB.team.filter(x=>String(x.uid)!==String(uid));
+      DB.donors=DB.donors.filter(x=>String(x.ownerUid)!==String(uid));
+      renderSub("access");paintNav();paintTop();
+      toast("অ্যাকাউন্ট, Authentication এবং related RTDB data মুছে গেছে","ok");
+    }catch(e){
+      console.warn("complete account deletion:",e&&e.message);
+      toast("অ্যাকাউন্ট সম্পূর্ণ মুছা যায়নি। Cloud Function deploy/সংযোগ পরীক্ষা করুন।","er");
+    }
+  }
+
+  SUBP.access=el=>{
+    if(!can("access.manage"))return el.innerHTML=noPerm();
+    const q=acQuery.trim().toLowerCase();
+    let list=DB.accounts.filter(a=>{
+      if(acFilter==="staff"&&!isStaff(a.role))return false;
+      if(acFilter==="user"&&isStaff(a.role))return false;
+      if(!q)return true;
+      return [a.name,a.username,a.email,a.donorId,a.uid].join(" ").toLowerCase().includes(q);
+    });
+    list.sort((a,b)=>(ROLE_ORDER.indexOf(normRole(b.role))-ROLE_ORDER.indexOf(normRole(a.role)))
+      ||String(a.name||a.email).localeCompare(String(b.name||b.email),"bn"));
+    const staffN=DB.accounts.filter(a=>isStaff(a.role)).length;
+    const userN=DB.accounts.length-staffN;
+    el.innerHTML=`
+      <div class="note i">${SI.info(17)}<span>${tp(
+        "Firebase Realtime Database-এর সব registered account এখানে একবার load হয় এবং live listener-এ পরিবর্তন দেখা হয়। Name, Username, Email, UID বা Donor ID দিয়ে খুঁজুন।",
+        "All registered accounts are loaded once from Firebase Realtime Database and kept live. Search by name, username, email, UID or Donor ID.")}</span></div>
+      <div class="f"><input id="acq" placeholder="নাম, username, email, UID বা Donor ID" value="${esc(acQuery)}" autocomplete="off"></div>
+      <div class="strip chips" id="acf">
+        <button data-f="all" class="${acFilter==="all"?"on":""}">সবাই <i class="c">${bn(DB.accounts.length)}</i></button>
+        <button data-f="staff" class="${acFilter==="staff"?"on":""}">টিমে আছে <i class="c">${bn(staffN)}</i></button>
+        <button data-f="user" class="${acFilter==="user"?"on":""}">সাধারণ <i class="c">${bn(userN)}</i></button>
+      </div>`
+    +(list.length
+      ? `<div class="card pad0">${list.map(a=>`<button class="prow" data-ac="${esc(a.uid)}">
+          ${a.photo?`<img src="${esc(a.photo)}" alt="" style="width:40px;height:40px;border-radius:11px;object-fit:cover;background:var(--card2)">`
+            :`<span class="bg2" style="${isStaff(a.role)?"background:var(--grn-s);color:var(--grn)":"background:var(--red-s);color:var(--red-d)"}">${roleIcon(a.role)}</span>`}
+          <span class="tx"><b>${esc(a.name||a.email||"—")}${a.uid===ME.uid?tp(" (আপনি)"," (you)"):""}</b>
+            <small>@${esc(a.username||"—")} · ${esc(a.email||"—")}</small>
+            <small>UID: ${esc(a.uid)}${a.donorId?" · Donor ID: "+esc(a.donorId):""} · ${esc(a.status||"active")}</small></span>
+          <span class="tag ${isStaff(a.role)?"g":""}">${roleLabel(a.role)}</span>
+        </button>`).join("")}</div>`
+      : `<div class="card">${emptyBox("search","কেউ মেলেনি","অন্য নাম, ইউজারনেম, ইমেইল, UID বা Donor ID দিয়ে চেষ্টা করুন")}</div>`)
+    +`<div class="sec-t">নিরাপত্তা</div>
+      <div class="card"><ul class="wl">
+        <li>শুধু authorized Admin role/access বদলাতে ও account delete করতে পারবেন</li>
+        <li>নিজের Admin role বা permission নিজে বদলানো যায় না</li>
+        <li>Donor-এ conversion করলে staff record এবং তার access সরানো হয়</li>
+        <li>প্রতিটি সফল পরিবর্তন RTDB write শেষ হওয়ার পর audit log-এ থাকে</li>
+      </ul></div>`;
+    let timer;
+    $("#acq").oninput=e=>{acQuery=e.target.value;clearTimeout(timer);
+      timer=setTimeout(()=>{renderSub("access");const i=$("#acq");i.focus();i.setSelectionRange(i.value.length,i.value.length)},280)};
+    el.querySelectorAll("[data-f]").forEach(b=>b.onclick=()=>{acFilter=b.dataset.f;renderSub("access")});
+    el.querySelectorAll("[data-ac]").forEach(b=>b.onclick=()=>accessSheet(b.dataset.ac));
+  };
+
+  function rolePowers(role){
+    if(role==="user")return {can:["Doner Panel ব্যবহার","নিজের তথ্য বদলানো"],cant:["Admin/Moderator Panel ব্যবহার"]};
+    const perms=role==="admin"?PERMS:(ROLES.mod?.perms||[]),nice=p=>PERM_LABEL[p]||p;
+    return {can:perms.slice(0,8).map(nice),cant:PERMS.filter(p=>!perms.includes(p)).slice(0,5).map(nice)};
+  }
+
+  async function accessSheet(uid){
+    const a=DB.accounts.find(x=>String(x.uid)===String(uid));if(!a)return;
     a.role=normRole(a.role);
-    const isMe=uid===ME.uid;
-    const donor=a.donorId?DB.donors.find(d=>d.id===a.donorId):null;
+    const isMe=String(uid)===String(ME.uid);
     let pick=a.role;
-  
-    const body=()=>`
-      <div class="per"><span class="bg2" style="width:46px;height:46px;border-radius:50%;
-        ${isStaff(a.role)?"background:var(--grn-s);color:var(--grn)":"background:var(--red-s);color:var(--red-d)"};
-        font-size:1.15rem">${roleIcon(a.role)}</span>
-        <div class="i"><b>${esc(a.name)}</b><small>@${esc(a.username)}</small>
-          <small>${esc(a.email)}</small></div></div>
+    let chosen=new Set(accountPermissionList(a));
+    const adminRecord=accountAdmins.find(x=>String(x.uid||x.id)===String(uid))||{};
+    const body=()=>`<div class="per">
+        ${a.photo?`<img src="${esc(a.photo)}" alt="" style="width:46px;height:46px;border-radius:12px;object-fit:cover">`
+          :`<span class="bg2" style="width:46px;height:46px;border-radius:12px;background:${isStaff(a.role)?"var(--grn-s);color:var(--grn)":"var(--red-s);color:var(--red-d)"};font-size:1.15rem">${roleIcon(a.role)}</span>`}
+        <div class="i"><b>${esc(a.name||"—")}</b><small>@${esc(a.username||"—")}</small><small>${esc(a.email||"—")}</small></div></div>
       <div class="kv" style="margin-top:12px">
         <div><span>বর্তমান ভূমিকা</span><b>${roleLabel(a.role)}</b></div>
-        <div><span>যুক্ত হয়েছেন</span><b>${dL(a.joined)}</b></div>
-        ${donor?`<div><span>ডোনার আইডি</span><b>${donor.id}</b></div>
-          <div><span>রক্তের গ্রুপ</span><b>${donor.group} · ${esc(donor.area)}</b></div>`:
-          `<div><span>ডোনার</span><b>${tp("নন","No")}</b></div>`}
+        <div><span>UID</span><b style="word-break:break-all">${esc(a.uid)}</b></div>
+        <div><span>মোবাইল</span><b>${esc(a.phone||"—")}</b></div>
+        <div><span>Donor ID</span><b>${esc(a.donorId||"—")}</b></div>
       </div>
-      ${isMe?`<div class="note w" data-noi18n>${SI.warn(17)}<span>${tp(
-          "নিরাপত্তার জন্য নিজের ভূমিকা নিজে বদলানো যায় না।",
-          "For safety you cannot change your own role.")}</span></div>`:""}
+      <div class="sec-t">অ্যাকাউন্ট তথ্য</div>
+      <div class="f"><label>নাম</label><input id="ac_name" value="${esc(a.name||"")}" ${isMe?"readonly":""}></div>
+      <div class="f"><label>Username</label><input id="ac_user" value="${esc(a.username||"")}" ${isMe?"readonly":""}></div>
+      <div class="f"><label>মোবাইল</label><input id="ac_phone" value="${esc(a.phone||"")}" ${isMe?"readonly":""}></div>
+      ${isMe?`<div class="note w">${SI.warn(17)}<span>নিজের Admin access, role বা permission নিজে remove/change করা যাবে না।</span></div>`:""}
       <div class="sec-t">নতুন ভূমিকা</div>
-        <div class="strip wrap chips" id="acr">${GRANTABLE.map(r=>
-          `<button data-r="${r}" class="${pick===r?"on":""}" ${isMe?"disabled":""}
-            >${ROLE_META[r].icon} ${ROLE_META[r].label}</button>`).join("")}</div>
-        <div id="acpw"></div>
-        <div class="sec-t">কারণ <i style="color:var(--red)">*</i></div>
-        <textarea id="acwhy" rows="2" ${isMe?"disabled":""}></textarea>`;
-  
-    const s=sheet("অ্যাক্সেস ও ভূমিকা",body(),
-      isMe
-        ? `<button class="btn gh w" data-close>বন্ধ</button>`
-        : `<button class="btn gh" data-close>বাতিল</button>
-           <button class="btn" id="acok">${SI.key(15)} সংরক্ষণ</button>`);
-  
-    const paintPowers=()=>{
-      const box=s.q("#acpw");if(!box)return;
-      if(pick===a.role){box.innerHTML=
-        `<p class="hint2" style="margin-top:10px">${tp("এটিই বর্তমান ভূমিকা।","This is the current role.")}</p>`;return}
-      const p=rolePowers(pick);
-      box.innerHTML=`
-        <div class="card flat" style="margin-top:11px;background:var(--card2)">
-          <b style="font-size:.82rem;display:block;margin-bottom:6px">${ROLE_META[pick].icon} ${ROLE_META[pick].label}</b>
-          <p class="hint2" style="margin-bottom:8px">${esc(ROLE_META[pick].desc)}</p>
-          <div style="font-size:.78rem;line-height:1.85">
-            <b style="color:var(--grn)">${tp("যা পারবেন","Can do")}</b>
-            <ul class="wl" style="margin:2px 0 8px">${p.can.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>
-            ${p.cant.length?`<b style="color:var(--red-d)">${tp("যা পারবেন না","Cannot do")}</b>
-            <ul class="wl" style="margin:2px 0 0">${p.cant.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`:""}
-          </div></div>`;
+      <div class="strip wrap chips" id="acr">${GRANTABLE.map(r=>`<button data-r="${r}" class="${pick===r?"on":""}" ${isMe?"disabled":""}>${ROLE_META[r].icon} ${ROLE_META[r].label}</button>`).join("")}</div>
+      <div class="sec-t">Existing permissions / access</div>
+      <div class="pms" id="acperms">${PERMS.map(p=>`<button type="button" data-p="${p}" class="${chosen.has(p)?"on":""}" ${isMe?"disabled":""}>${esc(PERM_LABEL[p]||p)}</button>`).join("")}</div>
+      <p class="hint2" style="margin-top:8px">Role বদলালে default access দেখা যাবে; চাইলে প্রতিটি permission আলাদা করে customize করুন।</p>
+      ${!isMe?`<div class="sec-t">কারণ <i style="color:var(--red)">*</i></div><textarea id="acwhy" rows="2"></textarea>`:""}`;
+    const s=sheet("অ্যাক্সেস ও ভূমিকা",body(),isMe?`<button class="btn gh w" data-close>বন্ধ</button>`:
+      `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="acok">${SI.key(15)} সংরক্ষণ</button>
+       <button class="btn red" id="acdelete">${SI.trash(15)} সম্পূর্ণ account delete</button>`);
+    const updatePermissionView=()=>{
+      s.querySelectorAll("#acperms [data-p]").forEach(x=>x.classList.toggle("on",chosen.has(x.dataset.p)));
     };
-    paintPowers();
-  
     s.querySelectorAll("#acr button").forEach(b=>b.onclick=()=>{
       if(isMe)return;
-      s.querySelectorAll("#acr button").forEach(x=>x.classList.remove("on"));
-      b.classList.add("on");pick=b.dataset.r;paintPowers()});
-  
-    const ok=s.q("#acok");
-    if(ok)ok.onclick=async()=>{
-      if(pick===a.role)return toast(tp("ভূমিকা বদলানো হয়নি","Role unchanged"));
+      pick=b.dataset.r;s.querySelectorAll("#acr button").forEach(x=>x.classList.toggle("on",x===b));
+      chosen=new Set(pick==="admin"?PERMS:pick==="mod"?ROLES.mod.perms:[]);updatePermissionView();
+    });
+    s.querySelectorAll("#acperms [data-p]").forEach(b=>b.onclick=()=>{if(!isMe){chosen.has(b.dataset.p)?chosen.delete(b.dataset.p):chosen.add(b.dataset.p);updatePermissionView()}});
+    s.q("#acdelete")?.addEventListener("click",async()=>{await deleteManagedAccount(uid)});
+    s.q("#acok")?.addEventListener("click",async()=>{
       const why=(s.q("#acwhy").value||"").trim();
-      if(why.length<4)return toast(tp("কারণ লিখতে হবে","A reason is required"),"er");
-      const grant=isStaff(pick);
-      if(!await confirmS({
-        title:grant?tp("অ্যাক্সেস দেবেন?","Grant access?"):tp("অ্যাক্সেস তুলে নেবেন?","Revoke access?"),
-        desc:grant
-          ?`${a.name} ${tp("এখন থেকে","will now be a")} ${ROLE_META[pick].label} ${tp("হিসেবে প্যানেলে ঢুকতে পারবেন।","and can sign in to the panel.")}`
-          :`${a.name} ${tp("আর প্যানেলে ঢুকতে পারবেন না। ডোনার অ্যাকাউন্ট ঠিক থাকবে।","will no longer reach the panel. Their donor account is untouched.")}`,
-        ok:grant?tp("অ্যাক্সেস দিন","Grant"):tp("তুলে নিন","Revoke"),danger:!grant}))return;
-  
-      const before=a.role;
-      a.role=pick;
-      const staffRole = pick === "admin" ? "admin" : pick === "mod" ? "moderator" : "donor";
-      if(grant){
-        setRow(NODES.admins, a.uid, {
-          uid:a.uid, email:a.email||"", name:a.name||"", username:a.username||"",
-          role:staffRole, permissions:pick==="admin"?PERMS:ROLES.mod.perms, updatedAt:nowIso()
-        }).catch(e=>console.warn("role grant:",e&&e.message));
-      }else{
-        removeRow(NODES.admins, a.uid).catch(e=>console.warn("role revoke:",e&&e.message));
-      }
-      updateRow(NODES.users, a.uid, {role:staffRole}).catch(e=>console.warn("user role update:",e&&e.message));
-      /* keep the team list in step: staff appear there, users do not */
-      const tIdx=DB.team.findIndex(t=>t.uid===a.uid);
-      if(isStaff(pick)){
-        if(tIdx<0)DB.team.push({uid:a.uid,name:a.name,role:pick,last:new Date().toISOString()});
-        else DB.team[tIdx].role=pick;
-      }else if(tIdx>=0)DB.team.splice(tIdx,1);
-  
-      logAudit(grant?"অ্যাক্সেস দেওয়া হয়েছে":"অ্যাক্সেস তুলে নেওয়া হয়েছে",
-        `${a.name} · ${roleLabel(before)} → ${roleLabel(pick)} — ${why.slice(0,60)}`,"access");
-      persist();s.close();renderSub("access");paintNav();paintTop();
-      toast(grant?tp(a.name+" এখন "+ROLE_META[pick].label,a.name+" is now "+ROLE_META[pick].label)
-                 :tp("অ্যাক্সেস তুলে নেওয়া হয়েছে","Access revoked"),"ok");
-    };
+      if(why.length<4)return toast("কারণ লিখতে হবে","er");
+      if(!await confirmS({title:"অ্যাক্সেস/তথ্য বদলাবেন?",desc:`${a.name||a.email} এর role, permission বা account তথ্য RTDB-তে update হবে।`,ok:"সংরক্ষণ",danger:false}))return;
+      const name=s.q("#ac_name").value.trim(),username=s.q("#ac_user").value.trim(),phone=s.q("#ac_phone").value.trim();
+      if(name.length<2)return toast("সঠিক নাম লিখুন","er");
+      if(phone&&!phoneOK(phone))return toast("সঠিক মোবাইল নম্বর দিন","er");
+      const roleValue=pick==="admin"?"admin":pick==="mod"?"moderator":"donor";
+      const permissionList=pick==="user"?[]:[...chosen];
+      const staff={uid:String(uid),email:a.email||"",name,username,role:roleValue,
+        permissions:permissionList,permissionMap:permissionKeyMap(permissionList),status:a.status||"active",updatedAt:nowIso()};
+      const paths={
+        [`users/${uid}/name`]:name,[`users/${uid}/username`]:username,[`users/${uid}/phone`]:phone,
+        [`users/${uid}/role`]:roleValue
+      };
+      if(pick==="user")paths[`${NODES.admins}/${uid}`]=null;
+      else paths[`${NODES.admins}/${uid}`]=staff;
+      const btn=s.q("#acok");btn.disabled=true;
+      try{
+        await updatePaths(paths);
+        a.name=name;a.username=username;a.phone=phone;a.role=pick;a.permissions=permissionList;
+        const ti=DB.team.findIndex(t=>String(t.uid)===String(uid));
+        if(pick==="user"){if(ti>=0)DB.team.splice(ti,1);}
+        else {const entry={uid:String(uid),name,username,email:a.email,photo:a.photo,role:pick,status:a.status||"active",permissions:permissionList,last:nowIso()};ti<0?DB.team.push(entry):Object.assign(DB.team[ti],entry);}
+        await logAudit("অ্যাক্সেস/অ্যাকাউন্ট হালনাগাদ",`${name} · ${roleLabel(pick)} · ${why.slice(0,80)}`,"access");
+        s.close();renderSub("access");paintNav();paintTop();toast("RTDB-তে সফলভাবে update হয়েছে","ok");
+      }catch(e){btn.disabled=false;console.warn("access update:",e&&e.message);toast("RTDB update ব্যর্থ — কোনো local success দেখানো হয়নি","er");}
+    });
   }
   
   /* ---------- website editor + live preview ---------- */
@@ -4911,8 +5030,10 @@ function initPage() {
         address:$("#s_ad").value.trim(),facebook:$("#s_fb").value.trim()});
       /* সেভ করলে সরাসরি Main Website-এর src/config/site.ts আপডেট হয় (RTDB নয়) */
       const ok=await saveSiteToSource(s);
-      logAudit("ওয়েবসাইটের তথ্য হালনাগাদ","হোমপেজ","website");persist();
-      toast(ok?"ওয়েবসাইট হালনাগাদ হয়েছে":"সেভ করা যায়নি — dev সার্ভার (npm run dev) চালু নেই",ok?"ok":"er")};
+      if(!ok)return toast("সেভ করা যায়নি — dev সার্ভার (npm run dev) চালু নেই","er");
+      logAudit("ওয়েবসাইটের তথ্য হালনাগাদ","হোমপেজ","website");
+      try{await persist();}catch(e){return toast("পরিবর্তন audit RTDB-তে সংরক্ষণ করা যায়নি","er");}
+      toast("ওয়েবসাইট হালনাগাদ হয়েছে","ok")};
   };
   
   /* ══════════════════════════════════════════════════════════════
@@ -5280,8 +5401,8 @@ function initPage() {
     try{await removePath(path);}
     catch(e){toast("মুছতে ব্যর্থ: "+(e&&e.message||e),"er");return;}
     dbApplyLocal(path,_DEL);
+    await logAudit("ডেটাবেস মুছা","/"+path,"database");
     dbRender();toast("মুছে ফেলা হয়েছে","ok");
-    logAudit("ডেটাবেস মুছা","/"+path,"database");
   }
   /* ---------- সম্পাদনা ---------- (মান dbMirror থেকে — কোনো পৃথক read নয়) */
   async function dbEditSheet(path){
@@ -5299,8 +5420,8 @@ function initPage() {
       try{await setPath(path,r.v);}
       catch(e){toast("সেভ ব্যর্থ: "+(e&&e.message||e),"er");return;}
       dbApplyLocal(path,r.v===null?_DEL:r.v);
+      await logAudit("ডেটাবেস সম্পাদনা","/"+path,"database");
       s.close();dbRender();toast("সংরক্ষণ হয়েছে (RTDB-তে লেখা হয়েছে)","ok");
-      logAudit("ডেটাবেস সম্পাদনা","/"+path,"database");
     };
   }
   /* ---------- চাইল্ড যোগ ---------- */
@@ -5330,8 +5451,8 @@ function initPage() {
       catch(e){toast("যোগ ব্যর্থ: "+(e&&e.message||e),"er");return;}
       dbApplyLocal(childPath,r.v===null?_DEL:r.v);
       if(parentPath)dbOpen.add(parentPath);
+      await logAudit("ডেটাবেস চাইল্ড যোগ","/"+childPath,"database");
       s.close();dbRender();toast("যোগ হয়েছে (RTDB-তে লেখা হয়েছে)","ok");
-      logAudit("ডেটাবেস চাইল্ড যোগ","/"+childPath,"database");
     };
   }
   /* ---------- rename ---------- */
@@ -5357,8 +5478,8 @@ function initPage() {
       dbApplyLocal(path,_DEL);
       dbApplyLocal(realNp,cur);
       dbFocus=realNp;
+      await logAudit("ডেটাবেস rename",`/${path} → /${realNp}`,"database");
       s.close();dbRender();toast("পরিবর্তন হয়েছে","ok");
-      logAudit("ডেটাবেস rename",`/${path} → /${realNp}`,"database");
     };
   }
   /* ---------- breadcrumb + navigation ---------- */
@@ -5442,15 +5563,18 @@ function initPage() {
         <div><span>অবস্থা</span><b>${DB.integr.imgbbKey?"কী সংরক্ষিত":"কী দেওয়া হয়নি"}</b></div>
         <div><span>সর্বোচ্চ আকার</span><b>৩২ MB</b></div></div>
         <p class="hint2" style="margin-top:9px">নিয়ন্ত্রণ → নিয়ম ও সেটিংস থেকে API কী দিলে সরাসরি আপলোড চালু হবে।</p></div>`;
-    el.querySelectorAll("[data-gt]").forEach(b=>b.onclick=()=>{
-      const g=DB.gallery.find(x=>x.id===b.dataset.gt);
+    el.querySelectorAll("[data-gt]").forEach(b=>b.onclick=async()=>{
+      const g=DB.gallery.find(x=>x.id===b.dataset.gt);if(!g)return;
       g.status=g.status==="published"?"draft":"published";
       logAudit("গ্যালারি "+(g.status==="published"?"প্রকাশ":"লুকানো"),g.title,"gallery");
-      persist();renderSub("gallery");toast("হালনাগাদ হয়েছে","ok")});
+      try{await persist();}catch(e){restoreLastPersistedDB();return toast("গ্যালারি হালনাগাদ করা যায়নি","er");}
+      renderSub("gallery");toast("হালনাগাদ হয়েছে","ok")});
     el.querySelectorAll("[data-gd]").forEach(b=>b.onclick=async()=>{
       if(!await confirmS({title:"ছবি মুছবেন?",desc:"ওয়েবসাইট থেকে সরে যাবে।",danger:true}))return;
       DB.gallery=DB.gallery.filter(x=>x.id!==b.dataset.gd);
-      logAudit("গ্যালারি ছবি মুছে ফেলা",b.dataset.gd,"gallery");persist();renderSub("gallery");toast("মুছে ফেলা হয়েছে")});
+      logAudit("গ্যালারি ছবি মুছে ফেলা",b.dataset.gd,"gallery");
+      try{await persist();}catch(e){restoreLastPersistedDB();return toast("ছবি মুছে ফেলা যায়নি","er");}
+      renderSub("gallery");toast("মুছে ফেলা হয়েছে")});
     $("#gUp")&&($("#gUp").onclick=uploadSheet);
   };
   function uploadSheet(){
@@ -5488,7 +5612,9 @@ function initPage() {
         const res=await imgbbUploadImage(file);
         pg.firstElementChild.style.width="100%";
         DB.gallery.push({id:"IMG-"+Date.now().toString(36).toUpperCase(),title:t,url:res.url,imageUrl:res.url,thumbUrl:res.thumbUrl,status:"draft",order:DB.gallery.length+1});
-        logAudit("গ্যালারিতে ছবি যোগ",t,"gallery");persist();s.close();renderSub("gallery");
+        logAudit("গ্যালারিতে ছবি যোগ",t,"gallery");
+        await persist();
+        s.close();renderSub("gallery");
         toast("ছবি আপলোড হয়েছে — খসড়া অবস্থায়","ok");
       }catch(e){
         pg.classList.add("hide");okBtn.disabled=false;
@@ -5500,43 +5626,60 @@ function initPage() {
   /* ---------- notices ---------- */
   SUBP.notice=el=>{
     const may=can("notice.manage");
+    const active=DB.notices.filter(n=>noticeIsActive(n)).length;
     el.innerHTML=(DB.notices.length
       ?`<div class="card pad0">${DB.notices.map(n=>`<div class="row">
-          <span class="ic" style="color:var(--grn)">${SI.bell(18)}</span>
-          <span class="tx"><b>${esc(n.title)}</b><small>${esc(n.audience)} · ${dS(n.from)} – ${dS(n.to)}</small></span>
+          <span class="ic" style="color:${noticeIsActive(n)?"var(--grn)":"var(--mut)"}">${SI.bell(18)}</span>
+          <span class="tx"><b>${esc(n.title||"—")}</b><small>${esc(n.audience||"সবাই")} · target: ${esc(noticeTarget(n.target))} · ${n.from?dS(n.from):"—"} – ${n.to?dS(n.to):"—"}</small></span>
           <span class="rt"><span class="pill ${n.status==="published"?"g":"m"}">${n.status==="published"?"প্রকাশিত":"খসড়া"}</span>
-          ${may?`<button class="btn gh sm" data-nd="${n.id}">${SI.trash(14)}</button>`:""}</span></div>`).join("")}</div>`
-      :`<div class="card">${emptyBox("bell","কোনো নোটিশ নেই","ঘোষণা দিলে ওয়েবসাইট ও অ্যাপে দেখা যাবে")}</div>`)
+          ${may?`<button class="btn gh sm" data-ne="${esc(n.id)}">${SI.edit(14)}</button>
+            <button class="btn gh sm" data-nd="${esc(n.id)}">${SI.trash(14)}</button>`:""}</span></div>`).join("")}</div>`
+      :`<div class="card">${emptyBox("bell","কোনো নোটিশ নেই","ঘোষণা দিলে target অনুযায়ী website, donor বা moderator panel-এ দেখা যাবে")}</div>`)
     +(may?`<button class="btn w" style="margin-top:12px" id="nAdd">${SI.plus(16)} নতুন নোটিশ</button>`:"")
-    +`<div class="sec-t">কোথায় দেখা যাবে</div>
-      <div class="card"><ul class="wl">
-        <li>ওয়েবসাইটের হোমপেজে ব্যানার হিসেবে</li>
-        <li>ডোনার অ্যাপের হোম স্ক্রিনে</li>
-        <li>নির্দিষ্ট গ্রুপ বা এলাকা বেছে দিলে শুধু তাদের কাছে</li></ul></div>`;
+    +`<div class="sec-t">বর্তমান notice flow</div>
+      <div class="card"><p class="hint2">${bn(active)}টি notice এখন date range-এর মধ্যে active। Published notice-এর target অনুযায়ী Donor Panel, Moderator Panel এবং Main Website-এ realtime দেখা যাবে।</p></div>`;
     el.querySelectorAll("[data-nd]").forEach(b=>b.onclick=async()=>{
-      if(!await confirmS({title:"নোটিশ মুছবেন?",danger:true}))return;
-      DB.notices=DB.notices.filter(x=>x.id!==b.dataset.nd);
-      logAudit("নোটিশ মুছে ফেলা",b.dataset.nd,"notice");persist();renderSub("notice");toast("মুছে ফেলা হয়েছে")});
-    $("#nAdd")&&($("#nAdd").onclick=()=>{
-      const s=sheet("নতুন নোটিশ",`<div class="f">
-        <label>শিরোনাম</label><input id="n_t">
-        <label>বিবরণ</label><textarea id="n_b" rows="3"></textarea>
-        <label>কারা দেখবে</label><select id="n_a"><option>সবাই</option>
-          ${GROUPS.map(g=>`<option>${g} গ্রুপ</option>`).join("")}
-          ${AREAS.map(a=>`<option>${a} এলাকা</option>`).join("")}</select>
-        <label>কোথায় দেখাবে</label><select id="n_tg"><option value="all">সব প্যানেল ও ওয়েবসাইট</option><option value="donor">শুধু ডোনার</option><option value="moderator">শুধু মডারেটর</option><option value="website">শুধু ওয়েবসাইট</option></select>
-        <label>শুরু</label><input id="n_f" type="date" value="${iso(now())}">
-        <label>শেষ</label><input id="n_e" type="date" value="${addD(iso(now()),7)}">
-      </div>`,`<button class="btn gh" id="n_dr">খসড়া</button><button class="btn" id="n_ok">${SI.send(15)} প্রকাশ</button>`);
-      const save=st=>{
-        const t=s.q("#n_t").value.trim();if(t.length<4)return toast("শিরোনাম লিখুন","er");
-        DB.notices.unshift({id:"NT-"+(DB.notices.length+2),title:t,body:s.q("#n_b").value.trim(),
-          audience:s.q("#n_a").value,target:s.q("#n_tg").value,status:st,from:s.q("#n_f").value,to:s.q("#n_e").value});
-        logAudit(st==="published"?"নোটিশ প্রকাশ":"নোটিশ খসড়া",t,"notice");
-        persist();s.close();renderSub("notice");toast(st==="published"?"নোটিশ প্রকাশিত":"খসড়া সংরক্ষিত","ok")};
-      s.q("#n_ok").onclick=()=>save("published");
-      s.q("#n_dr").onclick=()=>save("draft")});
+      if(!await confirmS({title:"নোটিশ মুছবেন?",desc:"এই notice সরাসরি Firebase Realtime Database থেকে মুছে যাবে।",ok:"মুছুন",danger:true}))return;
+      try{
+        await removeRow(NODES.notices,b.dataset.nd);
+        DB.notices=DB.notices.filter(x=>String(x.id)!==String(b.dataset.nd));
+        await logAudit("নোটিশ মুছে ফেলা",b.dataset.nd,"notice");renderSub("notice");toast("RTDB থেকে নোটিশ মুছে গেছে","ok");
+      }catch(e){toast("নোটিশ মুছা যায়নি — কোনো local success দেখানো হয়নি","er");}
+    });
+    el.querySelectorAll("[data-ne]").forEach(b=>b.onclick=()=>noticeSheet(DB.notices.find(x=>String(x.id)===String(b.dataset.ne))));
+    $("#nAdd")&&($("#nAdd").onclick=()=>noticeSheet(null));
   };
+  async function noticeSheet(existing){
+    const id=existing?.id||("NT-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,7));
+    const s=sheet(existing?"নোটিশ সম্পাদনা":"নতুন নোটিশ",`<div class="f">
+        <label>শিরোনাম</label><input id="n_t" maxlength="140" value="${esc(existing?.title||"")}">
+        <label>Short message / body</label><textarea id="n_b" rows="3" maxlength="500">${esc(existing?.body||"")}</textarea>
+        <label>কারা দেখবে</label><select id="n_a"><option ${!existing?.audience||existing?.audience==="সবাই"?"selected":""}>সবাই</option>
+          ${GROUPS.map(g=>`<option ${existing?.audience===g+" গ্রুপ"?"selected":""}>${g} গ্রুপ</option>`).join("")}
+          ${AREAS.map(a=>`<option ${existing?.audience===a+" এলাকা"?"selected":""}>${a} এলাকা</option>`).join("")}</select>
+        <label>Target</label><select id="n_tg">
+          ${[["all","All"],["donor","Donor"],["moderator","Moderator"],["website","Website"]].map(([v,l])=>`<option value="${v}" ${(noticeTarget(existing?.target)==v)?"selected":""}>${l}</option>`).join("")}</select>
+        <label>শুরু</label><input id="n_f" type="date" value="${esc(existing?.from||iso(now()))}">
+        <label>শেষ</label><input id="n_e" type="date" value="${esc(existing?.to||addD(iso(now()),7))}">
+      </div>`,`<button class="btn gh" data-close>বাতিল</button><button class="btn gh" id="n_dr">খসড়া</button><button class="btn" id="n_ok">${SI.send(15)} প্রকাশ</button>`);
+    const save=async status=>{
+      const title=s.q("#n_t").value.trim(),body=s.q("#n_b").value.trim(),from=s.q("#n_f").value,to=s.q("#n_e").value;
+      if(title.length<4)return toast("শিরোনাম লিখুন","er");
+      if(from&&to&&from>to)return toast("শেষ তারিখ শুরুর আগে হতে পারবে না","er");
+      const value={...(existing||{}),id,title,body,audience:s.q("#n_a").value,target:noticeTarget(s.q("#n_tg").value),
+        status,from,to,createdAt:existing?.createdAt||nowIso(),updatedAt:nowIso()};
+      const btn=status==="published"?s.q("#n_ok"):s.q("#n_dr");btn.disabled=true;
+      try{
+        await setRow(NODES.notices,id,value);
+        const index=DB.notices.findIndex(n=>String(n.id)===String(id));
+        index<0?DB.notices.unshift(value):DB.notices[index]=value;
+        await logAudit(status==="published"?"নোটিশ প্রকাশ":"নোটিশ খসড়া",title,"notice");
+        s.close();renderSub("notice");toast(status==="published"?"নোটিশ RTDB-তে প্রকাশিত":"নোটিশ RTDB-তে সংরক্ষিত","ok");
+      }catch(e){btn.disabled=false;toast("নোটিশ সংরক্ষণ করা যায়নি — কোনো local success দেখানো হয়নি","er");}
+    };
+    s.q("#n_ok").onclick=async()=>{await save("published")};
+    s.q("#n_dr").onclick=async()=>{await save("draft")};
+  }
   
   /* ---------- inbox ---------- */
   SUBP.inbox=el=>{
@@ -5547,11 +5690,11 @@ function initPage() {
           <span class="rt">${timeAgo(m.at)}</span></button>`).join("")}</div>`
       :`<div class="card">${emptyBox("mail","কোনো বার্তা নেই")}</div>`)
     +(unread()?`<button class="btn gh w" style="margin-top:12px" id="mAll">সব পড়া হিসেবে চিহ্নিত করুন</button>`:"");
-    el.querySelectorAll("[data-ms]").forEach(b=>b.onclick=()=>{
-      const m=DB.messages.find(x=>x.id===b.dataset.ms);m.read=true;
-      /* পড়া-অবস্থা RTDB-তেও সেভ হয় — সব প্যানেলে একই */
-      if(m.id)updateRow(NODES.messages,m.id,{read:true}).catch(e=>console.warn("message read:",e&&e.message));
-      persist();paintTop();
+    el.querySelectorAll("[data-ms]").forEach(b=>b.onclick=async()=>{
+      const m=DB.messages.find(x=>x.id===b.dataset.ms);if(!m)return;
+      try{if(m.id)await updateRow(NODES.messages,m.id,{read:true});}
+      catch(e){return toast("বার্তা পড়া হিসেবে চিহ্নিত করা যায়নি","er");}
+      m.read=true;paintTop();
       sheet(m.name,`<div class="kv"><div><span>ফোন</span><b>${esc(maskPhone(m.phone))}</b></div>
         <div><span>সময়</span><b>${timeAgo(m.at)}</b></div></div>
         <div class="sec-t">বার্তা</div>
@@ -5559,10 +5702,11 @@ function initPage() {
         `<button class="btn gh" data-close>বন্ধ</button>
          <a class="btn" href="tel:${esc(m.phone)}">${SI.phone(15)} কল করুন</a>`);
       renderSub("inbox")});
-    $("#mAll")&&($("#mAll").onclick=()=>{DB.messages.forEach(m=>{m.read=true;
-      /* সব পড়া-হিসেবে চিহ্নিত RTDB-তেও */
-      if(m.id)updateRow(NODES.messages,m.id,{read:true}).catch(()=>{})});
-      persist();
+    $("#mAll")&&($("#mAll").onclick=async()=>{
+      const unread=DB.messages.filter(m=>!m.read&&m.id);
+      try{await Promise.all(unread.map(m=>updateRow(NODES.messages,m.id,{read:true})));}
+      catch(e){return toast("সব বার্তা পড়া হিসেবে চিহ্নিত করা যায়নি","er");}
+      unread.forEach(m=>{m.read=true});
       renderSub("inbox");paintTop();toast("সব পড়া হিসেবে চিহ্নিত","ok")});
   };
   
@@ -5635,10 +5779,13 @@ function initPage() {
       </div>
       <p class="hint2" style="margin-top:9px">এই নিয়মগুলো আবেদন যাচাইয়ের সময় সতর্কতা হিসেবে দেখানো হয়।</p></div>
       <div class="sec-t">অনুমোদন প্রক্রিয়া</div>
-      <div class="card pad0">${[["donorApproval","নতুন ডোনার অনুমোদন লাগবে"],["reqApproval","জরুরি আবেদন অনুমোদন লাগবে"]]
-        .map(([k,t])=>`<label class="row" style="cursor:pointer">
-          <span class="tx"><b>${t}</b><small>${r[k]?"চালু":"বন্ধ"}</small></span>
-          <input type="checkbox" data-rl="${k}" ${r[k]?"checked":""}
+      <div class="card pad0">${[
+        ["donorApproval","নতুন ডোনার approval","নতুন valid Donor application-এ Admin/Moderator approval লাগবে"],
+        ["emergencyApproval","Emergency approval","নতুন জরুরি আবেদন approval queue-তে যাবে"],
+        ["bloodGroupApproval","Blood Group change approval","রক্তের গ্রুপ বদলালে approval লাগবে"]
+      ].map(([k,t,help])=>`<label class="row" style="cursor:pointer">
+          <span class="tx"><b>${t}</b><small>${help} · ${r[k]!==false?"চালু":"বন্ধ"}</small></span>
+          <input type="checkbox" data-rl="${k}" ${r[k]!==false?"checked":""}
             style="width:20px;height:20px;accent-color:var(--grn);flex:none"></label>`).join("")}</div>
       <div class="sec-t">সংযোগ</div>
       <div class="card"><div class="f">
@@ -5654,14 +5801,23 @@ function initPage() {
           <div><span>অডিট রেকর্ড</span><b>${bn(DB.audit.length)}</b></div>
           <div><span>সংরক্ষণ</span><b>Firebase Cloud</b></div></div></div>
       <button class="btn w" style="margin-top:12px" id="rSave">${SI.check(16)} সংরক্ষণ করুন</button>`;
-    el.querySelectorAll("[data-rl]").forEach(c=>c.onchange=()=>{r[c.dataset.rl]=c.checked;persist();renderSub("rules")});
+    el.querySelectorAll("[data-rl]").forEach(c=>c.onchange=async()=>{
+      const key=c.dataset.rl,previous=r[key];r[key]=c.checked;
+      if(key==="emergencyApproval")r.reqApproval=r.emergencyApproval;
+      c.disabled=true;
+      try{await pushSettings();await logAudit("অনুমোদন সেটিংস হালনাগাদ",key+" → "+(c.checked?"ON":"OFF"),"settings");
+        toast("সেটিংস RTDB-তে সংরক্ষিত হয়েছে","ok");renderSub("rules");}
+      catch(e){r[key]=previous;if(key==="emergencyApproval")r.reqApproval=previous;c.checked=!!previous;
+        toast("সেটিংস সংরক্ষণ করা যায়নি","er");}
+    });
     getImgbbKey().then(k=>{if(k){DB.integr.imgbbKey=k;const inp=$("#i_key");if(inp)inp.value=k;}});
-    $("#rSave").onclick=()=>{
+    $("#rSave").onclick=async()=>{
       r.minAge=+$("#r_min").value||18;r.maxAge=+$("#r_max").value||60;r.interval=+$("#r_int").value||90;
       DB.integr.imgbbKey=$("#i_key").value.trim();
-      saveImgbbKey(DB.integr.imgbbKey);  /* RTDB settings/imgbb — সব পেজে শেয়ার, live */
-      logAudit("সেটিংস হালনাগাদ","নিয়ম ও সংযোগ","settings");persist();
-      toast("সেটিংস সংরক্ষিত","ok")};
+      try{await pushSettings();await saveImgbbKey(DB.integr.imgbbKey);
+        await logAudit("সেটিংস হালনাগাদ","নিয়ম ও সংযোগ","settings");
+        toast("সেটিংস RTDB-তে সংরক্ষিত হয়েছে","ok");}
+      catch(e){toast("সেটিংস সংরক্ষণ করা যায়নি","er");}};
   };
   
   /* ---------- global search ---------- */
@@ -5753,10 +5909,10 @@ function initPage() {
           ME.role=PANEL.id==="admin"?"admin":"mod";
           if(user.photoURL)ME.photo=ME.photo||user.photoURL;
           upsertMySession();
-          saveMe();
+          await saveMe();
           /* live sync — নিজের অ্যাকাউন্ট (users/{uid}), টিম (admins),
              অডিট লগ ও বার্তা: সব RTDB থেকে, সব প্যানেলে একই তথ্য */
-          watchMe(user.uid);watchTeam();watchAccounts();watchAudit();watchMessages();
+          watchMe(user.uid);watchTeam();watchAudit();watchMessages();watchAccounts();
           applyLogo(document);
           paintTop();paintNav();
           proceed();
