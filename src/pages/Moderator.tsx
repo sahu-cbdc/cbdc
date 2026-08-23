@@ -4741,13 +4741,14 @@ function initPage() {
         <label>কারা দেখবে</label><select id="n_a"><option>সবাই</option>
           ${GROUPS.map(g=>`<option>${g} গ্রুপ</option>`).join("")}
           ${AREAS.map(a=>`<option>${a} এলাকা</option>`).join("")}</select>
+        <label>কোথায় দেখাবে</label><select id="n_tg"><option value="all">সব প্যানেল ও ওয়েবসাইট</option><option value="donor">শুধু ডোনার</option><option value="moderator">শুধু মডারেটর</option><option value="website">শুধু ওয়েবসাইট</option></select>
         <label>শুরু</label><input id="n_f" type="date" value="${iso(now())}">
         <label>শেষ</label><input id="n_e" type="date" value="${addD(iso(now()),7)}">
       </div>`,`<button class="btn gh" id="n_dr">খসড়া</button><button class="btn" id="n_ok">${SI.send(15)} প্রকাশ</button>`);
       const save=st=>{
         const t=s.q("#n_t").value.trim();if(t.length<4)return toast("শিরোনাম লিখুন","er");
         DB.notices.unshift({id:"NT-"+(DB.notices.length+2),title:t,body:s.q("#n_b").value.trim(),
-          audience:s.q("#n_a").value,status:st,from:s.q("#n_f").value,to:s.q("#n_e").value});
+          audience:s.q("#n_a").value,target:s.q("#n_tg").value,status:st,from:s.q("#n_f").value,to:s.q("#n_e").value});
         logAudit(st==="published"?"নোটিশ প্রকাশ":"নোটিশ খসড়া",t,"notice");
         persist();s.close();renderSub("notice");toast(st==="published"?"নোটিশ প্রকাশিত":"খসড়া সংরক্ষিত","ok")};
       s.q("#n_ok").onclick=()=>save("published");

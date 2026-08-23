@@ -2745,6 +2745,21 @@ function initPage() {
 
   /* ── Team & ভূমিকা — RTDB `admins` node থেকে live ── */
   let stopTeamWatch=()=>{};
+  let stopAccountWatch=()=>{}, accountUsers=[], accountAdmins=[];
+  function refreshAccounts(){
+    const by=new Map();
+    (DB.accounts||[]).forEach(a=>by.set(String(a.uid||a.id),{...a}));
+    accountUsers.forEach(u=>{const uid=String(u.uid||u.id);if(!uid)return;by.set(uid,{...by.get(uid),...u,uid,role:by.get(uid)?.role||u.role||"user"});});
+    accountAdmins.forEach(a=>{const uid=String(a.uid||a.id);if(!uid)return;by.set(uid,{...by.get(uid),...a,uid,role:a.role||by.get(uid)?.role||"mod",permissions:a.permissions||by.get(uid)?.permissions||[]});});
+    DB.accounts=Array.from(by.values()).map(a=>({...a,role:normRole(a.role),phone:a.phone||a.mobile||"",photo:a.photo||a.photoURL||"",status:a.status||"active"}));
+    if(!document.querySelector(".sheet")&&SUB==="access")renderSub("access");
+  }
+  function watchAccounts(){
+    stopAccountWatch();
+    const u=watchList(NODES.users,rows=>{accountUsers=rows.map(x=>({...x,uid:x.uid||x.id}));refreshAccounts()});
+    const a=watchList(NODES.admins,rows=>{accountAdmins=rows.map(x=>({...x,uid:x.uid||x.id}));refreshAccounts()});
+    stopAccountWatch=()=>{u();a()};
+  }
   function watchTeam(){
     stopTeamWatch();
     stopTeamWatch=watchList(NODES.admins,(rows)=>{
@@ -2813,12 +2828,10 @@ function initPage() {
   
   /* ---------- account sub-pages ---------- */
   const ACC_PAGES=[
-    {id:"account",title:"অ্যাকাউন্ট",desc:"নাম, ছবি, ইমেইল, মোবাইল",icon:"user"},
     {id:"security",title:"নিরাপত্তা",desc:"পাসওয়ার্ড, ডিভাইস, কার্যকলাপ",icon:"shield"},
     {id:"privacy",title:"গোপনীয়তা",desc:"কে কী দেখতে পাবে",icon:"eye"},
     {id:"mynotif",title:"বিজ্ঞপ্তি",desc:"কখন জানানো হবে",icon:"bellS"},
     {id:"prefs",title:"পছন্দ",desc:"থিম, প্রদর্শন, শুরুর পাতা",icon:"paint"},
-    {id:"myperm",title:"আমার অনুমতি",desc:"এই প্যানেলে কী কী করতে পারবেন",icon:"lock"},
     {id:"manage",title:"অ্যাকাউন্ট ব্যবস্থাপনা",desc:"তথ্য নামান, অ্যাকাউন্ট মুছুন",icon:"warn"}
   ];
   ACC_PAGES.forEach(p=>SUBS[p.id]={title:p.title,perm:null});
@@ -4394,7 +4407,7 @@ function initPage() {
       if(acFilter==="staff"&&!isStaff(a.role))return false;
       if(acFilter==="user"&&isStaff(a.role))return false;
       if(!q)return true;
-      return [a.name,a.username,a.email,a.donorId].join(" ").toLowerCase().includes(q);
+      return [a.name,a.username,a.email,a.donorId,a.uid].join(" ").toLowerCase().includes(q);
     });
     /* staff first, then alphabetical — the people you manage are on top */
     list.sort((a,b)=>(ROLE_ORDER.indexOf(b.role)-ROLE_ORDER.indexOf(a.role))
@@ -4418,8 +4431,9 @@ function initPage() {
           <span class="bg2" style="${isStaff(a.role)
             ?"background:var(--grn-s);color:var(--grn)":"background:var(--red-s);color:var(--red-d)"}"
             >${roleIcon(a.role)}</span>
-          <span class="tx"><b>${esc(a.name)}${a.uid===ME.uid?tp(" (আপনি)"," (you)"):""}</b>
-            <small>@${esc(a.username)} · ${esc(a.email)}</small></span>
+          <span class="tx"><b>${esc(a.name||a.email||"—")}${a.uid===ME.uid?tp(" (আপনি)"," (you)"):""}</b>
+            <small>@${esc(a.username||"—")} · ${esc(a.email||"—")} · ${esc(a.phone||"—")}</small>
+            <small>UID: ${esc(a.uid)} · ${esc(a.status||"active")}</small></span>
           <span class="tag ${isStaff(a.role)?"g":""}">${roleLabel(a.role)}</span>
         </button>`).join("")}</div>`
       : `<div class="card">${emptyBox("search","কেউ মেলেনি",
@@ -4751,13 +4765,14 @@ function initPage() {
         <label>কারা দেখবে</label><select id="n_a"><option>সবাই</option>
           ${GROUPS.map(g=>`<option>${g} গ্রুপ</option>`).join("")}
           ${AREAS.map(a=>`<option>${a} এলাকা</option>`).join("")}</select>
+        <label>কোথায় দেখাবে</label><select id="n_tg"><option value="all">সব প্যানেল ও ওয়েবসাইট</option><option value="donor">শুধু ডোনার</option><option value="moderator">শুধু মডারেটর</option><option value="website">শুধু ওয়েবসাইট</option></select>
         <label>শুরু</label><input id="n_f" type="date" value="${iso(now())}">
         <label>শেষ</label><input id="n_e" type="date" value="${addD(iso(now()),7)}">
       </div>`,`<button class="btn gh" id="n_dr">খসড়া</button><button class="btn" id="n_ok">${SI.send(15)} প্রকাশ</button>`);
       const save=st=>{
         const t=s.q("#n_t").value.trim();if(t.length<4)return toast("শিরোনাম লিখুন","er");
         DB.notices.unshift({id:"NT-"+(DB.notices.length+2),title:t,body:s.q("#n_b").value.trim(),
-          audience:s.q("#n_a").value,status:st,from:s.q("#n_f").value,to:s.q("#n_e").value});
+          audience:s.q("#n_a").value,target:s.q("#n_tg").value,status:st,from:s.q("#n_f").value,to:s.q("#n_e").value});
         logAudit(st==="published"?"নোটিশ প্রকাশ":"নোটিশ খসড়া",t,"notice");
         persist();s.close();renderSub("notice");toast(st==="published"?"নোটিশ প্রকাশিত":"খসড়া সংরক্ষিত","ok")};
       s.q("#n_ok").onclick=()=>save("published");
@@ -4982,7 +4997,7 @@ function initPage() {
           saveMe();
           /* live sync — নিজের অ্যাকাউন্ট (users/{uid}), টিম (admins),
              অডিট লগ ও বার্তা: সব RTDB থেকে, সব প্যানেলে একই তথ্য */
-          watchMe(user.uid);watchTeam();watchAudit();watchMessages();
+          watchMe(user.uid);watchTeam();watchAccounts();watchAudit();watchMessages();
           applyLogo(document);
           paintTop();paintNav();
           proceed();
