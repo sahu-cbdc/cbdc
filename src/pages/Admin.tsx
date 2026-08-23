@@ -2329,7 +2329,7 @@ function initPage() {
       site:{heroTitle:SITE.hero.title,
         heroText:SITE.hero.text,
         phone:SITE.phone,email:SITE.email,address:SITE.address,
-        facebook:SITE.facebookHandle,showStats:true,showGallery:true,showEmergency:true},
+        facebook:SITE.facebookHandle,showStats:SITE.showStats,showGallery:SITE.showGallery,showEmergency:SITE.showEmergency},
       rules:{minAge:SITE.rules.minAge,maxAge:SITE.rules.maxAge,interval:SITE.rules.interval,donorApproval:true,reqApproval:true},
       integr:{imgbbKey:"",firebase:true}};
   }
@@ -2367,10 +2367,10 @@ function initPage() {
     if(st.accounts.length)DB.accounts=st.accounts.map(x=>CBDCShared.clone(x));
     SHARED_PULLING=false;
   }
-  /* persist() — সব পরিবর্তন Realtime Database-এ। donors/queue/requests/gallery/
-     notices/accounts যায় shared store দিয়ে; site/rules-এর মতো সেটিংস `settings`
-     নোডে। দুটোতেই RTDB listener বসানো, তাই যে-কোনো প্যানেল/পেজে সঙ্গে সঙ্গে
-     পরিবর্তন দেখা যায় — কিছুই দ্বিতীয়বার লিখতে হয় না। */
+  /* persist() — পরিবর্তন Realtime Database-এ। donors/queue/requests/gallery/
+     notices/accounts যায় shared store দিয়ে; rules-এর মতো সেটিংস `settings`
+     নোডে। ওয়েবসাইট (site) সেটিংস RTDB-তে যায় না — সেগুলো saveSiteToSource()
+     সরাসরি Main Website-এর src/config/site.ts-এ লেখে। */
   let SETTINGS_PULLING=false;
   function persist(){
     publishSharedState();
@@ -2380,18 +2380,17 @@ function initPage() {
     if(SETTINGS_PULLING)return;
     try{
       await setRow(NODES.settings,"app",{
-        site:DB.site||{},
         rules:DB.rules||{},
         autoApproveEmergency:!(DB.rules&&DB.rules.reqApproval)
       });
     }catch(e){ console.warn("settings push:", e && e.message); }
   }
-  /* settings live listener — এক প্যানেলে বদলালে অন্য প্যানেল ও ওয়েবসাইটেও সাথে সাথে */
+  /* settings live listener — এক প্যানেলে বদলালে অন্য প্যানেল ও ওয়েবসাইটেও সাথে সাথে
+     (শুধু rules — ওয়েবসাইট site-সেটিংস এখানে নেই, সেগুলো src/config/site.ts থেকে আসে) */
   watchList(NODES.settings,(rows)=>{
     const app=rows.find(r=>r.id==="app");
     if(!app)return;
     SETTINGS_PULLING=true;
-    if(app.site&&typeof app.site==="object")Object.assign(DB.site,app.site);
     if(app.rules&&typeof app.rules==="object")Object.assign(DB.rules,app.rules);
     SETTINGS_PULLING=false;
     try{ if(!document.querySelector(".sheet"))go(CUR,SUB,false,ARG); }catch(e){}
@@ -4382,6 +4381,22 @@ function initPage() {
   }
   
   /* ---------- website editor + live preview ---------- */
+  /* ওয়েবসাইট সেটিংস → Main Website-এর src/config/site.ts (সরাসরি কানেকশন)।
+     এই মানগুলো আর Realtime Database-এ যায় না — dev সার্ভারের ছোট endpoint-এ
+     পাঠানো হয় (vite.config.ts-এর cbdcSiteConfig middleware), সেখান থেকে
+     সরাসরি src/config/site.ts আপডেট হয়। ফাইল বদলালে Vite HMR-এর কারণে
+     Main Website-এ পরিবর্তন সঙ্গে সঙ্গে দেখা যায়। */
+  async function saveSiteToSource(s){
+    try{
+      const res=await fetch(appBase()+"__admin/site-config",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({heroTitle:s.heroTitle,heroText:s.heroText,phone:s.phone,
+          email:s.email,address:s.address,facebook:s.facebook,
+          showStats:!!s.showStats,showGallery:!!s.showGallery,showEmergency:!!s.showEmergency})});
+      const data=await res.json().catch(()=>null);
+      return !!(data&&data.ok);
+    }catch(e){console.warn("site config save:",e&&e.message);return false}
+  }
   function previewDoc(){
     const s=DB.site,c=bloodCounts();
     return `<!doctype html><html lang="bn"><head><meta charset="utf-8">
@@ -4455,13 +4470,15 @@ function initPage() {
     if(ro)return;
     const live=()=>{s.heroTitle=$("#s_ht").value;s.heroText=$("#s_hx").value;s.phone=$("#s_ph").value;pv()};
     ["s_ht","s_hx","s_ph"].forEach(i=>$("#"+i).oninput=live);
-    el.querySelectorAll("[data-tg]").forEach(c=>c.onchange=()=>{s[c.dataset.tg]=c.checked;persist();pv()});
-    $("#stSave").onclick=()=>{
+    el.querySelectorAll("[data-tg]").forEach(c=>c.onchange=()=>{s[c.dataset.tg]=c.checked;saveSiteToSource(s);pv()});
+    $("#stSave").onclick=async()=>{
       Object.assign(s,{heroTitle:$("#s_ht").value.trim(),heroText:$("#s_hx").value.trim(),
         phone:$("#s_ph").value.trim(),email:$("#s_em").value.trim(),
         address:$("#s_ad").value.trim(),facebook:$("#s_fb").value.trim()});
+      /* সেভ করলে সরাসরি Main Website-এর src/config/site.ts আপডেট হয় (RTDB নয়) */
+      const ok=await saveSiteToSource(s);
       logAudit("ওয়েবসাইটের তথ্য হালনাগাদ","হোমপেজ","website");persist();
-      toast("ওয়েবসাইট হালনাগাদ হয়েছে","ok")};
+      toast(ok?"ওয়েবসাইট হালনাগাদ হয়েছে":"সেভ করা যায়নি — dev সার্ভার (npm run dev) চালু নেই",ok?"ok":"er")};
   };
   
   /* ---------- gallery ---------- */
