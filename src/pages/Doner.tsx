@@ -1782,6 +1782,16 @@ function initPage() {
      fallback for legacy local sessions / an approved donor record, but must
      never override a value received from users/{uid}. */
   const validBloodGroup=v=>GROUPS.includes(String(v||"").trim());
+  /* পুরোনো account records-এ group কখনও `group`, `blood_group` বা profile/data
+     object-এর ভেতরে লেখা হয়েছিল। Read করার সময় সবগুলো গ্রহণ করি, কিন্তু নতুন
+     write সবসময় users/{uid}/bloodGroup-এই হয়। */
+  function bloodGroupFromAccountRow(row){
+    if(!row||typeof row!=="object")return "";
+    const candidates=[row.bloodGroup,row.group,row.blood_group,
+      row.profile&&row.profile.bloodGroup,row.account&&row.account.bloodGroup,
+      row.data&&row.data.bloodGroup];
+    return candidates.map(v=>String(v||"").trim()).find(validBloodGroup)||"";
+  }
   function accountBloodGroup(){
     const accountValue=String(STORE.account.bloodGroup||"").trim();
     if(validBloodGroup(accountValue))return accountValue;
@@ -3347,7 +3357,7 @@ function initPage() {
       let serverBloodGroup="";
       try{
         const row=uid?await getRow(NODES.users,uid):null;
-        serverBloodGroup=String(row&&(row.bloodGroup||row.group)||"").trim();
+        serverBloodGroup=bloodGroupFromAccountRow(row);
       }catch(e){ console.warn("become blood group check:",e&&e.message); }
       /* Database-side value wins: if the account already has a blood group,
          registration cannot submit any other value even if the disabled field
@@ -4874,7 +4884,7 @@ function initPage() {
     // solely from donor status: an account may have a group before its first
     // donor application. `group` is accepted for older records and normalized
     // in memory; newly written records use `bloodGroup`.
-    const accountGroup=String(row.bloodGroup || row.group || "").trim();
+    const accountGroup=bloodGroupFromAccountRow(row);
     a.bloodGroup=validBloodGroup(accountGroup)?accountGroup:"";
     // donor fields — একই UID তে donor তথ্য একীভূত, কোনো duplicate নয়
     const _bg = accountGroup;
