@@ -3500,13 +3500,28 @@ function initPage() {
       if(d)d.group=q.to;
       /* অনুমোদনের পর স্থায়ীভাবে আপডেট — users/{uid} ও donors নোডে (আইটেম ১০) */
       if(q.ownerUid){
-        updateRow(NODES.users, q.ownerUid, {bloodGroup:q.to, donorStatus:"approved"}).catch(e=>console.warn("bg update user:",e));
-        findBy(NODES.donors, "ownerUid", q.ownerUid).then(donor=>{
-          if(donor&&donor.id) setRow(NODES.donors, donor.id, {...donor, bloodGroup:q.to, group:q.to}).catch(e=>console.warn("bg update donor:",e));
-        }).catch(e=>console.warn(e));
-        /* অনুরোধের status → Approved (users/{uid}/groupChange) — ডোনার প্যানেল
-           watchRow দিয়ে realtime এই পরিবর্তন দেখে */
-        markGroupChangeStatus(q.ownerUid,"approved",note);
+        /* Account group, public donor group, and request decision must commit
+           together. A root multi-location update is atomic in RTDB, so a
+           network/rules failure cannot leave one of the three stale. */
+        try{
+          const donor=await findBy(NODES.donors, "ownerUid", q.ownerUid);
+          if(!donor||!donor.id)throw new Error("অনুমোদিত ডোনার রেকর্ড পাওয়া যায়নি");
+          const decidedAt=new Date().toISOString();
+          const paths={};
+          paths[`users/${q.ownerUid}/bloodGroup`]=q.to;
+          paths[`users/${q.ownerUid}/donorStatus`]="approved";
+          paths[`users/${q.ownerUid}/groupChange/status`]="approved";
+          paths[`users/${q.ownerUid}/groupChange/decidedAt`]=decidedAt;
+          paths[`users/${q.ownerUid}/groupChange/decidedAtTs`]=serverTime();
+          if(note)paths[`users/${q.ownerUid}/groupChange/note`]=String(note).slice(0,200);
+          paths[`donors/${donor.id}/bloodGroup`]=q.to;
+          paths[`donors/${donor.id}/group`]=q.to;
+          await updatePaths(paths);
+        }catch(e){
+          console.warn("atomic group approval:",e&&e.message);
+          toast("রক্তের গ্রুপ একসাথে হালনাগাদ করা যায়নি — আবেদনটি আবার চেষ্টা করুন।","er");
+          return;
+        }
       }
     }
     if(!ok){

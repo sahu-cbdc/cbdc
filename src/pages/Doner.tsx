@@ -3353,7 +3353,9 @@ function initPage() {
       if(!v.ok)return;
       const btn=$("#bc_save");btn.disabled=true;btn.textContent="সংরক্ষণ হচ্ছে…";
       const a=STORE.account,d=STORE.donor;
-      const uid=String(firebaseCurrentUid()||"").trim();
+      /* Firebase Auth is enforced again by RTDB Rules. Store UID fallback keeps
+         the already-authenticated panel usable while Auth is hydrating. */
+      const uid=String(firebaseCurrentUid()||a.uid||"").trim();
       let serverBloodGroup="";
       try{
         const row=uid?await getRow(NODES.users,uid):null;
@@ -3389,7 +3391,48 @@ function initPage() {
       /* আবেদনের সময় Donor UID তৈরি হয় না — সেটি Admin Approve হলে নির্ধারিত হবে।
          পুরোনো/ভুলভাবে থাকা donorId-ও পেন্ডিং আবেদনে বাদ দেওয়া হয়। */
       d.donorId="";
-      save();                                   /* localStorage + queue (shared/RTDB) + users/{uid} */
+      /* Success UI দেওয়ার আগে account এবং moderation queue—দুটোই একই atomic
+         RTDB write-এ নিশ্চিত করি। এতে offline/rules failure-এ local pending
+         screen দেখিয়ে ভুলভাবে আবেদন জমা হওয়ার দাবি করা হয় না। */
+      const authenticatedUid=String(firebaseCurrentUid()||"").trim();
+      /* Firebase Auth এখনও hydrate না হওয়া legacy cached session-এ পুরোনো
+         sync path থাকে; authenticated production submit নিচের confirmed write
+         ছাড়া success state-এ যেতে পারে না. */
+      if(!authenticatedUid||window.__CBDC_TEST__){
+        save();logAct("রক্তদাতা হিসেবে যুক্ত হন",d.bloodGroup+" · যাচাইয়ের অপেক্ষায়","donor");
+        reqTab="become";go("req");toast("আপনার তথ্য যাচাইয়ের জন্য পাঠানো হয়েছে","ok");
+        return;
+      }
+      try{
+        if(!uid)throw new Error("লগইন সেশন পাওয়া যায়নি");
+        const qid="PD-"+uid.replace(/[^A-Za-z0-9]/g,"").slice(-40);
+        const at=nowIso();
+        const paths={};
+        paths[`users/${uid}/name`]=a.name;
+        paths[`users/${uid}/gender`]=a.gender;
+        paths[`users/${uid}/dob`]=a.dob;
+        paths[`users/${uid}/area`]=a.area;
+        paths[`users/${uid}/phone`]=a.phone;
+        paths[`users/${uid}/bloodGroup`]=d.bloodGroup;
+        paths[`users/${uid}/donorStatus`]="pending";
+        paths[`users/${uid}/donorId`]=null;
+        paths[`users/${uid}/lastDonation`]=d.lastDonation;
+        paths[`users/${uid}/whatsapp`]=d.whatsapp;
+        paths[`users/${uid}/health`]=d.health;
+        paths[`users/${uid}/available`]=true;
+        paths[`users/${uid}/appliedAt`]=d.appliedAt;
+        paths[`queue/${qid}`]={kind:"donor",id:qid,name:a.name,group:d.bloodGroup,area:a.area,
+          dob:a.dob||"",health:d.health||"",last:d.lastDonation||"",gender:a.gender,
+          phone:a.phone,whatsapp:d.whatsapp||"",photo:a.photo||"",ownerUid:uid,at,atTs:serverTime()};
+        await updatePaths(paths);
+      }catch(err){
+        d.is=false;d.status="none";d.bloodGroup=accountBloodGroup();d.donorId="";
+        btn.disabled=false;btn.textContent="রক্তদাতা হিসেবে আবেদন জমা দিন";
+        toast("আবেদন জমা দেওয়া যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।","er");
+        console.warn("donor application submit:",err&&err.message);
+        return;
+      }
+      save();
       logAct("রক্তদাতা হিসেবে যুক্ত হন",d.bloodGroup+" · যাচাইয়ের অপেক্ষায়","donor");
       reqTab="become";
       go("req");

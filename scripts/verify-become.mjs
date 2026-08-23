@@ -66,6 +66,11 @@ function makeDom() {
 
 const dom = makeDom();
 const w = dom.window;
+// This suite has no Firebase emulator. Exercise the legacy in-memory path;
+// production authenticated submissions use the confirmed atomic RTDB write.
+w.__CBDC_TEST__ = true;
+globalThis.__CBDC_TEST__ = true;
+Object.defineProperty(w.navigator, "userAgent", { value: "jsdom", configurable: true });
 
 // Pre-seed a logged-in account that is NOT yet a donor
 const account = {
