@@ -132,6 +132,27 @@
     "settings": {
       ".read": true,
       ".write": "auth != null && root.child('admins').child(auth.uid).exists()"
+    },
+    "audit": {
+      ".read": "auth != null && root.child('admins').child(auth.uid).exists()",
+      ".indexOn": [
+        "at",
+        "mod",
+        "who"
+      ],
+      "$id": {
+        ".write": "auth != null && ((!data.exists() && root.child('admins').child(auth.uid).exists()) || (!newData.exists() && root.child('admins').child(auth.uid).child('role').val() === 'admin'))"
+      }
+    },
+    "messages": {
+      ".read": "auth != null && root.child('admins').child(auth.uid).exists()",
+      ".indexOn": [
+        "read",
+        "at"
+      ],
+      "$id": {
+        ".write": "auth != null && (root.child('admins').child(auth.uid).exists() || !data.exists())"
+      }
     }
   }
 }

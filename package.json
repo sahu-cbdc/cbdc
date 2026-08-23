@@ -12,7 +12,8 @@
     "verify-profile": "node scripts/verify-profile-photo.mjs",
     "verify-realtime": "node scripts/verify-realtime-donors.mjs",
     "verify-group": "node scripts/verify-group-change.mjs",
-    "verify-notify": "node scripts/verify-notify.mjs"
+    "verify-notify": "node scripts/verify-notify.mjs",
+    "verify-panel-rtdb": "node scripts/verify-panel-rtdb.mjs"
   },
   "dependencies": {
     "firebase": "^11.10.0",

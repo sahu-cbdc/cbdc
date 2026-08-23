@@ -120,13 +120,15 @@ metadata** সেভ হয়।
 | `_meta` | counter | `donorCounter/<year>` — পরবর্তী ধারাবাহিক Donor UID-এর atomic counter | public read; authenticated increment |
 | `requests` | push id | patientName, bloodGroup, bags, urgency, status, workflowStatus, hospitalName, hospitalAddress, requesterName, phone, whatsapp, **patientDob**, createdAt, expiresAt, responders | anyone can create; public read; staff manage |
 | `members` | push id | donor sign-up application (status `pending`, **dob**) | anyone can create; owner/staff read |
-| `users` | **auth uid** | uid, name, username, email, phone, **dob**, gender, area, photoURL, provider, role, status, createdAt, **applicationCount**, `data:{donations,mine,notifs,activity}` | owner + staff; `approved` donorStatus admin-only |
+| `users` | **auth uid** | uid, name, username, email, phone, **dob**, gender, area, photoURL, provider, role, status, createdAt, **applicationCount**, `data:{donations,mine,notifs,activity,panel}` — `data/panel`-এ Admin/Moderator প্যানেলের নিজের সেটিংস (security/privacy/notif/prefs), সেশন ও কার্যকলাপ | owner + staff; `approved` donorStatus admin-only |
 | `admins` | **auth uid** | email, role (`admin`/`moderator`), permissions[], name, username, designation | own read; admin write |
 | `queue` | record id | kind (`donor`/`request`/`donation`), name, group, area, **dob**, phone, … | create খোলা (নতুন আবেদনের জন্য); পড়া/সম্পাদনা staff only |
 | *(notification)* | — | Notification **RTDB-তে সংরক্ষিত হয় না** — আলাদা website notification storage (browser localStorage `cbdc.notifications.v1`) | — |
 | `gallery` | image id | title, caption, url (ImgBB link), imageUrl, thumbUrl, status, order | public read; staff write |
 | `notices` | notice id | title, body, audience, status, from, to | public read; staff write |
 | `accounts` | account id | panel/team account records | staff only |
+| `audit` | entry id | প্যানেলের অডিট লগ — at, who, role, act, target, mod | staff read; staff শুধু নতুন entry append করতে পারে (edit নেই), delete শুধু admin |
+| `messages` | message id | ওয়েবসাইটের যোগাযোগ বার্তা — name, phone, text, read, at | staff read; authenticated create, staff manage (read-flag) |
 | `settings` | `imgbb`, `app` | `imgbb:{key,updatedAt}`, `app:{autoApproveEmergency}` | public read; staff write |
 
 > **গুরুত্বপূর্ণ:**

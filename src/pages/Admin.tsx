@@ -11,7 +11,7 @@ import "../lib/store";
 import { initFirebase as initSharedFirebase, NODES } from "../lib/firebase";
 import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
 import { authErrorMessage, resolveUserRole, panelForRole } from "../lib/authx";
-import { getRow, setRow, updateRow, removeRow, watchList, findBy, nowIso, nextDonorId, updatePaths, serverTime } from "../lib/rtdb";
+import { getRow, setRow, updateRow, removeRow, watchList, watchRow, findBy, nowIso, nextDonorId, updatePaths, serverTime } from "../lib/rtdb";
 import { ageText, ageFromDob, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
@@ -2329,7 +2329,7 @@ function initPage() {
       site:{heroTitle:SITE.hero.title,
         heroText:SITE.hero.text,
         phone:SITE.phone,email:SITE.email,address:SITE.address,
-        facebook:SITE.facebookHandle,showStats:true,showGallery:true,showEmergency:true},
+        facebook:SITE.facebookHandle,showStats:SITE.showStats,showGallery:SITE.showGallery,showEmergency:SITE.showEmergency},
       rules:{minAge:SITE.rules.minAge,maxAge:SITE.rules.maxAge,interval:SITE.rules.interval,donorApproval:true,reqApproval:true},
       integr:{imgbbKey:"",firebase:true}};
   }
@@ -2367,10 +2367,10 @@ function initPage() {
     if(st.accounts.length)DB.accounts=st.accounts.map(x=>CBDCShared.clone(x));
     SHARED_PULLING=false;
   }
-  /* persist() — সব পরিবর্তন Realtime Database-এ। donors/queue/requests/gallery/
-     notices/accounts যায় shared store দিয়ে; site/rules-এর মতো সেটিংস `settings`
-     নোডে। দুটোতেই RTDB listener বসানো, তাই যে-কোনো প্যানেল/পেজে সঙ্গে সঙ্গে
-     পরিবর্তন দেখা যায় — কিছুই দ্বিতীয়বার লিখতে হয় না। */
+  /* persist() — পরিবর্তন Realtime Database-এ। donors/queue/requests/gallery/
+     notices/accounts যায় shared store দিয়ে; rules-এর মতো সেটিংস `settings`
+     নোডে। ওয়েবসাইট (site) সেটিংস RTDB-তে যায় না — সেগুলো saveSiteToSource()
+     সরাসরি Main Website-এর src/config/site.ts-এ লেখে। */
   let SETTINGS_PULLING=false;
   function persist(){
     publishSharedState();
@@ -2380,18 +2380,17 @@ function initPage() {
     if(SETTINGS_PULLING)return;
     try{
       await setRow(NODES.settings,"app",{
-        site:DB.site||{},
         rules:DB.rules||{},
         autoApproveEmergency:!(DB.rules&&DB.rules.reqApproval)
       });
     }catch(e){ console.warn("settings push:", e && e.message); }
   }
-  /* settings live listener — এক প্যানেলে বদলালে অন্য প্যানেল ও ওয়েবসাইটেও সাথে সাথে */
+  /* settings live listener — এক প্যানেলে বদলালে অন্য প্যানেল ও ওয়েবসাইটেও সাথে সাথে
+     (শুধু rules — ওয়েবসাইট site-সেটিংস এখানে নেই, সেগুলো src/config/site.ts থেকে আসে) */
   watchList(NODES.settings,(rows)=>{
     const app=rows.find(r=>r.id==="app");
     if(!app)return;
     SETTINGS_PULLING=true;
-    if(app.site&&typeof app.site==="object")Object.assign(DB.site,app.site);
     if(app.rules&&typeof app.rules==="object")Object.assign(DB.rules,app.rules);
     SETTINGS_PULLING=false;
     try{ if(!document.querySelector(".sheet"))go(CUR,SUB,false,ARG); }catch(e){}
@@ -2411,8 +2410,11 @@ function initPage() {
   }
   backfillDonorPhotos();
   function logAudit(act,target,mod){
-    DB.audit.unshift({at:new Date().toISOString(),who:ME.name,role:ME.role,act,target,mod});
-    if(DB.audit.length>300)DB.audit.length=300;persist();
+    const e={at:new Date().toISOString(),who:ME.name,role:ME.role,act,target,mod};
+    DB.audit.unshift(e);
+    if(DB.audit.length>300)DB.audit.length=300;
+    pushAudit(e);   /* RTDB-তে স্থায়ীভাবে থাকে — refresh/login-এর পরেও */
+    persist();
   }
   const maskPhone=p=>can("contact.reveal")?p:String(p).slice(0,5)+"•••••";
   const REST=()=>DB.rules.interval;
@@ -2633,10 +2635,166 @@ function initPage() {
   }
   function saveMe(){try{localStorage.setItem(ACC_LS,JSON.stringify(ME))}catch(e){}
     const t=DB.team.find(x=>x.uid===ME.uid);
-    if(t){t.name=ME.name;t.role=ME.role;persist()}}
+    if(t){t.name=ME.name;t.role=ME.role;persist()}
+    /* localStorage এখানে শুধু cache — আসল উৎস RTDB (users/{uid}) */
+    if(!ME_PULLING&&ME.uid)queueMicrotask(pushMePanel)}
   function logMe(title,detail,type="account"){
     ME.activity.unshift({at:new Date().toISOString(),title,detail,type});
     if(ME.activity.length>60)ME.activity.length=60;saveMe();
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     ME ↔ Realtime Database (RTDB-ই authoritative)
+     ══════════════════════════════════════════════════════════════
+     অ্যাকাউন্টের profile — নাম, username, মোবাইল, DOB, লিঙ্গ, এলাকা, ঠিকানা,
+     পদবি, রক্তের গ্রুপ, শেষ রক্তদান, ছবি — `users/{uid}`-এ সেভ হয় ও সেখান থেকেই
+     আসে (Doner প্যানেল ও রেজিস্ট্রেশনের মতো একই canonical উৎস)।
+     security/privacy/notif/prefs, সেশন ও কার্যকলাপ যায় `users/{uid}/data/panel`-এ
+     (data-র বাকি ভাইবোর — donations/mine/notifs — অক্ষত থাকে)। localStorage
+     শুধু দ্রুত first-paint-এর cache; RTDB-তে মান থাকলে সেটিই জেতে, default
+     শুধু fallback। */
+  let ME_PULLING=false;
+  const ME_PROFILE_KEYS=["name","username","phone","dob","gender","area","address",
+    "designation","bloodGroup","lastDonation"];
+  /* প্রোফাইল বদল → users/{uid} (owner-ই লিখছে — rules অনুমোদিত) */
+  function pushMeProfile(patch){
+    if(!ME.uid)return;
+    const clean={};
+    ME_PROFILE_KEYS.concat(["email","photo","photoURL"]).forEach(k=>{
+      if(patch[k]!==undefined)clean[k]=String(patch[k]).trim()});
+    if(!Object.keys(clean).length)return;
+    updateRow(NODES.users,ME.uid,clean).catch(e=>console.warn("profile push:",e&&e.message));
+    /* অ্যাডমিন হলে staff রেকর্ডেও (admins/{uid}) নাম/username/পদবি সদ্য রাখা হয়,
+       যাতে টিম তালিকা ও role resolve সবসময় হালনাগাদ মান দেখে।
+       (rules: admins/{uid} শুধু অ্যাডমিন role আপডেট করতে পারে — না পারলে চুপচাপ
+       থাকে, users/{uid}-ই তখন canonical) */
+    if(ME.role==="admin"&&["name","username","designation"].some(k=>clean[k]!==undefined)){
+      const ap={updatedAt:nowIso()};
+      ["name","username","designation"].forEach(k=>{if(clean[k]!==undefined)ap[k]=clean[k]});
+      updateRow(NODES.admins,ME.uid,ap).catch(e=>console.warn("admins push:",e&&e.message));
+    }
+  }
+  /* প্যানেল সেটিংস/সেশন/কার্যকলাপ → users/{uid}/data/panel */
+  function pushMePanel(){
+    if(!ME.uid||ME_PULLING)return;
+    const paths={};
+    paths[`users/${ME.uid}/data/panel`]={
+      security:ME.security,privacy:ME.privacy,notif:ME.notif,prefs:ME.prefs,
+      isDonor:ME.isDonor!==false,
+      sessions:(ME.sessions||[]).slice(0,8),
+      activity:(ME.activity||[]).slice(0,60)};
+    updatePaths(paths).catch(e=>console.warn("panel data push:",e&&e.message));
+  }
+  /* users/{uid} row → ME। RTDB-তে খালি মান লোকাল cache-কে override করে না। */
+  function applyMeRow(row){
+    ME_PULLING=true;
+    try{
+      if(row&&typeof row==="object"){
+        ME_PROFILE_KEYS.forEach(k=>{const v=row[k];if(typeof v==="string"&&v.trim()!=="")ME[k]=v});
+        if(row.photoURL!==undefined||row.photo!==undefined)
+          ME.photo=String(row.photoURL||row.photo||"");
+        if(!ME.email&&row.email)ME.email=row.email;
+        if(row.joined)ME.joined=row.joined;
+        const p=(row.data&&row.data.panel)||{};
+        ["security","privacy","notif","prefs"].forEach(k=>{
+          if(p[k]&&typeof p[k]==="object")Object.assign(ME[k],p[k])});
+        if(typeof p.isDonor==="boolean")ME.isDonor=p.isDonor;
+        if(Array.isArray(p.sessions))ME.sessions=p.sessions.filter(s=>s&&s.id);
+        if(Array.isArray(p.activity))ME.activity=p.activity.slice(0,60);
+      }
+      try{localStorage.setItem(ACC_LS,JSON.stringify(ME))}catch(e){}
+    }finally{ME_PULLING=false}
+  }
+  /* live sync — অন্য ডিভাইস/প্যানেলে নিজের অ্যাকাউন্ট বদলালে সাথে সাথে এখানেও */
+  let stopMeWatch=()=>{};
+  const ME_SUBS=["account","security","privacy","mynotif","prefs","devices","myactivity","myperm","manage","team"];
+  function watchMe(uid){
+    stopMeWatch();
+    stopMeWatch=watchRow(NODES.users,uid,(row)=>{
+      if(String(uid)!==String(ME.uid))return;
+      const before=JSON.stringify([ME.name,ME.photo,ME.prefs,ME.sessions.length,ME.activity.length]);
+      applyMeRow(row);
+      applyPrefs();
+      const after=JSON.stringify([ME.name,ME.photo,ME.prefs,ME.sessions.length,ME.activity.length]);
+      if(after===before)return;
+      try{paintTop();paintNav();
+        if(!document.querySelector(".sheet")&&ME_SUBS.includes(SUB))go(CUR,SUB,false,ARG)}catch(e){}
+    });
+  }
+  /* এই ডিভাইসের সেশন — লগইনেই তালিকায় বসে যায় ও RTDB-তে থাকে */
+  function deviceId(){
+    try{let id=localStorage.getItem("cbdc.device");
+      if(!id){id="D-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,6);
+        localStorage.setItem("cbdc.device",id)}
+      return id}catch(e){return"D-this"}
+  }
+  function thisDeviceName(){
+    const u=navigator.userAgent||"";
+    const br=/Edg\//.test(u)?"Edge":/OPR\//.test(u)?"Opera":/Chrome\//.test(u)?"Chrome"
+      :/Safari\//.test(u)?"Safari":/Firefox\//.test(u)?"Firefox":"Browser";
+    const os=/Android/.test(u)?"Android":/iPhone|iPad/.test(u)?"iOS":/Windows/.test(u)?"Windows"
+      :/Mac OS/.test(u)?"macOS":/Linux/.test(u)?"Linux":"";
+    return br+(os?" · "+os:"");
+  }
+  function upsertMySession(){
+    const id=deviceId();
+    ME.sessions=(Array.isArray(ME.sessions)?ME.sessions:[]).map(s=>({...s,cur:false})).filter(s=>s.id!==id);
+    ME.sessions.unshift({id,name:thisDeviceName(),place:"এই ডিভাইস",last:"বর্তমানে সক্রিয়",cur:true,at:new Date().toISOString()});
+    if(ME.sessions.length>8)ME.sessions.length=8;
+  }
+
+  /* ── Team & ভূমিকা — RTDB `admins` node থেকে live ── */
+  let stopTeamWatch=()=>{};
+  function watchTeam(){
+    stopTeamWatch();
+    stopTeamWatch=watchList(NODES.admins,(rows)=>{
+      const t=rows.filter(r=>String(r.status||"")!=="disabled").map(r=>{
+        const raw=String(r.role||"").toLowerCase();
+        return {uid:r.uid||r.id,name:r.name||r.email||"—",
+          role:raw==="admin"?"admin":"mod",last:r.updatedAt||""};
+      });
+      t.sort((a,b)=>(a.role==="admin"?0:1)-(b.role==="admin"?0:1)
+        ||String(a.name).localeCompare(String(a.name),"bn"));
+      if(JSON.stringify(t)===JSON.stringify(DB.team))return;
+      DB.team=t;
+      try{paintNav();
+        if(!document.querySelector(".sheet")&&["team","access"].includes(SUB))go(CUR,SUB,false,ARG)}catch(e){}
+    });
+  }
+
+  /* ── Audit log — RTDB-তে persist (refresh/login-এর পরেও থাকে) ── */
+  function pushAudit(e){
+    const id="A-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,6).toUpperCase();
+    setRow(NODES.audit,id,e).catch(err=>console.warn("audit push:",err&&err.message));
+  }
+  let stopAuditWatch=()=>{};
+  function watchAudit(){
+    stopAuditWatch();
+    stopAuditWatch=watchList(NODES.audit,(rows)=>{
+      const list=rows.map(r=>{
+        const raw=String(r.role||"").toLowerCase();
+        return {at:r.at||"",who:r.who||"",role:raw==="admin"?"admin":"mod",
+          act:r.act||"",target:r.target||"",mod:r.mod||""}})
+        .filter(x=>x.at).sort((a,b)=>b.at.localeCompare(a.at)).slice(0,300);
+      if(JSON.stringify(list)===JSON.stringify(DB.audit))return;
+      DB.audit=list;
+      try{if(!document.querySelector(".sheet")&&(SUB==="audit"||(CUR==="home"&&!SUB)))go(CUR,SUB,false,ARG)}catch(e){}
+    });
+  }
+
+  /* ── Messages/Inbox — RTDB `messages` node থেকে live ── */
+  let stopMessagesWatch=()=>{};
+  function watchMessages(){
+    stopMessagesWatch();
+    stopMessagesWatch=watchList(NODES.messages,(rows)=>{
+      const list=rows.map(r=>({id:r.id,name:r.name||"",phone:r.phone||r.mobile||"",
+        text:r.text||r.message||"",read:r.read===true,at:r.at||r.createdAt||""}))
+        .filter(x=>x.name||x.text).sort((a,b)=>String(b.at).localeCompare(String(a.at)));
+      if(JSON.stringify(list)===JSON.stringify(DB.messages))return;
+      DB.messages=list;
+      try{paintTop();paintNav();
+        if(!document.querySelector(".sheet")&&SUB==="inbox")go(CUR,SUB,false,ARG)}catch(e){}
+    });
   }
   /* replaces the plain object created in the data block */
   ME=Object.assign(loadMe(),{role:ME.role||PANEL.role});
@@ -2968,38 +3126,38 @@ function initPage() {
     };
     if(a==="editName")askText("নাম বদলান","পুরো নাম",ME.name,v=>{
       if(v.length<3){toast("নাম খুব ছোট","er");return false}
-      ME.name=v;logMe("নাম পরিবর্তন",v);back();toast("নাম হালনাগাদ হয়েছে","ok")});
+      ME.name=v;pushMeProfile({name:v});logMe("নাম পরিবর্তন",v);back();toast("নাম হালনাগাদ হয়েছে","ok")});
     if(a==="editUser")askText("Username বদলান","Username",ME.username,v=>{
       if(!/^[a-z0-9._]{3,20}$/.test(v)){toast("৩–২০ অক্ষর, ছোট হাতের ইংরেজি/সংখ্যা","er");return false}
-      ME.username=v;logMe("Username পরিবর্তন","@"+v);back();toast("হালনাগাদ হয়েছে","ok")},
+      ME.username=v;pushMeProfile({username:v});logMe("Username পরিবর্তন","@"+v);back();toast("হালনাগাদ হয়েছে","ok")},
       {hint:"ছোট হাতের ইংরেজি অক্ষর, সংখ্যা, . ও _ ব্যবহার করা যাবে"});
     if(a==="editMail")askText("ইমেইল বদলান","ইমেইল",ME.email,v=>{
       if(!/^\S+@\S+\.\S+$/.test(v)){toast("সঠিক ইমেইল দিন","er");return false}
-      ME.email=v;ME.emailVerified=false;logMe("ইমেইল পরিবর্তন",v,"security");back();
+      ME.email=v;ME.emailVerified=false;pushMeProfile({email:v});logMe("ইমেইল পরিবর্তন",v,"security");back();
       toast("ইমেইল বদলেছে — যাচাই করতে হবে")},
       {hint:"নতুন ইমেইলে একটি যাচাই লিংক পাঠানো হবে।"});
     if(a==="editPhone")askText("মোবাইল বদলান","মোবাইল নম্বর",ME.phone,v=>{
       if(!phoneOK(v)){toast("সঠিক নম্বর দিন (০১…, ১১ সংখ্যা)","er");return false}
-      ME.phone=v;ME.phoneVerified=false;logMe("মোবাইল পরিবর্তন",v,"security");back();
+      ME.phone=v;ME.phoneVerified=false;pushMeProfile({phone:v});logMe("মোবাইল পরিবর্তন",v,"security");back();
       toast("নম্বর হালনাগাদ হয়েছে","ok")},{max:11,mode:"numeric"});
     if(a==="editDob")askText("জন্মতারিখ","জন্মতারিখ",ME.dob,v=>{
-      ME.dob=v;logMe("জন্মতারিখ হালনাগাদ",v?dL(v):"—");back();toast("সংরক্ষিত","ok")},{type:"date"});
+      ME.dob=v;pushMeProfile({dob:v});logMe("জন্মতারিখ হালনাগাদ",v?dL(v):"—");back();toast("সংরক্ষিত","ok")},{type:"date"});
     if(a==="editGender")askText("লিঙ্গ","লিঙ্গ",ME.gender,v=>{
-      ME.gender=v;logMe("লিঙ্গ হালনাগাদ",v);back();toast("সংরক্ষিত","ok")},
+      ME.gender=v;pushMeProfile({gender:v});logMe("লিঙ্গ হালনাগাদ",v);back();toast("সংরক্ষিত","ok")},
       {type:"select",options:["পুরুষ","মহিলা"]});
     if(a==="editArea")askText("এলাকা","এলাকা",ME.area,v=>{
-      ME.area=v;logMe("এলাকা হালনাগাদ",v);back();toast("সংরক্ষিত","ok")},
+      ME.area=v;pushMeProfile({area:v});logMe("এলাকা হালনাগাদ",v);back();toast("সংরক্ষিত","ok")},
       {type:"select",options:AREAS});
     if(a==="editAddr")askText("ঠিকানা","সম্পূর্ণ ঠিকানা",ME.address,v=>{
-      ME.address=v;logMe("ঠিকানা হালনাগাদ",v||"—");back();toast("সংরক্ষিত","ok")},
+      ME.address=v;pushMeProfile({address:v});logMe("ঠিকানা হালনাগাদ",v||"—");back();toast("সংরক্ষিত","ok")},
       {type:"textarea",hint:"পাবলিক তালিকায় সম্পূর্ণ ঠিকানা কখনো দেখানো হয় না।"});
     if(a==="editDesig")askText("পদবি","সংগঠনে আপনার পদবি",ME.designation,v=>{
-      ME.designation=v;logMe("পদবি হালনাগাদ",v||"—");back();toast("সংরক্ষিত","ok")});
+      ME.designation=v;pushMeProfile({designation:v});logMe("পদবি হালনাগাদ",v||"—");back();toast("সংরক্ষিত","ok")});
     if(a==="editBlood")askText("রক্তের গ্রুপ","রক্তের গ্রুপ",ME.bloodGroup,v=>{
-      ME.bloodGroup=v;logMe("রক্তের গ্রুপ হালনাগাদ",v,"donor");back();toast("সংরক্ষিত","ok")},
+      ME.bloodGroup=v;pushMeProfile({bloodGroup:v});logMe("রক্তের গ্রুপ হালনাগাদ",v,"donor");back();toast("সংরক্ষিত","ok")},
       {type:"select",options:GROUPS});
     if(a==="editLastD")askText("সর্বশেষ রক্তদান","তারিখ",ME.lastDonation,v=>{
-      ME.lastDonation=v;logMe("রক্তদানের তারিখ হালনাগাদ",v?dL(v):"—","donor");back();toast("সংরক্ষিত","ok")},
+      ME.lastDonation=v;pushMeProfile({lastDonation:v});logMe("রক্তদানের তারিখ হালনাগাদ",v?dL(v):"—","donor");back();toast("সংরক্ষিত","ok")},
       {type:"date"});
   
     if(a==="editPass"){
@@ -3040,12 +3198,15 @@ function initPage() {
           /* ছবি ImgBB-তে upload → পাওয়া linkটাই প্রোফাইলে সেভ */
           const res=await imgbbUploadImage(f);
           ME.photo=res.url;ME.photoSource="upload";
+          pushMeProfile({photo:res.url,photoURL:res.url});
           logMe("প্রোফাইল ছবি বদলানো হয়েছে","");back();toast("ছবি হালনাগাদ হয়েছে","ok");
         }catch(e){toast(e&&e.message?e.message:"ছবি আপলোড করা যায়নি","er")}
       };
       inp.click();
     }
-    if(a==="photoRm"){ME.photo="";ME.photoSource="";logMe("প্রোফাইল ছবি সরানো হয়েছে","");
+    if(a==="photoRm"){ME.photo="";ME.photoSource="";
+      pushMeProfile({photo:"",photoURL:""});
+      logMe("প্রোফাইল ছবি সরানো হয়েছে","");
       back();toast("ছবি সরানো হয়েছে")}
     if(a==="dlMe"){
       const data={profile:{name:ME.name,username:ME.username,email:ME.email,phone:ME.phone,
@@ -3070,7 +3231,15 @@ function initPage() {
       renderSub(page==="devices"?"devices":page);toast("বাকি সব সেশন বন্ধ হয়েছে","ok")});
     if(a==="resetMe")confirmS({title:"আমার সেটিংস রিসেট?",
       desc:"নাম, ছবি, গোপনীয়তা ও পছন্দ ডিফল্ট অবস্থায় ফিরবে। কাজের ডেটা মুছবে না।",danger:true}).then(y=>{
-      if(!y)return;const role=ME.role;ME=defaultMe();ME.role=role;saveMe();applyPrefs();
+      if(!y)return;
+      /* আইডেন্টিটি (নাম, ছবি, ইমেইল…) RTDB users/{uid}-এ canonical — মুছবে না;
+         শুধু সেটিংস/সেশন/কার্যকলাপ ডিফল্টে ফেরে ও RTDB-তে সেটাই সেভ হয় */
+      const keep={uid:ME.uid,role:ME.role,permissions:ME.permissions,name:ME.name,username:ME.username,
+        email:ME.email,phone:ME.phone,gender:ME.gender,dob:ME.dob,area:ME.area,address:ME.address,
+        photo:ME.photo,photoSource:ME.photoSource,designation:ME.designation,joined:ME.joined,
+        bloodGroup:ME.bloodGroup,lastDonation:ME.lastDonation,isDonor:ME.isDonor};
+      ME=Object.assign(defaultMe(),keep);
+      upsertMySession();saveMe();applyPrefs();
       go("set");toast("রিসেট হয়েছে","ok")});
   }
   
@@ -4382,6 +4551,22 @@ function initPage() {
   }
   
   /* ---------- website editor + live preview ---------- */
+  /* ওয়েবসাইট সেটিংস → Main Website-এর src/config/site.ts (সরাসরি কানেকশন)।
+     এই মানগুলো আর Realtime Database-এ যায় না — dev সার্ভারের ছোট endpoint-এ
+     পাঠানো হয় (vite.config.ts-এর cbdcSiteConfig middleware), সেখান থেকে
+     সরাসরি src/config/site.ts আপডেট হয়। ফাইল বদলালে Vite HMR-এর কারণে
+     Main Website-এ পরিবর্তন সঙ্গে সঙ্গে দেখা যায়। */
+  async function saveSiteToSource(s){
+    try{
+      const res=await fetch(appBase()+"__admin/site-config",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({heroTitle:s.heroTitle,heroText:s.heroText,phone:s.phone,
+          email:s.email,address:s.address,facebook:s.facebook,
+          showStats:!!s.showStats,showGallery:!!s.showGallery,showEmergency:!!s.showEmergency})});
+      const data=await res.json().catch(()=>null);
+      return !!(data&&data.ok);
+    }catch(e){console.warn("site config save:",e&&e.message);return false}
+  }
   function previewDoc(){
     const s=DB.site,c=bloodCounts();
     return `<!doctype html><html lang="bn"><head><meta charset="utf-8">
@@ -4455,13 +4640,15 @@ function initPage() {
     if(ro)return;
     const live=()=>{s.heroTitle=$("#s_ht").value;s.heroText=$("#s_hx").value;s.phone=$("#s_ph").value;pv()};
     ["s_ht","s_hx","s_ph"].forEach(i=>$("#"+i).oninput=live);
-    el.querySelectorAll("[data-tg]").forEach(c=>c.onchange=()=>{s[c.dataset.tg]=c.checked;persist();pv()});
-    $("#stSave").onclick=()=>{
+    el.querySelectorAll("[data-tg]").forEach(c=>c.onchange=()=>{s[c.dataset.tg]=c.checked;saveSiteToSource(s);pv()});
+    $("#stSave").onclick=async()=>{
       Object.assign(s,{heroTitle:$("#s_ht").value.trim(),heroText:$("#s_hx").value.trim(),
         phone:$("#s_ph").value.trim(),email:$("#s_em").value.trim(),
         address:$("#s_ad").value.trim(),facebook:$("#s_fb").value.trim()});
+      /* সেভ করলে সরাসরি Main Website-এর src/config/site.ts আপডেট হয় (RTDB নয়) */
+      const ok=await saveSiteToSource(s);
       logAudit("ওয়েবসাইটের তথ্য হালনাগাদ","হোমপেজ","website");persist();
-      toast("ওয়েবসাইট হালনাগাদ হয়েছে","ok")};
+      toast(ok?"ওয়েবসাইট হালনাগাদ হয়েছে":"সেভ করা যায়নি — dev সার্ভার (npm run dev) চালু নেই",ok?"ok":"er")};
   };
   
   /* ---------- gallery ---------- */
@@ -4587,7 +4774,10 @@ function initPage() {
       :`<div class="card">${emptyBox("mail","কোনো বার্তা নেই")}</div>`)
     +(unread()?`<button class="btn gh w" style="margin-top:12px" id="mAll">সব পড়া হিসেবে চিহ্নিত করুন</button>`:"");
     el.querySelectorAll("[data-ms]").forEach(b=>b.onclick=()=>{
-      const m=DB.messages.find(x=>x.id===b.dataset.ms);m.read=true;persist();paintTop();
+      const m=DB.messages.find(x=>x.id===b.dataset.ms);m.read=true;
+      /* পড়া-অবস্থা RTDB-তেও সেভ হয় — সব প্যানেলে একই */
+      if(m.id)updateRow(NODES.messages,m.id,{read:true}).catch(e=>console.warn("message read:",e&&e.message));
+      persist();paintTop();
       sheet(m.name,`<div class="kv"><div><span>ফোন</span><b>${esc(maskPhone(m.phone))}</b></div>
         <div><span>সময়</span><b>${timeAgo(m.at)}</b></div></div>
         <div class="sec-t">বার্তা</div>
@@ -4595,7 +4785,10 @@ function initPage() {
         `<button class="btn gh" data-close>বন্ধ</button>
          <a class="btn" href="tel:${esc(m.phone)}">${SI.phone(15)} কল করুন</a>`);
       renderSub("inbox")});
-    $("#mAll")&&($("#mAll").onclick=()=>{DB.messages.forEach(m=>m.read=true);persist();
+    $("#mAll")&&($("#mAll").onclick=()=>{DB.messages.forEach(m=>{m.read=true;
+      /* সব পড়া-হিসেবে চিহ্নিত RTDB-তেও */
+      if(m.id)updateRow(NODES.messages,m.id,{read:true}).catch(()=>{})});
+      persist();
       renderSub("inbox");paintTop();toast("সব পড়া হিসেবে চিহ্নিত","ok")});
   };
   
@@ -4772,15 +4965,24 @@ function initPage() {
           const staff=resolved.staff||{};
           ME.uid=user.uid;
           ME.email=email||ME.email;
-          ME.name=staff.name||user.displayName||ME.name;
-          ME.username=staff.username||ME.username||"";
-          ME.designation=staff.designation||ME.designation||"";
+          /* profile-এর authoritative উৎস RTDB users/{uid} — admins রেকর্ড ও Auth
+             display name শুধু fallback (default যেন RTDB-র জায়গা নেয় না)।
+             অন্য ডিভাইস/ব্রাউজার থেকে লগইন করলেও এখান থেকেই সব তথ্য আসে। */
+          try{ applyMeRow(await getRow(NODES.users,user.uid)); }catch(e){console.warn("profile load:",e&&e.message)}
+          ME.name=ME.name||staff.name||user.displayName||"";
+          ME.username=ME.username||staff.username||"";
+          ME.designation=ME.designation||staff.designation||"";
+          if(!ME.joined)ME.joined=iso(now());
           ME.permissions=Array.isArray(staff.permissions)?staff.permissions:null;
           /* RTDB-তে লেখা role → প্যানেলের অভ্যন্তরীণ role */
           const raw=String(staff.role||"").toLowerCase();
           ME.role=PANEL.id==="admin"?"admin":"mod";
           if(user.photoURL)ME.photo=ME.photo||user.photoURL;
+          upsertMySession();
           saveMe();
+          /* live sync — নিজের অ্যাকাউন্ট (users/{uid}), টিম (admins),
+             অডিট লগ ও বার্তা: সব RTDB থেকে, সব প্যানেলে একই তথ্য */
+          watchMe(user.uid);watchTeam();watchAudit();watchMessages();
           applyLogo(document);
           paintTop();paintNav();
           proceed();
