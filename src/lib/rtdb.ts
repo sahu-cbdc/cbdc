@@ -252,6 +252,88 @@ export async function updatePaths(paths: Record<string, any>): Promise<void> {
   await rtdbUpdate(ref(d), paths);
 }
 
+/* ══════════ Generic path helpers (Database Manager) ══════════
+   উপরের helper গুলো node/id-ভিত্তিক; এগুলো যেকোনো root-relative path-এ
+   কাজ করে। অ্যাডমিন প্যানেলের Database Manager-এ ব্যবহৃত হয়। Security Rules
+   যথারীতি প্রযোজ্য — permission না থাকলে Firebase সরাসরি error ফেরত দেয়,
+   কোনো bypass নয়। */
+/** যেকোনো path একবার পড়া — সম্পূর্ণ raw মান (object/array/scalar/null)। */
+export async function getPath(path: string): Promise<any> {
+  const d = db();
+  if (!d) throw new Error("Realtime Database সংযোগ নেই।");
+  const p = String(path || "").replace(/^\/+/, "");
+  const snap = await get(ref(d, p));
+  return snap.val();
+}
+
+/** যেকোনো path-এ মান লেখা (সম্পূর্ণ প্রতিস্থাপন)। value যেকোনো JSON-compatible।
+ *  null লিখলে সেই পথ মুছে যায় (RTDB-এ null = অস্তিত্বহীন)। */
+export async function setPath(path: string, value: any): Promise<void> {
+  const d = db();
+  if (!d) throw new Error("Realtime Database সংযোগ নেই।");
+  const p = String(path || "").replace(/^\/+/, "");
+  await set(ref(d, p), value === undefined ? null : value);
+}
+
+/** যেকোনো path মুছে ফেলা (সহ সব child)। */
+export async function removePath(path: string): Promise<void> {
+  const d = db();
+  if (!d) throw new Error("Realtime Database সংযোগ নেই।");
+  const p = String(path || "").replace(/^\/+/, "");
+  await remove(ref(d, p));
+}
+
+/**
+ * যেকোনো path-এ live listener — raw মান বদলালেই callback চলে; unsubscribe ফেরত দেয়।
+ *
+ * `onErr` দিলে permission/rules-এর error সরাসরি caller-এর কাছে যায় (যেমন Database
+ * Manager যাতে "অ্যাক্সেস নেই" অবস্থা দেখাতে পারে); না দিলে আগের মতো console.warn।
+ */
+export function watchPath(
+  path: string,
+  cb: (value: any) => void,
+  onErr?: (err: Error) => void
+): () => void {
+  /* কোনো silent failure নয় — যদি database instance না থাকে বা setup ব্যর্থ হয়,
+     caller-কে সরাসরি error জানানো হয়, যাতে UI "লোড হচ্ছে…"-এ চিরকাল আটকে না থাকে। */
+  const d = db();
+  if (!d) {
+    const err = new Error("Firebase Realtime Database প্রস্তুত নয় (init হয়নি)।");
+    console.error("watchPath: db not ready for", path);
+    if (typeof onErr === "function") {
+      try { onErr(err); } catch (e) { console.error("watchPath onErr:", e); }
+    }
+    return () => undefined;
+  }
+  const p = String(path || "").replace(/^\/+/, "");
+  const target = p ? ref(d, p) : ref(d);   /* "" → নির্দিষ্ট root reference (path edge-case এড়াতে) */
+  try {
+    return onValue(
+      target,
+      (snap) => {
+        try {
+          cb(snap.val());
+        } catch (e) {
+          /* caller-এর render error লুকিয়ে রাখা হয় না — console-এ দৃশ্যমান */
+          console.error("watchPath cb (" + p + "):", (e as Error)?.message);
+        }
+      },
+      (err) => {
+        if (typeof onErr === "function") {
+          try { onErr(err as Error); } catch (e) { console.error("watchPath onErr:", (err as Error)?.message, e); }
+        } else console.error("watchPath (" + p + "):", err && err.message);
+      }
+    );
+  } catch (e) {
+    const err = new Error("watchPath setup failed: " + ((e as Error)?.message || e));
+    console.error(err.message);
+    if (typeof onErr === "function") {
+      try { onErr(err); } catch (_) { /* ignore */ }
+    }
+    return () => undefined;
+  }
+}
+
 /** একটি ফিল্ডের মান দিয়ে প্রথম মিলে যাওয়া রেকর্ড খোঁজা (index দরকার)। */
 export async function findBy(
   node: string,
@@ -300,4 +382,8 @@ export default {
   stripUndefined,
   serverTime,
   nowIso,
+  getPath,
+  setPath,
+  removePath,
+  watchPath,
 };
