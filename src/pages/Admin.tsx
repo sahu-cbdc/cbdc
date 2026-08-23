@@ -2476,6 +2476,11 @@ function initPage() {
     if(nav&&nav.perm&&!can(nav.perm))id="home";
     if(sub&&SUBS[sub]&&SUBS[sub].perm&&!can(SUBS[sub].perm)){toast("এই অংশে আপনার অনুমতি নেই","er");sub=null}
     CUR=id;SUB=sub;ARG=arg;
+    /* Database Manager-এর একমাত্র realtime root listener শুধু ডেটাবেস
+       সাব-পেজেই থাকে — অন্য কোথাও গেলে সাথে সাথে cleanup হয়, যাতে duplicate
+       listener বা memory leak না হয়। dbStop পরে ডিক্লেয়ার করা হলেও function
+       declaration hoisted হয় এবং initPage-র বডি চলার আগেই তৈরি থাকে। */
+    if(!(id==="set"&&sub==="database")){if(typeof dbStop==="function")dbStop();}
     $$(".scr").forEach(s=>s.classList.remove("on"));
     if(sub){$("#s-sub").classList.add("on");renderSub(sub)}
     else{$("#s-"+id).classList.add("on");RENDER[id]()}
@@ -4666,17 +4671,28 @@ function initPage() {
   };
   
   /* ══════════════════════════════════════════════════════════════
-     DATABASE MANAGER — Firebase Realtime Database-এর সরাসরি দর্শন ও সম্পাদনা
-     • সব মূল node (NODES) লিস্ট হিসেবে দেখায়, expand করলে লোড হয় (lazy)
-     • প্রতিটি node/child দেখা, সম্পাদনা, যোগ, মুছা, rename
-     • সব মানের ধরন: string/number/boolean/null/object/array + raw JSON
-     • Security Rules পুরোপুরি কাজ করে — permission না থাকলে Firebase-ই বাধা দেবে
-     • কোনো RTDB data স্বয়ংক্রিয়ভাবে বদলানো/মুছা/মাইগ্রেট হয় না — শুধু admin-এর নিজের ক্লিকে
+     DATABASE MANAGER — Dynamic, realtime Firebase Realtime Database console
+     • কোনো hardcoded node list নেই — পুরো database একটি realtime root
+       listener-এ মেমরিতে (dbMirror) রাখা হয়; root-এ যা আছে সব দেখায়।
+     • ভবিষ্যতে নতুন node/child যোগ হলে listener-এর মাধ্যমে স্বয়ংক্রিয়ভাবে দেখা যায়।
+     • প্রতিটি node/child: দেখা, সম্পাদনা, যোগ, মুছা, rename, JSON এডিটর।
+     • Realtime: অন্য কোথাও (অ্যাপ/ওয়েবসাইট/মডারেটর) পরিবর্তন হলে এখানেও সাথে সাথে
+       আসে; এখানকার পরিবর্তন সব প্যানেলে যায় (একই Realtime Database)।
+     • Breadcrumb + পথ কপি + পূর্ণ সার্চ (key/value/path)।
+     • Security Rules পুরোপুরি কাজ করে — permission না থাকলে Firebase-ই বাধা দেবে।
+     • কোনো RTDB data স্বয়ংক্রিয়ভাবে বদলানো/মুছা/মাইগ্রেট হয় না — শুধু admin-এর স্পষ্ট
+       Add/Edit/Delete ক্লিকে। একমাত্র listener — পেজ ছাড়লেই go()-এর dbStop এ cleanup।
      ══════════════════════════════════════════════════════════════ */
-  const DB_ROOTS=Object.keys(NODES);
   const DB_MAX_CHILDREN=120;
   const _DEL={};  /* sentinel: in-memory value deletion */
-  let dbEl=null, dbValues={}, dbOpen=new Set(), dbLoading=new Set(), dbErrors={}, dbQuery="";
+  let dbEl=null;            /* বর্তমান ডেটাবেস সাব-পেজ element */
+  let dbMirror=null;        /* সম্পূর্ণ Realtime Database snapshot (realtime) */
+  let dbState="idle";       /* idle|loading|ready|error */
+  let dbErr="";             /* listener-এর সর্বশেষ error (permission ইত্যাদি) */
+  let dbUnsub=null;         /* একমাত্র root listener-এর unsubscribe handle */
+  let dbOpen=new Set();     /* expand করা node-গুলোর path */
+  let dbQuery="";           /* সার্চ টেক্সট */
+  let dbFocus="";           /* breadcrumb-এ ফোকাস করা path (root-relative) */
 
   /* একটি value-র RTDB ধরন */
   function dbType(v){
@@ -4720,63 +4736,69 @@ function initPage() {
     });
     return keys;
   }
-  function dbRootOf(path){return path.split("/")[0];}
-  /* ইন-মেমরি root value থেকে নির্দিষ্ট পথের value বের করো */
+  /* ইন-মেমরি realtime snapshot (dbMirror) থেকে নির্দিষ্ট পথের value বের করো।
+     path "" = পুরো root। যেকোনো গভীরতার path পর্যন্ত নামে। */
   function dbValueAt(path){
-    const root=dbRootOf(path);
-    const rv=dbValues[root];
-    if(rv===undefined)return undefined;
-    if(path===root)return rv;
-    const segs=path.split("/").slice(1);
-    let cur=rv;
+    if(!dbMirror||typeof dbMirror!=="object")return undefined;
+    if(!path)return dbMirror;
+    const segs=String(path).split("/");
+    let cur=dbMirror;
     for(const s of segs){
       if(cur==null||typeof cur!=="object")return undefined;
       cur=cur[s];
     }
     return cur;
   }
-  /* লোকাল value-ট্রি আশাবাদীভাবে আপডেট (network round-trip ছাড়া) */
+  /* লোকাল mirror আশাবাদীভাবে আপডেট করো (server round-trip ছাড়াই তাৎক্ষণিক প্রতিক্রিয়া)।
+     সাথে সাথে root listener আসল মান দিয়ে নিশ্চিত করবে। newVal===_DEL মানে মুছে ফেলা। */
   function dbApplyLocal(path,newVal){
-    const root=dbRootOf(path);
-    if(path===root){
-      if(newVal===_DEL){delete dbValues[root];dbOpen.delete(root);}
-      else dbValues[root]=newVal;
+    if(!dbMirror||typeof dbMirror!=="object")return;
+    if(!path){
+      if(newVal===_DEL)dbMirror={};
+      else dbMirror=newVal;
       return;
     }
-    const rv=dbValues[root];
-    if(!rv||typeof rv!=="object")return;
-    const segs=path.split("/").slice(1);
-    let cur=rv;
+    const segs=String(path).split("/");
+    let cur=dbMirror;
     for(let i=0;i<segs.length-1;i++){
-      if(!cur[segs[i]]||typeof cur[segs[i]]!=="object"){return;}
+      if(!cur[segs[i]]||typeof cur[segs[i]]!=="object"){
+        if(newVal===_DEL)return;
+        cur[segs[i]]={};
+      }
       cur=cur[segs[i]];
     }
     const last=segs[segs.length-1];
-    if(newVal===_DEL)delete cur[last];
+    if(newVal===_DEL){try{delete cur[last];}catch(e){}}
     else cur[last]=newVal;
   }
-  /* একটি মূল node লোড করো (RTDB পুরো subtree একসাথে দেয়) */
-  async function dbLoadRoot(root){
-    dbLoading.add(root);delete dbErrors[root];dbRender();
-    try{
-      const v=await getPath(root);
-      dbValues[root]=v;dbOpen.add(root);
-    }catch(e){
-      dbErrors[root]=(e&&e.message)||String(e);
-    }finally{
-      dbLoading.delete(root);dbRender();
-    }
+  /* একমাত্র realtime root listener চালু করো — পুরো database একসাথে mirror-এ।
+     আগে থেকে চললে কিছু না (duplicate listener হয় না)। */
+  function dbEnsureListener(){
+    if(dbUnsub)return;
+    dbState="loading";dbErr="";dbRender();
+    dbUnsub=watchPath("/",(v)=>{
+      dbMirror=(v&&typeof v==="object")?v:{};
+      dbState="ready";
+      dbRender();
+    },(err)=>{
+      /* permission/rules error সরাসরি পাতায় দেখানো যায় */
+      dbState="error";dbErr=(err&&err.message)||String(err);dbRender();
+    });
   }
-  /* expand/collapse (বা scalar হলে সম্পাদনা) */
+  /* listener বন্ধ করো (পেজ ছাড়ার সময়)। dbMirror রেখে দেওয়া হয় যাতে দ্রুত ফিরে
+     এলে আগের state দেখায়, তারপর listener রিফ্রেশ করে। */
+  function dbStop(){
+    if(dbUnsub){try{dbUnsub();}catch(e){}dbUnsub=null;}
+    dbState="idle";
+  }
+  /* expand/collapse (বা scalar হলে সম্পাদনা) — সবই dbMirror থেকে, কোনো পৃথক লোড নয় */
   function dbToggle(path){
-    const root=dbRootOf(path);
-    if(!(root in dbValues)){dbLoadRoot(root);return;}
     const val=dbValueAt(path);
     if(val&&typeof val==="object"){
       if(dbOpen.has(path))dbOpen.delete(path);else dbOpen.add(path);
-      dbRender();
+      dbFocus=path;dbRender();scrollToNode(path);
     }else{
-      dbEditSheet(path);
+      dbFocus=path;dbEditSheet(path);
     }
   }
   /* tree-র ভেতরে delegated click — action আগে, toggle পরে */
@@ -4788,39 +4810,41 @@ function initPage() {
       else if(a==="add")dbAddSheet(p);
       else if(a==="rename")dbRenameSheet(p);
       else if(a==="del")dbDelete(p);
-      else if(a==="retry"){const r=dbRootOf(p);delete dbErrors[r];dbLoadRoot(r);}
       return;
     }
     const tg=e.target.closest("[data-toggle]");
     if(tg)dbToggle(tg.dataset.toggle);
   }
-  /* রিফ্রেশ: আগে লোড করা সব node আবার লোড */
-  async function dbRefresh(){
-    const roots=Object.keys(dbValues);
-    if(!roots.length){toast("কিছু লোড করা হয়নি","er");return;}
-    for(const r of roots){delete dbValues[r];}
-    dbOpen.clear();dbErrors={};dbRender();
-    for(const r of roots){await dbLoadRoot(r);}
-    toast("রিফ্রেশ হয়েছে","ok");
+  /* রিফ্রেশ: listener বন্ধ করে আবার চালু (সম্পূর্ণ database পুনরায় sync) */
+  function dbRefresh(){
+    dbStop();dbMirror=null;dbState="idle";
+    dbEnsureListener();
+    toast("ডেটাবেস রিফ্রেশ হচ্ছে…","");
   }
   function dbRender(){
     const tree=dbEl&&dbEl.querySelector("#dbtree");
     if(tree)tree.innerHTML=dbTreeHtml();
+    const bc=dbEl&&dbEl.querySelector("#dbcrumb");
+    if(bc)bc.innerHTML=dbCrumbHtml();
   }
+  /* ডায়নামিক রুট — root-এ যা আছে (dbMirror) তার keys, কোনো hardcoded list নয়।
+     ভবিষ্যতে নতুন node যোগ হলে listener-এর মাধ্যমে স্বয়ংক্রিয়ভাবে এখানে আসে। */
   function dbTreeHtml(){
     if(dbQuery.trim())return dbSearchHtml();
-    return DB_ROOTS.map(r=>{
-      if(dbLoading.has(r))return dbRowHtml(r,0,undefined,"loading");
-      if(r in dbErrors)return dbRowHtml(r,0,undefined,"error");
-      if(!(r in dbValues))return dbRowHtml(r,0,undefined,"unloaded");
-      return dbRowHtml(r,0,dbValues[r],"loaded");
-    }).join("");
+    if(dbState==="loading"&&!(dbMirror&&Object.keys(dbMirror).length))
+      return `<div class="empty"><div class="ic">${SI.refresh(26)}</div><b>লোড হচ্ছে…</b><p>সম্পূর্ণ Realtime Database realtime-এ লোড হচ্ছে।</p></div>`;
+    if(dbState==="error")
+      return `<div class="empty"><div class="ic" style="color:var(--red)">${SI.warn(26)}</div><b>অ্যাক্সেস করা যায়নি</b><p>Realtime Database-এর root পড়ার permission নেই বা Security Rules এখনো আপডেট হয়নি। নিশ্চিত হোন যে আপনি admin এবং root-এ admin read অনুমোদিত।</p><p style="font-size:.72rem;color:var(--red-d);word-break:break-word">${esc(dbErr)}</p></div>`;
+    const roots=dbMirror?dbSortKeys(dbMirror):[];
+    if(!roots.length&&dbState==="ready")
+      return `<div class="empty"><div class="ic">${SI.db(26)}</div><b>ডেটাবেস খালি</b><p>Realtime Database-এ এখনো কোনো root node নেই।</p></div>`;
+    return roots.map(r=>dbRowHtml(r,0,dbMirror[r])).join("");
   }
   function chevR(s){return I('<path d="M9 5l7 7-7 7"/>',s);}
   function chevD(s){return I('<path d="M5 9l7 7 7-7"/>',s);}
   function actBtn(a,p){
-    const ic={edit:SI.edit(13),add:SI.plus(13),rename:SI.key(13),del:SI.trash(13),retry:SI.refresh(13)}[a];
-    const tt={edit:"সম্পাদনা",add:"চাইল্ড যোগ",rename:"rename",del:"মুছুন",retry:"আবার"}[a];
+    const ic={edit:SI.edit(13),add:SI.plus(13),rename:SI.key(13),del:SI.trash(13)}[a];
+    const tt={edit:"সম্পাদনা",add:"চাইল্ড যোগ",rename:"rename",del:"মুছুন"}[a];
     return `<button class="btn gh sm" title="${esc(tt)}" data-act="${a}" data-p="${esc(p)}" style="min-height:34px;padding:6px 8px">${ic}</button>`;
   }
   function addChildRow(path,depth){
@@ -4828,83 +4852,74 @@ function initPage() {
     return `<div style="padding:8px ${pad}px;border-bottom:1px solid var(--line);cursor:pointer" data-act="add" data-p="${esc(path)}">
       <span style="display:inline-flex;align-items:center;gap:6px;color:var(--grn);font-size:.77rem;font-weight:700">${SI.plus(13)} চাইল্ড যোগ করুন</span></div>`;
   }
-  function dbRowHtml(path,depth,val,state){
+  /* একটি tree row — state param নেই, সব data dbMirror থেকে (সবসময় loaded)।
+     প্রতিটি row-এ data-path থাকে যাতে breadcrumb থেকে scroll করা যায়। */
+  function dbRowHtml(path,depth,val){
     const key=path.split("/").pop();
     const pad=10+depth*16;
-    let chev,metaHtml,acts="";
-    if(state==="unloaded"){
-      chev=chevR(13);
-      metaHtml=`<span class="tag m">ক্লিক করে লোড করুন</span>`;
-    }else if(state==="loading"){
-      chev=SI.refresh(13);
-      metaHtml=`<span style="color:var(--mut)">লোড হচ্ছে…</span>`;
-    }else if(state==="error"){
-      chev=SI.warn(13);
-      metaHtml=`<span class="tag r">ত্রুটি</span><span style="color:var(--red-d);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(String(dbErrors[dbRootOf(path)]||"").slice(0,100))}</span>`;
-      acts=actBtn("retry",path)+actBtn("del",path);
-    }else{
-      const t=dbType(val);
-      const isC=(t==="object"||t==="array");
-      const open=dbOpen.has(path);
-      chev=isC?(open?chevD(13):chevR(13)):'<span style="color:var(--line)">•</span>';
-      const after=isC
-        ?(dbCount(val)?`<span style="color:var(--mut)">${bn(dbCount(val))}টি</span>`:`<span class="tag a">খালি</span>`)
-        :`<span style="font-family:monospace;color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(dbPreview(val))}</span>`;
-      metaHtml=dbTypeTag(t)+after;
-      acts=actBtn("edit",path)+(isC?actBtn("add",path):"")+(depth>0?actBtn("rename",path):"")+actBtn("del",path);
-    }
-    let html=`<div style="display:flex;align-items:center;gap:7px;padding:8px 10px;padding-left:${pad}px;border-bottom:1px solid var(--line);cursor:pointer" data-toggle="${esc(path)}">`
+    const t=dbType(val);
+    const isC=(t==="object"||t==="array");
+    const open=dbOpen.has(path);
+    const chev=isC?(open?chevD(13):chevR(13)):'<span style="color:var(--line)">•</span>';
+    const after=isC
+      ?(dbCount(val)?`<span style="color:var(--mut)">${bn(dbCount(val))}টি</span>`:`<span class="tag a">খালি</span>`)
+      :`<span style="font-family:monospace;color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(dbPreview(val))}</span>`;
+    const metaHtml=dbTypeTag(t)+after;
+    const acts=actBtn("edit",path)+(isC?actBtn("add",path):"")+(depth>0?actBtn("rename",path):"")+actBtn("del",path);
+    let html=`<div style="display:flex;align-items:center;gap:7px;padding:8px 10px;padding-left:${pad}px;border-bottom:1px solid var(--line);cursor:pointer" data-toggle="${esc(path)}" data-path="${esc(path)}">`
       +`<span style="flex:none;color:var(--mut);width:16px;display:grid;place-items:center;overflow:hidden">${chev}</span>`
-      +`<span style="flex:none;font-weight:700;font-size:.8rem;font-family:monospace;max-width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(key)}</span>`
+      +`<span style="flex:none;font-weight:700;font-size:.8rem;font-family:monospace;max-width:36%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(key)}</span>`
       +`<span style="flex:1;min-width:0;font-size:.73rem;display:flex;align-items:center;gap:6px;overflow:hidden">${metaHtml}</span>`
       +`<span style="flex:none;display:flex;gap:1px">${acts}</span>`
       +`</div>`;
-    if(state==="loaded"){
-      const t=dbType(val);
-      if((t==="object"||t==="array")&&dbOpen.has(path)){
-        const keys=dbSortKeys(val);
-        const shown=keys.slice(0,DB_MAX_CHILDREN);
-        html+=shown.map(k=>dbRowHtml(path+"/"+k,depth+1,val[k],"loaded")).join("");
-        if(keys.length>DB_MAX_CHILDREN){
-          const mp=10+(depth+1)*16;
-          html+=`<div style="padding:7px ${mp}px;color:var(--mut);font-size:.72rem;border-bottom:1px solid var(--line)">… আরও ${bn(keys.length-DB_MAX_CHILDREN)}টি (প্রথম ${bn(DB_MAX_CHILDREN)}টি দেখানো হয়েছে)</div>`;
-        }
-        html+=addChildRow(path,depth+1);
+    if(isC&&open){
+      const keys=dbSortKeys(val);
+      const shown=keys.slice(0,DB_MAX_CHILDREN);
+      html+=shown.map(k=>dbRowHtml(path+"/"+k,depth+1,val[k])).join("");
+      if(keys.length>DB_MAX_CHILDREN){
+        const mp=10+(depth+1)*16;
+        html+=`<div style="padding:7px ${mp}px;color:var(--mut);font-size:.72rem;border-bottom:1px solid var(--line)">… আরও ${bn(keys.length-DB_MAX_CHILDREN)}টি আছে (প্রথম ${bn(DB_MAX_CHILDREN)}টি দেখানো হয়েছে — সরাসরি path দিয়ে খুঁজতে উপরে সার্চ করুন)</div>`;
       }
+      html+=addChildRow(path,depth+1);
     }
     return html;
   }
-  /* search: শুধু লোড করা node-গুলোর key-এর ভেতরে খোঁজে */
+  /* পূর্ণ সার্চ: পুরো dbMirror ঘেঁটে key অথবা value (string/number/boolean) অথবা
+     path-এর সাথে মেলায়; প্রতিটি ফলাফলে সঠিক path দেখায়। */
   function dbSearchHtml(){
     const q=dbQuery.trim().toLowerCase();
-    const out=[];
-    for(const root of Object.keys(dbValues))dbCollect(root,dbValues[root],q,out);
+    const out=[];const seen=new Set();
+    if(dbMirror&&typeof dbMirror==="object")dbCollect("",dbMirror,q,out,seen,500);
     if(!out.length){
-      return `<div class="card"><div class="empty"><div class="ic">${SI.search(26)}</div><b>কিছু পাওয়া যায়নি</b><p>শুধু লোড করা (expand করা) node-এর ভেতরেই খোঁজা হয়। উপরের মূল node গুলো expand করলে আরও ফলাফল আসবে।</p></div></div>`;
+      return `<div class="empty"><div class="ic">${SI.search(26)}</div><b>কিছু পাওয়া যায়নি</b><p>"${esc(dbQuery)}" — key, value, UID, email, নাম বা path-এ কোনো মিল নেই।</p></div>`;
     }
-    out.sort((a,b)=>a.path.localeCompare(b.path,"en",{numeric:true}));
-    return `<div style="padding:8px 12px;color:var(--mut);font-size:.74rem;border-bottom:1px solid var(--line)">${bn(out.length)}টি মিল (লোড করা node-এ)</div>`
-      +out.map(o=>{
+    out.sort((a,b)=>a.path.length-b.path.length||a.path.localeCompare(b.path));
+    const shown=out.slice(0,300);
+    return `<div style="padding:8px 12px;color:var(--mut);font-size:.74rem;border-bottom:1px solid var(--line)">${bn(out.length)}টি মিল ${out.length>300?`(প্রথম ${bn(300)}টি দেখানো হচ্ছে)`:""}</div>`
+      +shown.map(o=>{
         const t=dbType(o.val);
         const prev=o.val&&typeof o.val==="object"?`${bn(dbCount(o.val))}টি আইটেম`:dbPreview(o.val);
-        return `<div style="display:flex;align-items:center;gap:7px;padding:9px 12px;border-bottom:1px solid var(--line);cursor:pointer" data-toggle="${esc(o.path)}">
+        return `<div style="display:flex;align-items:center;gap:7px;padding:9px 12px;border-bottom:1px solid var(--line);cursor:pointer" data-toggle="${esc(o.path)}" data-path="${esc(o.path)}">
           <span style="flex:none;color:var(--grn)">${SI.search(13)}</span>
-          <span style="flex:none;font-weight:700;font-size:.8rem;font-family:monospace">${esc(o.path.split("/").pop())}</span>
+          <span style="flex:none;font-weight:700;font-size:.8rem;font-family:monospace;max-width:30%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(o.key)}</span>
           ${dbTypeTag(t)}
           <span style="flex:1;min-width:0;font-size:.72rem;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(prev)} <span style="color:var(--line)">·</span> /${esc(o.path)}</span>
           <span style="flex:none;display:flex;gap:1px">${actBtn("edit",o.path)+actBtn("del",o.path)}</span></div>`;
       }).join("");
   }
-  function dbCollect(path,val,q,out){
+  function dbCollect(path,val,q,out,seen,limit){
     if(val&&typeof val==="object"){
       for(const k of Object.keys(val)){
-        const cp=path+"/"+k,cv=val[k];
-        if(String(k).toLowerCase().includes(q))out.push({path:cp,val:cv});
-        if(cv&&typeof cv==="object")dbCollect(cp,cv,q,out);
+        if(out.length>=limit)return;
+        const cp=path?path+"/"+k:k,cv=val[k];
+        const kl=String(k).toLowerCase();
+        const match=kl.includes(q)||cp.toLowerCase().includes(q)||(cv!==null&&typeof cv!=="object"&&String(cv).toLowerCase().includes(q));
+        if(match&&!seen.has(cp)){seen.add(cp);out.push({path:cp,key:k,val:cv});}
+        if(cv&&typeof cv==="object")dbCollect(cp,cv,q,out,seen,limit);
       }
     }
   }
-  /* ---------- value editor (sheet) ---------- */
+  /* ---------- value editor (sheet) — সব ধরন: String/Number/Boolean/Null/Object/Array + JSON ---------- */
   function dbEditorHtml(v,pre){
     const has=v!==undefined&&v!==null;
     const t=has?dbType(v):"string";
@@ -4970,19 +4985,16 @@ function initPage() {
     try{await removePath(path);}
     catch(e){toast("মুছতে ব্যর্থ: "+(e&&e.message||e),"er");return;}
     dbApplyLocal(path,_DEL);
-    if(isRoot){delete dbValues[path];dbOpen.delete(path);delete dbErrors[path];}
     dbRender();toast("মুছে ফেলা হয়েছে","ok");
     logAudit("ডেটাবেস মুছা","/"+path,"database");
   }
-  /* ---------- সম্পাদনা ---------- */
+  /* ---------- সম্পাদনা ---------- (মান dbMirror থেকে — কোনো পৃথক read নয়) */
   async function dbEditSheet(path){
-    let cur;
-    try{cur=await getPath(path);}
-    catch(e){toast("পড়া যায়নি: "+(e&&e.message||e),"er");return;}
+    const cur=dbValueAt(path);
     const s=sheet("মান সম্পাদনা — /"+path,`
       <p class="hint2" style="margin-bottom:9px">পথ: <b style="font-family:monospace;word-break:break-all">/${esc(path)}</b></p>
       ${dbEditorHtml(cur,"ed")}
-      <p class="hint2" style="margin-top:10px;color:var(--amb)">সেভ করলে সরাসরি Realtime Database-এ লেখা হবে। "শূন্য/null" ধরন বেছে নিলে এই পথ মুছে যাবে।</p>`,
+      <p class="hint2" style="margin-top:10px;color:var(--amb)">সেভ করলে সরাসরি Realtime Database-এ লেখা হবে (realtime listener সব প্যানেলে আপডেট পাঠাবে)। "শূন্য/null" ধরন বেছে নিলে এই পথ মুছে যাবে।</p>`,
       `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="ed_ok">সংরক্ষণ</button>`);
     dbWireEditor(s,"ed");
     s.q("#ed_ok").onclick=async()=>{
@@ -4992,18 +5004,16 @@ function initPage() {
       try{await setPath(path,r.v);}
       catch(e){toast("সেভ ব্যর্থ: "+(e&&e.message||e),"er");return;}
       dbApplyLocal(path,r.v===null?_DEL:r.v);
-      s.close();dbRender();toast("সংরক্ষণ হয়েছে","ok");
+      s.close();dbRender();toast("সংরক্ষণ হয়েছে (RTDB-তে লেখা হয়েছে)","ok");
       logAudit("ডেটাবেস সম্পাদনা","/"+path,"database");
     };
   }
   /* ---------- চাইল্ড যোগ ---------- */
   async function dbAddSheet(parentPath){
-    let parent;
-    try{parent=await getPath(parentPath);}
-    catch(e){toast("পড়া যায়নি: "+(e&&e.message||e),"er");return;}
+    const parent=dbValueAt(parentPath);
     const isArr=Array.isArray(parent);
     const s=sheet("নতুন চাইল্ড — /"+parentPath,`
-      <p class="hint2" style="margin-bottom:9px">parent: <b style="font-family:monospace;word-break:break-all">/${esc(parentPath)}</b> (${isArr?"array":"object"})</p>
+      <p class="hint2" style="margin-bottom:9px">parent: <b style="font-family:monospace;word-break:break-all">/${esc(parentPath||"(root)")}</b> (${isArr?"array":"object"})</p>
       ${isArr?"":`<div class="f"><label>key <i>*</i></label><input id="ad_k" placeholder="যেমন: name"></div>`}
       ${dbEditorHtml(undefined,"ad")}
       <p class="hint2" style="margin-top:8px">${isArr?"array-তে শেষে যোগ হবে।":"এই key-তে মান সেভ হবে।"}</p>`,
@@ -5019,22 +5029,20 @@ function initPage() {
         if(!key)return toast("key দিন","er");
         if(/[.#$\[\]]/.test(key))return toast("key-এ . # $ [ ] অক্ষর চলবে না","er");
       }
-      const childPath=parentPath+"/"+key;
+      const childPath=parentPath?parentPath+"/"+key:key;
       if(!await confirmS({title:"যোগ করবেন?",desc:`/${childPath} তৈরি হবে।`,ok:"যোগ"}))return;
       try{await setPath(childPath,r.v);}
       catch(e){toast("যোগ ব্যর্থ: "+(e&&e.message||e),"er");return;}
       dbApplyLocal(childPath,r.v===null?_DEL:r.v);
-      dbOpen.add(parentPath);
-      s.close();dbRender();toast("যোগ হয়েছে","ok");
+      if(parentPath)dbOpen.add(parentPath);
+      s.close();dbRender();toast("যোগ হয়েছে (RTDB-তে লেখা হয়েছে)","ok");
       logAudit("ডেটাবেস চাইল্ড যোগ","/"+childPath,"database");
     };
   }
   /* ---------- rename ---------- */
   async function dbRenameSheet(path){
     const segs=path.split("/");const oldKey=segs.pop();const parent=segs.join("/");
-    let cur;
-    try{cur=await getPath(path);}
-    catch(e){toast("পড়া যায়নি: "+(e&&e.message||e),"er");return;}
+    const cur=dbValueAt(path);
     const s=sheet("পথ পরিবর্তন (rename)",`
       <p class="hint2">বর্তমান: <b style="font-family:monospace;word-break:break-all">/${esc(path)}</b></p>
       <div class="f" style="margin-top:8px"><label>নতুন key <i>*</i></label><input id="rn_k" value="${esc(oldKey)}"></div>
@@ -5045,7 +5053,7 @@ function initPage() {
       if(!nk)return toast("key দিন","er");
       if(nk===oldKey)return toast("একই key, কিছু বদলানো হয়নি","er");
       if(/[.#$\[\]]/.test(nk))return toast("key-এ . # $ [ ] অক্ষর চলবে না","er");
-      const realNp=parent+"/"+nk;
+      const realNp=parent?parent+"/"+nk:nk;
       if(!await confirmS({title:"rename করবেন?",desc:`/${path} → /${realNp}`,ok:"পরিবর্তন",danger:true}))return;
       try{
         await setPath(realNp,cur===undefined?null:cur);
@@ -5053,30 +5061,74 @@ function initPage() {
       }catch(e){toast("rename ব্যর্থ: "+(e&&e.message||e),"er");return;}
       dbApplyLocal(path,_DEL);
       dbApplyLocal(realNp,cur);
+      dbFocus=realNp;
       s.close();dbRender();toast("পরিবর্তন হয়েছে","ok");
       logAudit("ডেটাবেস rename",`/${path} → /${realNp}`,"database");
     };
   }
+  /* ---------- breadcrumb + navigation ---------- */
+  function dbCrumbHtml(){
+    const segs=dbFocus?dbFocus.split("/"):[];
+    let acc="";
+    const parts=[`<button class="lnk" data-crumb="" style="font-weight:800;color:var(--grn)">${SI.db(14)} Database</button>`];
+    for(const s of segs){
+      acc=acc?acc+"/"+s:s;
+      parts.push(`<span style="color:var(--line)">/</span><button class="lnk" data-crumb="${esc(acc)}" style="color:var(--ink2);font-family:monospace">${esc(s)}</button>`);
+    }
+    return `<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;padding:8px 10px;font-size:.78rem;border-bottom:1px solid var(--line);background:var(--card2)">${parts.join("")}
+      <button class="btn gh sm" id="dbcopy" style="margin-left:auto;min-height:32px;padding:5px 9px;font-size:.7rem">${SI.card(13)} পথ কপি</button></div>`;
+  }
+  /* ancestor-গুলো expand করলেই কোনো node দৃশ্যমান হয় */
+  function dbOpenPath(path){
+    if(!path)return;
+    const segs=path.split("/");
+    let acc="";
+    for(let i=0;i<segs.length-1;i++){
+      acc=acc?acc+"/"+segs[i]:segs[i];
+      dbOpen.add(acc);
+    }
+    const v=dbValueAt(path);
+    if(v&&typeof v==="object")dbOpen.add(path);
+  }
+  function scrollToNode(path){
+    requestAnimationFrame(()=>{
+      if(!dbEl)return;
+      const nodes=dbEl.querySelectorAll("[data-path]");
+      for(const n of nodes){if(n.getAttribute("data-path")===path){n.scrollIntoView({block:"center"});break;}}
+    });
+  }
+  function dbCrumbClick(e){
+    if(e.target.closest("#dbcopy")){
+      const txt=dbFocus?"/"+dbFocus:"/";
+      navigator.clipboard?.writeText(txt).then(()=>toast("পথ কপি হয়েছে: "+txt,"ok"),()=>toast("কপি করা যায়নি","er"));
+      return;
+    }
+    const c=e.target.closest("[data-crumb]");
+    if(c){const p=c.dataset.crumb;dbFocus=p;dbOpenPath(p);dbRender();scrollToNode(p);}
+  }
   /* ---------- ডেটাবেস পেজ ---------- */
   SUBP.database=el=>{
     dbEl=el;
-    el.innerHTML=ptitle("ডেটাবেস ব্যবস্থাপনা","Firebase Realtime Database — সরাসরি দেখুন ও সম্পাদনা করুন")
-    +`<div class="note w">${SI.warn(17)}<span><b>শুধু অ্যাডমিন।</b> এখানকার প্রতিটি পরিবর্তন সরাসরি Realtime Database-এ লেখা হয় এবং সাথে সাথে কার্যকর হয়। সাবধানে ব্যবহার করুন — Security Rules কাজ করবে, তাই permission না থাকলে Firebase নিজেই error দেখাবে।</span></div>`
+    el.innerHTML=ptitle("ডেটাবেস ব্যবস্থাপনা","Firebase Realtime Database — পুরো tree, realtime")
+    +`<div class="note w">${SI.warn(17)}<span><b>শুধু অ্যাডমিন।</b> এখানে ডেটাবেসের <b>আসল structure</b> realtime-এ দেখা যায় এবং যেকোনো node Add/Edit/Delete/Rename করা যায় — সরাসরি Firebase-এ। অন্য কোথাও পরিবর্তন হলে এখানেও সাথে সাথে দেখা যাবে, আর এখানকার পরিবর্তন সব প্যানেলে চলে যাবে। Security Rules প্রযোজ্য — permission না থাকলে Firebase নিজেই বাধা দেবে।</span></div>`
     +`<div class="frow">
-        <input class="gw" id="dbq" value="${esc(dbQuery)}" placeholder="লোড করা node-এ key দিয়ে খুঁজুন…" autocomplete="off">
+        <input class="gw" id="dbq" value="${esc(dbQuery)}" placeholder="key, value, UID, email, নাম বা path দিয়ে খুঁজুন…" autocomplete="off">
         <button class="btn gh" id="dbr">${SI.refresh(15)} রিফ্রেশ</button>
       </div>`
-    +`<p class="hint2" style="margin-bottom:8px">${bn(DB_ROOTS.length)}টি মূল node। যেকোনো node ক্লিক করে expand করুন (expand করলে সেটি লোড হয়)।</p>`
-    +`<div class="card pad0" id="dbtree"></div>`
-    +`<p class="hint2" style="margin-top:8px">মূল node: ${DB_ROOTS.map(r=>`<span class="tag" style="margin:2px">${esc(r)}</span>`).join("")}</p>`;
+    +`<div class="card pad0" style="margin-bottom:12px">
+        <div id="dbcrumb"></div>
+        <div id="dbtree"></div>
+      </div>`
+    +`<p class="hint2" style="margin-top:6px">${SI.info(13)} প্রতিটি node-এর type, child-সংখ্যা ও path দেখা যায়। ক্লিক করে expand করুন, ডানপাশের বোতামে সম্পাদনা/যোগ/rename/মুছুন। সার্চে পুরো ডেটাবেস ঘাঁটা হয়।</p>`;
     let t;
     const qi=$("#dbq");
     qi.oninput=e=>{clearTimeout(t);const v=e.target.value;t=setTimeout(()=>{dbQuery=v;dbRender();},250);};
     $("#dbr").onclick=dbRefresh;
     $("#dbtree").onclick=dbClick;
+    $("#dbcrumb").onclick=dbCrumbClick;
+    dbEnsureListener();
     dbRender();
   };
-  
   /* ---------- gallery ---------- */
   SUBP.gallery=el=>{
     const may=can("gallery.manage");

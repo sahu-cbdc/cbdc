@@ -48,8 +48,9 @@ ok(rules.rules.users.$uid[".write"] ===
 ok(rules.rules.admins.$uid[".write"] ===
   `auth != null && (${adminRole} || (!newData.exists() && $uid === auth.uid))`,
   "rules: admins — শুধু অ্যাডমিন আপডেট করতে পারে (existing security বজায়)");
-ok(rules.rules[".read"] === false && rules.rules[".write"] === false,
-  "rules: root এখনো default-deny");
+ok(rules.rules[".read"] === `auth != null && ${adminRole}` &&
+  rules.rules[".write"] === `auth != null && ${adminRole}`,
+  "rules: root — শুধু অ্যাডমিন (ডেটাবেস ব্যবস্থাপনার জন্য পুরো tree read/write; per-node rules অপরিবর্তিত)");
 
 /* ─── 3. Source-level wiring (আগে করা হলো — jsdom boot-এর আগেই দ্রুত fail) ─── */
 const adminSrc = readFileSync(path.join(ROOT, "src/pages/Admin.tsx"), "utf8");

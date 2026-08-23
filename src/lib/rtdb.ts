@@ -283,8 +283,17 @@ export async function removePath(path: string): Promise<void> {
   await remove(ref(d, p));
 }
 
-/** যেকোনো path-এ live listener — raw মান বদলালেই callback চলে; unsubscribe ফেরত দেয়। */
-export function watchPath(path: string, cb: (value: any) => void): () => void {
+/**
+ * যেকোনো path-এ live listener — raw মান বদলালেই callback চলে; unsubscribe ফেরত দেয়।
+ *
+ * `onErr` দিলে permission/rules-এর error সরাসরি caller-এর কাছে যায় (যেমন Database
+ * Manager যাতে "অ্যাক্সেস নেই" অবস্থা দেখাতে পারে); না দিলে আগের মতো console.warn।
+ */
+export function watchPath(
+  path: string,
+  cb: (value: any) => void,
+  onErr?: (err: Error) => void
+): () => void {
   const d = db();
   if (!d) return () => undefined;
   const p = String(path || "").replace(/^\/+/, "");
@@ -298,7 +307,10 @@ export function watchPath(path: string, cb: (value: any) => void): () => void {
           console.warn("watchPath cb:", (e as Error)?.message);
         }
       },
-      (err) => console.warn("watchPath:", p, err && err.message)
+      (err) => {
+        if (typeof onErr === "function") onErr(err as Error);
+        else console.warn("watchPath:", p, err && err.message);
+      }
     );
   } catch (e) {
     console.warn("watchPath setup:", (e as Error)?.message);
