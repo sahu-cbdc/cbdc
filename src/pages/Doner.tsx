@@ -1633,6 +1633,10 @@ function initPage() {
       emailVerified:false, phoneVerified:false,
       dob:"", gender:"", area:"",
       address:"",
+      /* users/{uid}/bloodGroup-এর authoritative copy. এটি donor profile-এর
+         অবস্থা থেকে আলাদা: donor আবেদন না থাকলেও account-এ গ্রুপ থাকলে
+         Become form-এ সেটিই lock করার জন্য রাখা হয়। */
+      bloodGroup:"",
       applicationCount:0,
       joined:iso(now())
     },
@@ -1747,7 +1751,7 @@ function initPage() {
      fresh অবস্থায় ফিরিয়ে নেওয়া হয়। */
   function resetUserCache(){
     Object.assign(STORE.account,{uid:"",name:"",username:"",email:"",phone:"",photo:"",photoSource:"none",
-      emailVerified:false,phoneVerified:false,dob:"",gender:"",area:"",address:"",applicationCount:0,joined:iso(now())});
+      emailVerified:false,phoneVerified:false,dob:"",gender:"",area:"",address:"",bloodGroup:"",applicationCount:0,joined:iso(now())});
     Object.assign(STORE.donor,{is:false,status:"none",donorId:"",bloodGroup:"",whatsapp:"",lastDonation:"",
       health:"",available:true,appliedAt:"",cardTheme:"green",groupChange:null});
     Object.assign(STORE.privacy,{profile:"all",showPhone:"responders",showWhatsapp:true,showGroup:true,showArea:true,searchable:true});
@@ -1774,6 +1778,26 @@ function initPage() {
   
   const GROUPS=SITE.bloodGroups.slice();
   const AREAS=SITE.areas.slice();
+  /* Account record is the lock authority. `donor.bloodGroup` remains as a
+     fallback for legacy local sessions / an approved donor record, but must
+     never override a value received from users/{uid}. */
+  const validBloodGroup=v=>GROUPS.includes(String(v||"").trim());
+  /* পুরোনো account records-এ group কখনও `group`, `blood_group` বা profile/data
+     object-এর ভেতরে লেখা হয়েছিল। Read করার সময় সবগুলো গ্রহণ করি, কিন্তু নতুন
+     write সবসময় users/{uid}/bloodGroup-এই হয়। */
+  function bloodGroupFromAccountRow(row){
+    if(!row||typeof row!=="object")return "";
+    const candidates=[row.bloodGroup,row.group,row.blood_group,
+      row.profile&&row.profile.bloodGroup,row.account&&row.account.bloodGroup,
+      row.data&&row.data.bloodGroup];
+    return candidates.map(v=>String(v||"").trim()).find(validBloodGroup)||"";
+  }
+  function accountBloodGroup(){
+    const accountValue=String(STORE.account.bloodGroup||"").trim();
+    if(validBloodGroup(accountValue))return accountValue;
+    const donorValue=String(STORE.donor.bloodGroup||"").trim();
+    return validBloodGroup(donorValue)?donorValue:"";
+  }
   const HOSPITALS=["চট্টগ্রাম মেডিকেল কলেজ হাসপাতাল","চমেক ব্লাড ব্যাংক","ম্যাক্স হাসপাতাল, মেহেদীবাগ",
     "সিএসসিআর হাসপাতাল","পার্কভিউ হাসপাতাল","ইম্পেরিয়াল হাসপাতাল","মেট্রোপলিটন হাসপাতাল",
     "রেড ক্রিসেন্ট ব্লাড ব্যাংক","সন্ধানী, চমেক","ক্লাবের রক্তদান ক্যাম্প"];
@@ -3270,7 +3294,7 @@ function initPage() {
     const dobBounds_=dobBounds(SITE.rules.minAge,SITE.rules.maxAge);
     /* Account/Donor profile-এ রক্তের গ্রুপ আগে থেকেই থাকলে এখানে আর বদলানো যাবে না।
        পরিবর্তন লাগলে শুধু Donor settings → রক্তের গ্রুপ পরিবর্তনের অনুরোধ → Admin approval। */
-    const lockedBloodGroup=GROUPS.includes(d.bloodGroup)?d.bloodGroup:"";
+    const lockedBloodGroup=accountBloodGroup();
     $("#s-become").innerHTML=`
       <h2 class="ptitle">রক্তদাতা হিসেবে যুক্ত হন<small>নিচের তথ্য পূরণ করে আবেদন জমা দিন — অনুমোদনের পর পাবলিক রক্তদাতা তালিকায় যুক্ত হবেন।</small></h2>
       <div class="card">
@@ -3296,9 +3320,9 @@ function initPage() {
         <div class="f"><label>রক্তের গ্রুপ <i>*</i></label>
           <select id="bc_group" name="bc_group" ${lockedBloodGroup?"disabled aria-disabled=\"true\" data-locked=\"1\"":""}>
             <option value="">রক্তের গ্রুপ নির্বাচন করুন</option>
-            ${GROUPS.map(g=>`<option ${d.bloodGroup===g?"selected":""}>${esc(g)}</option>`).join("")}
+            ${GROUPS.map(g=>`<option ${(lockedBloodGroup||d.bloodGroup)===g?"selected":""}>${esc(g)}</option>`).join("")}
           </select>
-          ${lockedBloodGroup?`<span class="hint">রক্তের গ্রুপ পরিবর্তন করতে Donor → রক্তের গ্রুপ পরিবর্তনের অনুরোধ থেকে Admin approval request পাঠান।</span>`:""}</div>
+        </div>
         <div class="f"><label>সর্বশেষ রক্তদান <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
           <input id="bc_last" name="bc_last" type="date" max="${iso(now())}" value="${esc(d.lastDonation||"")}">
           <span class="hint">মনে না থাকলে খালি রাখুন।</span></div>
@@ -3329,16 +3353,28 @@ function initPage() {
       if(!v.ok)return;
       const btn=$("#bc_save");btn.disabled=true;btn.textContent="সংরক্ষণ হচ্ছে…";
       const a=STORE.account,d=STORE.donor;
-      const uid=String(firebaseCurrentUid()||"").trim();
+      /* Firebase Auth is enforced again by RTDB Rules. Store UID fallback keeps
+         the already-authenticated panel usable while Auth is hydrating. */
+      const uid=String(firebaseCurrentUid()||a.uid||"").trim();
       let serverBloodGroup="";
       try{
         const row=uid?await getRow(NODES.users,uid):null;
-        serverBloodGroup=String(row&&(row.bloodGroup||row.group)||"").trim();
+        serverBloodGroup=bloodGroupFromAccountRow(row);
       }catch(e){ console.warn("become blood group check:",e&&e.message); }
       /* Database-side value wins: if the account already has a blood group,
          registration cannot submit any other value even if the disabled field
          was tampered with in DevTools. */
-      const finalBloodGroup=GROUPS.includes(serverBloodGroup)?serverBloodGroup:(lockedBloodGroup||$("#bc_group").value);
+      const cachedAccountBloodGroup=String(a.bloodGroup||"").trim();
+      const finalBloodGroup=validBloodGroup(serverBloodGroup)
+        ? serverBloodGroup
+        : (validBloodGroup(cachedAccountBloodGroup)
+          ? cachedAccountBloodGroup
+          : (lockedBloodGroup||$("#bc_group").value));
+      /* Keep the account copy and the pending donor copy identical. This is
+         important when a previously saved account group was loaded after the
+         form had first rendered, and also makes a DevTools value change a
+         no-op. Firebase rules independently reject a mismatched queue write. */
+      if(validBloodGroup(finalBloodGroup))a.bloodGroup=finalBloodGroup;
       /* অ্যাকাউন্টের তথ্যও হালনাগাদ — RTDB `users/{uid}`-এ সাথে সাথে (আইটেম ৩, ৬) */
       a.name=$("#bc_name").value.trim();
       a.gender=$("#bc_gender").value;
@@ -3355,7 +3391,48 @@ function initPage() {
       /* আবেদনের সময় Donor UID তৈরি হয় না — সেটি Admin Approve হলে নির্ধারিত হবে।
          পুরোনো/ভুলভাবে থাকা donorId-ও পেন্ডিং আবেদনে বাদ দেওয়া হয়। */
       d.donorId="";
-      save();                                   /* localStorage + queue (shared/RTDB) + users/{uid} */
+      /* Success UI দেওয়ার আগে account এবং moderation queue—দুটোই একই atomic
+         RTDB write-এ নিশ্চিত করি। এতে offline/rules failure-এ local pending
+         screen দেখিয়ে ভুলভাবে আবেদন জমা হওয়ার দাবি করা হয় না। */
+      const authenticatedUid=String(firebaseCurrentUid()||"").trim();
+      /* Firebase Auth এখনও hydrate না হওয়া legacy cached session-এ পুরোনো
+         sync path থাকে; authenticated production submit নিচের confirmed write
+         ছাড়া success state-এ যেতে পারে না. */
+      if(!authenticatedUid||window.__CBDC_TEST__){
+        save();logAct("রক্তদাতা হিসেবে যুক্ত হন",d.bloodGroup+" · যাচাইয়ের অপেক্ষায়","donor");
+        reqTab="become";go("req");toast("আপনার তথ্য যাচাইয়ের জন্য পাঠানো হয়েছে","ok");
+        return;
+      }
+      try{
+        if(!uid)throw new Error("লগইন সেশন পাওয়া যায়নি");
+        const qid="PD-"+uid.replace(/[^A-Za-z0-9]/g,"").slice(-40);
+        const at=nowIso();
+        const paths={};
+        paths[`users/${uid}/name`]=a.name;
+        paths[`users/${uid}/gender`]=a.gender;
+        paths[`users/${uid}/dob`]=a.dob;
+        paths[`users/${uid}/area`]=a.area;
+        paths[`users/${uid}/phone`]=a.phone;
+        paths[`users/${uid}/bloodGroup`]=d.bloodGroup;
+        paths[`users/${uid}/donorStatus`]="pending";
+        paths[`users/${uid}/donorId`]=null;
+        paths[`users/${uid}/lastDonation`]=d.lastDonation;
+        paths[`users/${uid}/whatsapp`]=d.whatsapp;
+        paths[`users/${uid}/health`]=d.health;
+        paths[`users/${uid}/available`]=true;
+        paths[`users/${uid}/appliedAt`]=d.appliedAt;
+        paths[`queue/${qid}`]={kind:"donor",id:qid,name:a.name,group:d.bloodGroup,area:a.area,
+          dob:a.dob||"",health:d.health||"",last:d.lastDonation||"",gender:a.gender,
+          phone:a.phone,whatsapp:d.whatsapp||"",photo:a.photo||"",ownerUid:uid,at,atTs:serverTime()};
+        await updatePaths(paths);
+      }catch(err){
+        d.is=false;d.status="none";d.bloodGroup=accountBloodGroup();d.donorId="";
+        btn.disabled=false;btn.textContent="রক্তদাতা হিসেবে আবেদন জমা দিন";
+        toast("আবেদন জমা দেওয়া যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।","er");
+        console.warn("donor application submit:",err&&err.message);
+        return;
+      }
+      save();
       logAct("রক্তদাতা হিসেবে যুক্ত হন",d.bloodGroup+" · যাচাইয়ের অপেক্ষায়","donor");
       reqTab="become";
       go("req");
@@ -4846,8 +4923,14 @@ function initPage() {
       a.applicationCount=Math.max(0,Number(row.applicationCount));
       MY_APPLICATION_COUNT_READY=true;
     }
+    // Account blood group has its own source of truth. Do not infer its lock
+    // solely from donor status: an account may have a group before its first
+    // donor application. `group` is accepted for older records and normalized
+    // in memory; newly written records use `bloodGroup`.
+    const accountGroup=bloodGroupFromAccountRow(row);
+    a.bloodGroup=validBloodGroup(accountGroup)?accountGroup:"";
     // donor fields — একই UID তে donor তথ্য একীভূত, কোনো duplicate নয়
-    const _bg = row.bloodGroup || row.group || "";
+    const _bg = accountGroup;
     /* Account-এর `status:"active"` কে কখনোই donor status ভাবা যাবে না।
        নতুন অ্যাকাউন্টে শুধু `status:"active"` থাকে — এটি Read হলে যেন নবাগত
        ইউজারকে Approved/প্রস্তুত Donor দেখানো না হয়। Donor status তখনই

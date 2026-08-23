@@ -259,10 +259,10 @@ closeSheet();
 const adminSrc = readFileSync(path.join(ROOT, "src/pages/Admin.tsx"), "utf8");
 const modSrc = readFileSync(path.join(ROOT, "src/pages/Moderator.tsx"), "utf8");
 for (const [name, src] of [["Admin", adminSrc], ["Moderator", modSrc]]) {
-  check(`${name}: approve writes groupChange status`, src.includes('markGroupChangeStatus(q.ownerUid,"approved"'));
+  check(`${name}: approve atomically writes groupChange status`, src.includes("paths[`users/${q.ownerUid}/groupChange/status`]=\"approved\"") && src.includes("await updatePaths(paths)"));
   check(`${name}: reject writes groupChange status`, src.includes('markGroupChangeStatus(owner,"rejected"'));
-  check(`${name}: approve updates users/{uid} blood group`, src.includes("updateRow(NODES.users, q.ownerUid, {bloodGroup:q.to"));
-  check(`${name}: approve updates donors/{id} blood group`, src.includes("bloodGroup:q.to, group:q.to"));
+  check(`${name}: approve atomically updates users/{uid} blood group`, src.includes("paths[`users/${q.ownerUid}/bloodGroup`]=q.to"));
+  check(`${name}: approve atomically updates donors/{id} blood group`, src.includes("paths[`donors/${donor.id}/bloodGroup`]=q.to") && src.includes("paths[`donors/${donor.id}/group`]=q.to"));
 }
 const rules = JSON.parse(readFileSync(path.join(ROOT, "database.rules.json"), "utf8"));
 const validate = String(rules.rules.donors["$id"][".validate"] || "");
