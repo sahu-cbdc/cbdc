@@ -3323,6 +3323,16 @@ function initPage() {
       if(!v.ok)return;
       const btn=$("#bc_save");btn.disabled=true;btn.textContent="সংরক্ষণ হচ্ছে…";
       const a=STORE.account,d=STORE.donor;
+      const uid=String(firebaseCurrentUid()||"").trim();
+      let serverBloodGroup="";
+      try{
+        const row=uid?await getRow(NODES.users,uid):null;
+        serverBloodGroup=String(row&&(row.bloodGroup||row.group)||"").trim();
+      }catch(e){ console.warn("become blood group check:",e&&e.message); }
+      /* Database-side value wins: if the account already has a blood group,
+         registration cannot submit any other value even if the disabled field
+         was tampered with in DevTools. */
+      const finalBloodGroup=GROUPS.includes(serverBloodGroup)?serverBloodGroup:(lockedBloodGroup||$("#bc_group").value);
       /* অ্যাকাউন্টের তথ্যও হালনাগাদ — RTDB `users/{uid}`-এ সাথে সাথে (আইটেম ৩, ৬) */
       a.name=$("#bc_name").value.trim();
       a.gender=$("#bc_gender").value;
@@ -3330,9 +3340,7 @@ function initPage() {
       a.area=$("#bc_area").value;
       a.phone=$("#bc_phone").value.trim();
       d.is=true; d.status="pending";
-      /* lockedBloodGroup থাকলে DOM/devtools দিয়ে select বদলালেও account-এর
-         সংরক্ষিত blood group-ই আবেদন ও donor data-তে যাবে। */
-      d.bloodGroup=lockedBloodGroup||$("#bc_group").value;
+      d.bloodGroup=finalBloodGroup;
       d.lastDonation=$("#bc_last").value||"";
       d.health=$("#bc_health").value.trim()||"";
       d.whatsapp=$("#bc_wa").value.trim()||"";
@@ -3628,7 +3636,9 @@ function initPage() {
         const uid=String(STORE.account.uid||RTDB_UID||"").trim();
         /* Account তথ্য অক্ষত রেখে শুধু donor state local cache থেকেও পরিষ্কার করি। */
         STORE.donor.is=false;STORE.donor.status="none";STORE.donor.donorId="";
-        STORE.donor.bloodGroup="";STORE.donor.whatsapp="";STORE.donor.lastDonation="";
+        /* Account blood group is intentionally kept. If it ever needs changing,
+           the donor must use the Admin-approved blood-group change request. */
+        STORE.donor.whatsapp="";STORE.donor.lastDonation="";
         STORE.donor.health="";STORE.donor.appliedAt="";STORE.donor.available=true;
         const leftGc=STORE.donor.groupChange;STORE.donor.groupChange=null;
         save();
@@ -3650,7 +3660,8 @@ function initPage() {
             if(uid) {
               paths[NODES.users+"/"+uid+"/donorStatus"]=null;
               paths[NODES.users+"/"+uid+"/donorId"]=null;
-              paths[NODES.users+"/"+uid+"/bloodGroup"]=null;
+              /* users/{uid}/bloodGroup is account-level locked data; do not delete it
+                 when leaving the public donor list. */
               paths[NODES.users+"/"+uid+"/lastDonation"]=null;
               paths[NODES.users+"/"+uid+"/whatsapp"]=null;
               paths[NODES.users+"/"+uid+"/health"]=null;
@@ -4515,19 +4526,16 @@ function initPage() {
         payload.available = d.available!==false;
         payload.appliedAt = d.appliedAt||"";
         payload.cardTheme = d.cardTheme||"green";
-      } else if(d.bloodGroup || d.donorId){
-        // bloodGroup/donorId থাকলে at least pending — duplicate profile নয়, একই UID তে sync
-        payload.bloodGroup = d.bloodGroup||"";
+      } else if(d.donorId){
+        // donorId থাকলে donor metadata sync — bloodGroup একা থাকলে account-level locked value, pending নয়।
         payload.donorId = d.donorId||"";
         if(d.status && d.status!=="none") payload.donorStatus = d.status;
-        else if(d.bloodGroup) payload.donorStatus = "pending";
       } else {
         /* Donor থেকে সরে গেলে account থাকবে, কিন্তু donor registration/status
-           metadata users/{uid}-তে আর থাকবে না। null update RTDB-তে field remove
-           করে; account-এর নাম/ছবি/email/phone ইত্যাদি অক্ষত থাকে। */
+           metadata users/{uid}-তে আর থাকবে না। Account bloodGroup আলাদা locked
+           value হিসেবে থাকে; সেটি user-side save থেকে null/replace করা হয় না। */
         payload.donorStatus = null;
         payload.donorId = null;
-        payload.bloodGroup = null;
         payload.lastDonation = null;
         payload.whatsapp = null;
         payload.health = null;

@@ -9,6 +9,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { readFileSync } from "node:fs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -228,6 +229,12 @@ $("#bc_ok").checked = true;
 $("#becomeForm").dispatchEvent(new w.Event("submit", { bubbles: true, cancelable: true }));
 await new Promise((r) => setTimeout(r, 300));
 check("locked blood group is preserved on donor application submit", w.STORE && w.STORE.donor.bloodGroup === "B+");
+
+const donorSrc = readFileSync(path.join(ROOT, "src/pages/Doner.tsx"), "utf8");
+const rulesSrc = readFileSync(path.join(ROOT, "database.rules.json"), "utf8");
+check("submit re-checks users/{uid} bloodGroup before saving", donorSrc.includes("serverBloodGroup") && donorSrc.includes("finalBloodGroup"));
+check("user profile rules prevent changing an existing bloodGroup", rulesSrc.includes('"bloodGroup"') && rulesSrc.includes("newData.val() === data.val()"));
+check("queue rules reject donor applications with a mismatched existing account bloodGroup", rulesSrc.includes("newData.child('kind').val() !== 'donor'") && rulesSrc.includes("newData.child('group').val() === root.child('users').child(auth.uid).child('bloodGroup').val()"));
 
 // ── Scenario 3: already-approved donor sees the approved status page ──
 w.STORE.donor.is = true;
