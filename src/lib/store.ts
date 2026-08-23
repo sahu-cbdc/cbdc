@@ -277,37 +277,72 @@ async function writeDiff(name: string, oldList: any[], newList: any[]) {
   if (tasks.length) await Promise.all(tasks);
 }
 
-/** Persist a state snapshot: update cache, broadcast, and write diffs to Realtime Database. */
-function save(state: any, source = "unknown"): any {
-  const prev = load();
-  const s = clean(clone(state));
-  s.revision = (Number(prev.revision) || 0) + 1;
-  s.updatedAt = new Date().toISOString();
-  s.source = source;
+async function writeDiffStrict(name: string, oldList: any[], newList: any[]) {
+  const node = (NODES as any)[name] || name;
+  const oldById = new Map<string, any>(oldList.map((x) => [String(x.id), x]));
+  const newById = new Map<string, any>(newList.map((x) => [String(x.id), x]));
+  const tasks: Array<Promise<void>> = [];
+  for (const [id, item] of newById) {
+    const prev = oldById.get(id);
+    if (!prev || JSON.stringify(prev) !== JSON.stringify(item)) tasks.push(setRow(node, id, clone(item)));
+  }
+  for (const id of oldById.keys()) {
+    if (!newById.has(id)) tasks.push(removeRow(node, id));
+  }
+  if (tasks.length) await Promise.all(tasks);
+}
 
-  // optimistic local update
-  cache = clean(clone(s));
+/** Persist a state snapshot: update cache, broadcast, and write diffs to Realtime Database. */
+function makeNextState(state: any, source = "unknown"): { previous: any; next: any } {
+  const previous = load();
+  const next = clean(clone(state));
+  next.revision = (Number(previous.revision) || 0) + 1;
+  next.updatedAt = new Date().toISOString();
+  next.source = source;
+  return { previous, next };
+}
+
+function publishOptimistic(next: any, source: string): void {
+  cache = clean(clone(next));
   persistPublicCache();
   notify({ source });
-
-  // background RTDB sync (diff-based, so unchanged collections cost nothing)
-  for (const name of COLLECTION_NAMES) {
-    void writeDiff(name, prev[name], s[name]);
-  }
-
-  // cross-tab notification (BroadcastChannel)
   try {
-    bc && bc.postMessage({ revision: s.revision, source });
+    bc && bc.postMessage({ revision: next.revision, source });
   } catch (e) {
     /* ignore */
   }
-  return s;
+}
+
+function save(state: any, source = "unknown"): any {
+  const { previous, next } = makeNextState(state, source);
+  // Keep the compatibility API synchronous for legacy callers. New user-action
+  // handlers use commit/updateAsync below so UI success waits for RTDB.
+  publishOptimistic(next, source);
+  for (const name of COLLECTION_NAMES) {
+    void writeDiff(name, previous[name], next[name]);
+  }
+  return next;
 }
 
 function update(fn: (s: any) => any, source?: string): any {
   const s = load();
   const out = fn(s) || s;
   return save(out, source);
+}
+
+/** Strict persistence API for user actions. It rejects on the first RTDB error
+ * instead of silently leaving an optimistic local-only mutation behind. */
+async function commit(state: any, source = "unknown"): Promise<any> {
+  const { previous, next } = makeNextState(state, source);
+  await Promise.all(COLLECTION_NAMES.map((name) => writeDiffStrict(name, previous[name], next[name])));
+  publishOptimistic(next, source);
+  return next;
+}
+
+async function updateAsync(fn: (s: any) => any, source?: string): Promise<any> {
+  const s = load();
+  const out = fn(s) || s;
+  return commit(out, source);
 }
 
 let bc: BroadcastChannel | null = null;
@@ -436,6 +471,8 @@ const store = {
   load,
   save,
   update,
+  commit,
+  updateAsync,
   subscribe,
   clone,
   toAdminDonor,

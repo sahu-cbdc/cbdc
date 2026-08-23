@@ -28,8 +28,10 @@ import {
   verifyResetCode,
   completePasswordReset,
 } from "../lib/authx";
-import { addRow, setRow, updateRow, findBy, getRow, listOnce, nowIso, incrementField } from "../lib/rtdb";
+import { addRow, setRow, updateRow, findBy, getRow, listOnce, nowIso, incrementField, watchRow } from "../lib/rtdb";
 import { NODES } from "../lib/firebase";
+import { noticeVisibleTo, noticeTarget } from "../lib/notice";
+import { submitEmergencyRequest } from "../lib/cloud";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, clearFieldError } from "../lib/forms";
 import { ageFromDob, ageText, dobBounds, isValidDob, toBanglaDigits } from "../lib/age";
 import { logoUrl, applyLogo } from "../config/logo";
@@ -1369,7 +1371,13 @@ const pageCss = `    @font-face {
     [data-theme="dark"] .app-message h3,[data-theme="dark"] .cmodal h3{color:var(--ink)}
     [data-theme="dark"] .modal-head,[data-theme="dark"] .app-modal-footer,[data-theme="dark"] .cmodal-footer{border-color:var(--line)}
     [data-theme="dark"] .menu-btn{color:var(--ink)}
-    @media(max-width:920px){[data-theme="dark"] .site-header,[data-theme="dark"] .nav{background:#141f1c;border-color:var(--line)}}`;
+    .website-notice{margin:18px auto 0;max-width:1120px}
+    .website-notice-card{padding:15px 18px;border:1px solid #f0d59a;border-left:4px solid #b3760a;border-radius:14px;background:#fff9ea;color:#4d3a12;box-shadow:0 2px 8px rgba(20,29,26,.05)}
+    .website-notice-card h3{margin:0 0 3px;font-size:1rem;color:#8a5c07}
+    .website-notice-card p{margin:0;font-size:.82rem;line-height:1.7}
+    @media(max-width:680px){.website-notice{margin:13px 14px 0}.website-notice-card{padding:12px 14px}}
+    [data-theme="dark"] .website-notice-card{background:#2a2109;border-color:#67501b;color:#ead7a5}
+    [data-theme="dark"] .website-notice-card h3{color:#f1cb68}`;
 
 /* ═══════════════════════════════════════════════════════════════════
    Static UI — মূল index.html-এর <body> মার্কআপ হুবহু JSX-এ
@@ -1517,6 +1525,9 @@ function StaticShell() {
               </div>
               {" "}
             </div>
+          </section>
+          {" "}
+          <section id="websiteNotice" className="website-notice" aria-live="polite" hidden>
           </section>
           {" "}
           <section className="search-overlap" id="donor-search">
@@ -3936,7 +3947,14 @@ function initPage() {
       setInterval(() => {
         renderBoard();
       }, 15000);
-      function renderPublic(){ renderStats();renderSearch();renderBoard();
+      function renderWebsiteNotices(){
+        const box=$("#websiteNotice");if(!box)return;
+        const notices=(sharedState()?.notices||[]).filter(n=>noticeVisibleTo(n,"website"));
+        box.innerHTML=notices.map(n=>`<article class="website-notice-card">
+          <h3>${esc(n.title||"")}</h3><p>${esc(n.body||"")}</p></article>`).join("");
+        box.hidden=!notices.length;
+      }
+      function renderPublic(){ renderStats();renderSearch();renderBoard();renderWebsiteNotices();
         /* keep the profile-page hand-off in sync with whatever is on screen (RTDB live data) */
         try{ publishDonors(); }catch(e){}
         /* খোলা ডোনার প্রোফাইল পেজটিও live update হয় — RTDB listener-এর কল্যাণে
@@ -4284,7 +4302,12 @@ function initPage() {
          (`settings/app.autoApproveEmergency`) থাকে, অ্যাডমিন প্যানেল থেকে বদলানো যায়।
          ডিফল্ট: বন্ধ (আবেদন আগে pending তালিকায় যায়)। */
       let AUTO_APPROVE_EMERGENCY = false;
-      (async()=>{ try{ const st=await getRow(NODES.settings,"app"); AUTO_APPROVE_EMERGENCY = st?.autoApproveEmergency === true; }catch(e){} })();
+      /* Live setting listener: emergency approval changes apply to new
+         applications without reloading. Existing requests are untouched. */
+      try{watchRow(NODES.settings,"app",st=>{
+        const rules=st&&st.rules&&typeof st.rules==="object"?st.rules:{};
+        AUTO_APPROVE_EMERGENCY=rules.emergencyApproval===false || st?.autoApproveEmergency===true;
+      });}catch(e){console.warn("emergency settings watch:",e&&e.message);}
 
       $("#emergencyForm").addEventListener("submit", async e => {
         e.preventDefault();

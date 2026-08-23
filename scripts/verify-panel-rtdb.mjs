@@ -85,8 +85,9 @@ for (const [name, src] of [["Admin", adminSrc], ["Moderator", modSrc]]) {
   ok(src.includes("upsertMySession();"),
     `${name}: লগইনে এই ডিভাইসের সেশন তালিকায় বসে ও persist হয়`);
   const saveMeCount = (src.match(/saveMe\(\)/g) || []).length;
-  ok(saveMeCount >= 10 && src.includes("data-tgl") && src.includes("if(!ME_PULLING&&ME.uid)queueMicrotask(pushMePanel)"),
-    `${name}: security/privacy/notif/prefs toggle → saveMe → RTDB push সংযুক্ত (${saveMeCount}টি saveMe কল)`);
+  ok(saveMeCount >= 10 && src.includes("data-tgl") && src.includes("await pushMePanel();") &&
+    !src.includes("queueMicrotask(pushMePanel)"),
+    `${name}: security/privacy/notif/prefs toggle → saveMe → awaited RTDB push সংযুক্ত (${saveMeCount}টি saveMe কল)`);
 }
 
 /* ─── 2. jsdom boot — কোনো runtime error ছাড়া প্যানেল উঠে, cache আগের মতো ─── */
@@ -172,7 +173,7 @@ for (const page of ["Admin", "Moderator"]) {
       `${page}: ME-এর সব অংশ default fallback হিসেবে আছে (RTDB না থাকলেও আগের মতো)`);
     ok(ME.name === "" || typeof ME.name === "string",
       `${page}: hardcoded default RTDB-কে override করছে না (খালি fallback)`);
-    try { w.saveMe(); } catch (e) { err = e; }
+    try { await w.saveMe(); } catch (e) { err = e; }
     const panelId = page === "Admin" ? "admin" : "mod"; /* PANEL.id */
     const cached = w.localStorage.getItem(`cbdc.${panelId}.me`);
     ok(!err && !!cached, `${page}: localStorage cache আগের মতোই লেখা হয়`);
