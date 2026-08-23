@@ -220,6 +220,31 @@ export async function removeRow(node: string, id: string): Promise<void> {
   await remove(child(ref(d, node), String(id)));
 }
 
+/** একটি রেকর্ডের numeric field atomic ভাবে বাড়ায় — যেমন applicationCount। */
+export async function incrementField(node: string, id: string, field: string, amount = 1): Promise<number> {
+  const d = db();
+  if (!d || !id || !field) return 0;
+  const target = child(child(ref(d, node), String(id)), field);
+  const result = await runTransaction(target, (current) => {
+    const value = Number(current ?? 0);
+    return (Number.isFinite(value) ? value : 0) + amount;
+  }, { applyLocally: false });
+  return Number(result.snapshot.val() ?? 0) || 0;
+}
+
+/** numeric field-কে কমপক্ষে নির্দিষ্ট মানে atomic ভাবে আনে। */
+export async function ensureFieldAtLeast(node: string, id: string, field: string, minimum: number): Promise<number> {
+  const d = db();
+  if (!d || !id || !field) return 0;
+  const target = child(child(ref(d, node), String(id)), field);
+  const floor = Math.max(0, Number(minimum) || 0);
+  const result = await runTransaction(target, (current) => {
+    const value = Number(current ?? 0);
+    return Math.max(floor, Number.isFinite(value) ? value : 0);
+  }, { applyLocally: false });
+  return Number(result.snapshot.val() ?? 0) || 0;
+}
+
 /** একাধিক path একসাথে (atomic) আপডেট — যেমন `{"users/u1/role":"admin"}`। */
 export async function updatePaths(paths: Record<string, any>): Promise<void> {
   const d = db();
@@ -267,6 +292,8 @@ export default {
   setRow,
   updateRow,
   removeRow,
+  incrementField,
+  ensureFieldAtLeast,
   updatePaths,
   findBy,
   snapToList,

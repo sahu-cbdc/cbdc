@@ -2,9 +2,10 @@
  * Real-time donor list checks:
  *  1. donorPublicPatch() — the exact payload a donor pushes to donors/{id}
  *     in RTDB on every info change:
- *       - ov override beats account value (ডোনার-তালিকার নিজস্ব মান),
- *       - never touches admin-controlled fields (bloodGroup/verified/
- *         suspended/donorId/donations/status/occupation…),
+ *       - Account and Donor values are sent as one connected payload,
+ *       - bloodGroup is synced with the donor record,
+ *       - never touches admin-controlled fields (verified/suspended/
+ *         donorId/donations/status/occupation…),
  *       - availability & photo included.
  *  2. Patching one donor never changes another donor's record.
  *  3. database.rules.json — owner update allowed, protected fields
@@ -71,13 +72,13 @@ const check = (name, cond, extra = "") => {
 const account = { name: "রফিক উদ্দিন", gender: "পুরুষ", dob: "1995-03-12", area: "চকবাজার",
   phone: "01812345678", photo: "https://i.ibb.co/abc/rafiq.jpg" };
 const donor = { is: true, status: "approved", donorId: "CBDC-2026-0001", bloodGroup: "O+",
-  whatsapp: "01812345678", lastDonation: "2026-05-01", available: true, health: "সুস্থ",
-  ov: { name: "রফিক আহমেদ", area: "বাকলিয়া" } };  // donor-list overrides
+  whatsapp: "01812345678", lastDonation: "2026-05-01", available: true, health: "সুস্থ" };
 
 const p = donorPublicPatch(account, donor);
-check("patch uses ov override for name", p.name === "রফিক আহমেদ", p.name);
-check("patch uses ov override for area", p.area === "বাকলিয়া", p.area);
-check("patch falls back to account gender", p.gender === "পুরুষ", p.gender);
+check("patch uses the account name", p.name === "রফিক উদ্দিন", p.name);
+check("patch uses the account area", p.area === "চকবাজার", p.area);
+check("patch uses the donor blood group", p.bloodGroup === "O+", p.bloodGroup);
+check("patch uses the account gender", p.gender === "পুরুষ", p.gender);
 check("patch falls back to account dob", p.dob === "1995-03-12", p.dob);
 check("patch falls back to account phone", p.phone === "01812345678", p.phone);
 check("patch keeps whatsapp", p.whatsapp === "01812345678", p.whatsapp);
@@ -86,7 +87,7 @@ check("patch keeps availability", p.available === true);
 check("patch keeps photo (ImgBB)", p.photo === "https://i.ibb.co/abc/rafiq.jpg", p.photo);
 
 const PROTECTED = ["id","donorId","uid","ownerUid","verified","suspended","donations",
-  "totalDonations","joined","status","bloodGroup","occupation"];
+  "totalDonations","joined","status","occupation"];
 const leaked = PROTECTED.filter((k) => Object.prototype.hasOwnProperty.call(p, k));
 check("patch never carries admin-controlled fields", leaked.length === 0, "leaked: " + leaked.join(","));
 
@@ -96,7 +97,7 @@ check("availability off → available:false", pOff.available === false);
 
 /* ── 2. per-donor isolation ── */
 const account2 = { ...account, name: "সালমা খাতুন", photo: "https://i.ibb.co/xyz/salma.jpg" };
-const p2 = donorPublicPatch(account2, { ...donor, donorId: "CBDC-2026-0002", bloodGroup: "A+", ov: {} });
+const p2 = donorPublicPatch(account2, { ...donor, donorId: "CBDC-2026-0002", bloodGroup: "A+" });
 check("another donor's patch keeps its own photo", p2.photo === "https://i.ibb.co/xyz/salma.jpg", p2.photo);
 check("another donor's patch keeps its own name", p2.name === "সালমা খাতুন", p2.name);
 
@@ -108,7 +109,8 @@ const validate = String(dRule[".validate"] || "");
 check("rules: donor may update own record", write.includes("data.exists() && data.child('ownerUid').val() === auth.uid"), write);
 check("rules: moderator may write donors", write.includes("role').val() === 'moderator'"), "");
 check("rules: owner delete still allowed", write.includes("!newData.exists()"), "");
-check("rules: admin-controlled fields validated", validate.includes("bloodGroup") && validate.includes("verified") && validate.includes("suspended") && validate.includes("donations"), validate.slice(0, 80));
+check("rules: admin-controlled fields validated", validate.includes("verified") && validate.includes("suspended") && validate.includes("donations"), validate.slice(0, 80));
+check("rules: owner blood group is syncable", !validate.includes("newData.child('bloodGroup').val() === data.child('bloodGroup').val()"), validate.slice(0, 80));
 check("rules: delete exempt from validate", validate.includes("!newData.exists()"), "");
 
 console.log(failed ? "\nSOME CHECKS FAILED" : "\nALL CHECKS PASSED");

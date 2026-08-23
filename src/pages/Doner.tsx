@@ -19,7 +19,7 @@ import {
   isProfileComplete,
   requestPasswordReset,
 } from "../lib/authx";
-import { getRow, setRow, updateRow, watchRow, addRow, findBy, listOnce, nowIso, updatePaths, removeRow } from "../lib/rtdb";
+import { getRow, setRow, updateRow, watchRow, watchList, addRow, findBy, listOnce, nowIso, updatePaths, removeRow, incrementField, ensureFieldAtLeast } from "../lib/rtdb";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
@@ -771,7 +771,7 @@ function initPage() {
   "রক্তদানের হিসাব রাখতে আপনার রক্তের গ্রুপ ও তথ্য দরকার":"We need your blood group and details to track donations",
   "বয়স ১৮–৬০ বছর, ওজন কমপক্ষে ৫০ কেজি এবং সুস্থ শরীর।":"Age 18–60, at least 50 kg, and good health.",
   "অ্যাডমিন যাচাইয়ের পর এটি আপনার রেকর্ডে যুক্ত হবে।":"It will be added to your record after an admin verifies it.",
-  "সেটিংস → ডোনার → রক্তের গ্রুপ → পরিবর্তনের অনুরোধ।":"Settings → Donor → Blood group → request a change.",
+  "সেটিংস → ডোনার → রক্তের গ্রুপ → সরাসরি পরিবর্তন করুন।":"Settings → Donor → Blood group → change it directly.",
   "সেটিংস → গোপনীয়তা থেকে আপনি নিজে ঠিক করতে পারেন।":"You decide, in Settings → Privacy.",
   "ফেসবুক ও WhatsApp-এ শেয়ারের জন্য · ৯০০×১৬০০ px":"For Facebook and WhatsApp · 900×1600 px",
   "৩–২০ অক্ষর · ছোট হাতের ইংরেজি, সংখ্যা, _ এবং .":"3–20 characters · lowercase letters, numbers, _ and .",
@@ -994,7 +994,6 @@ function initPage() {
   "যাচাইয়ের অপেক্ষায়":"Awaiting verification",
   "যেদিন রক্ত দিয়েছেন":"The day you gave blood",
   "কন্টাক্ট হিসেবে সেভ":"save it as a contact",
-  "অ্যাকাউন্ট থেকে নিন":"Use my account value",
   "জরুরি (আজকের মধ্যে)":"Urgent (today)",
   "আমি নিজেই আবেদনকারী":"I am the requester",
   "তালিকা নামানো হচ্ছে":"Downloading the list",
@@ -1140,7 +1139,6 @@ function initPage() {
   "ফিল্টার মুছুন":"Clear filters",
   "এগুলো সাধারণত":"These are normally",
   "পাওয়া যায়নি":"not found",
-  "আলাদা মান দিন":"Set a different value",
   "নতুন username":"New username",
   "পুরোনো ইমেইলই":"the old email stays",
   "বর্তমান নম্বর":"Current number",
@@ -1208,6 +1206,9 @@ function initPage() {
   "যাচাই চলছে":"Under review",
   "আপাতত বন্ধ":"Currently off",
   "আমার আবেদন":"My requests",
+  "আবেদন লোড হচ্ছে…":"Loading requests…",
+  "আপনার সর্বশেষ আবেদনগুলো আনা হচ্ছে":"Fetching your latest requests",
+  "কোনো আবেদন নেই":"No requests",
   "ডোনার তথ্য":"Donor information",
   "✓ যাচাইকৃত":"✓ Verified",
   "কার্ডের রং":"Card colour",
@@ -1616,15 +1617,14 @@ function initPage() {
       emailVerified:false, phoneVerified:false,
       dob:"", gender:"", area:"",
       address:"",
+      applicationCount:0,
       joined:iso(now())
     },
     donor:{
       is:false, status:"none", donorId:"",
       bloodGroup:"", whatsapp:"", lastDonation:"",
       health:"",
-      available:true, appliedAt:"", cardTheme:"green",
-      /* ডোনার তালিকার জন্য আলাদা মান — null মানে অ্যাকাউন্টের তথ্যই ব্যবহার হবে */
-      ov:{name:null,gender:null,dob:null,area:null,phone:null}
+      available:true, appliedAt:"", cardTheme:"green"
     },
     privacy:{ profile:"all", showPhone:"responders", showWhatsapp:true, showGroup:true, showArea:true, searchable:true },
     notif:{ emergency:true, onlyGroup:true, onlyArea:false, donor:true, account:true, security:true, quiet:false },
@@ -1648,15 +1648,14 @@ function initPage() {
   }
   function load(){try{const d=JSON.parse(localStorage.getItem(LS)||"{}");
     if(d.account)Object.assign(STORE.account,d.account);
-    if(d.donor){const ov=STORE.donor.ov;Object.assign(STORE.donor,d.donor);
-      STORE.donor.ov=Object.assign(ov,d.donor.ov||{});}
+    if(d.donor)Object.assign(STORE.donor,d.donor);
+    /* Remove the legacy per-donor override map from older local caches. */
+    delete STORE.donor.ov;
     if(d.prefs)Object.assign(STORE.prefs,d.prefs);
     if(d.privacy)Object.assign(STORE.privacy,d.privacy);
     if(d.notif)Object.assign(STORE.notif,d.notif);
     if(d.security)Object.assign(STORE.security,d.security);
     if(d.saved)STORE.saved=d.saved;
-    /* legacy key from an earlier build */
-    if(!d.account&&d.ov)Object.assign(STORE.donor.ov,d.ov);
   }catch(e){}}
   load();
   
@@ -1670,6 +1669,26 @@ function initPage() {
        • localStorage       → শুধু দ্রুত লোডের জন্য cache, উৎস নয় */
   const LS_DATA="cbdc.data";
   const RAW={ donations:[], incoming:[], mine:[], notifs:[], activity:[], sessions:[], donors:[] };
+
+  /*
+     "আমার আবেদন" is private data.  It must not be reconstructed from the
+     public/shared cache: that cache is intentionally filtered to approved
+     emergency requests and may belong to a previous session.  Keep the two
+     RTDB sources separate until both have delivered their first snapshot, then
+     merge them by request id.
+  */
+  let MY_APPLICATION_UID="";
+  let AUTH_SESSION_READY=false;
+  let MY_APPLICATION_COUNT_READY=false;
+  let MY_APPLICATION_CLEANUP=false;
+  let MY_APPLICATION_USER_READY=false;
+  let MY_APPLICATION_REQUESTS_READY=false;
+  let MY_APPLICATION_USER_ROWS=[];
+  let MY_APPLICATION_REQUEST_ROWS=[];
+  let stopMyApplicationRequests=()=>{};
+  let stopMyProfileListener=()=>{};
+  let myApplicationNotifUnsubscribe=null;
+
   function loadData(){
     try{
       const d=JSON.parse(localStorage.getItem(LS_DATA)||"{}");
@@ -1681,7 +1700,14 @@ function initPage() {
       RAW.sessions=[{id:"s1",name:thisDevice(),place:"এই ডিভাইস",last:"বর্তমানে সক্রিয়",cur:true}];
     }
   }
-  function saveData(){try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
+  function saveData(){
+    /* A local edit is immediately reflected in the personal source as well;
+       the user/{uid} listener will confirm it from RTDB shortly afterwards. */
+    if(MY_APPLICATION_UID&&MY_APPLICATION_USER_READY){
+      MY_APPLICATION_USER_ROWS=RAW.mine.slice();
+      mergeMyApplications();
+    }
+    try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
     if(!SHARED_PULLING)queueMicrotask(publishPersonalShared);
     /* একই তথ্য দ্বিতীয়বার হাতে লিখতে হয় না — এখান থেকেই RTDB-তে চলে যায় */
     if(typeof pushMyDataToRtdb==="function")queueMicrotask(()=>pushMyDataToRtdb());
@@ -1702,10 +1728,9 @@ function initPage() {
      fresh অবস্থায় ফিরিয়ে নেওয়া হয়। */
   function resetUserCache(){
     Object.assign(STORE.account,{uid:"",name:"",username:"",email:"",phone:"",photo:"",photoSource:"none",
-      emailVerified:false,phoneVerified:false,dob:"",gender:"",area:"",address:"",joined:iso(now())});
+      emailVerified:false,phoneVerified:false,dob:"",gender:"",area:"",address:"",applicationCount:0,joined:iso(now())});
     Object.assign(STORE.donor,{is:false,status:"none",donorId:"",bloodGroup:"",whatsapp:"",lastDonation:"",
-      health:"",available:true,appliedAt:"",cardTheme:"green",
-      ov:{name:null,gender:null,dob:null,area:null,phone:null}});
+      health:"",available:true,appliedAt:"",cardTheme:"green"});
     Object.assign(STORE.privacy,{profile:"all",showPhone:"responders",showWhatsapp:true,showGroup:true,showArea:true,searchable:true});
     Object.assign(STORE.notif,{emergency:true,onlyGroup:true,onlyArea:false,donor:true,account:true,security:true,quiet:false});
     Object.assign(STORE.security,{loginAlert:true,passwordChangedAt:""});
@@ -1748,53 +1773,19 @@ function initPage() {
     const st=CBDCShared.load();
     RAW.donors=st.donors.filter(d=>d.status!=="pending"&&!d.suspended).map(CBDCShared.toDonerDonor);
     RAW.incoming=st.requests.filter(r=>r.status!=="cancelled"&&r.status!=="resolved").map(requestForDoner);
-    /* আমার আবেদন — UID অনুযায়ী RTDB (users/{uid}/data/mine + queue/requests) থেকে
-       একীভূত: Pending (queue), Approved/Matched (requests), Rejected/Cancelled
-       (users/{uid}/data/mine-এ admin-লিখিত status) — প্রতিটি অবস্থা সঠিক দেখায় */
-    const uid=String(STORE.account.uid||"").trim();
-    const liveById={};st.requests.forEach(r=>{if(r&&r.id)liveById[r.id]=r});
-    const pendById={};st.queue.filter(q=>q&&q.kind==="request").forEach(q=>{if(q.id)pendById[q.id]=q});
-    RAW.mine.forEach(m=>{
-      if(!m||!m.id)return;
-      const live=liveById[m.id];
-      if(live){
-        const ws=String(live.workflowStatus||live.status||"").toLowerCase();
-        m.status = ws==="matched"?"matched"
-          :(ws==="cancelled"||ws==="rejected"||ws==="resolved")?ws
-          :"approved";
-        m.responders=Array.isArray(live.responders)?live.responders:[];
-      }else if(pendById[m.id]){
-        /* queue-তে pending থাকলে pending; কিন্তু admin-লিখিত rejected/cancelled
-           status-কে queue-র অস্থায়ী উপস্থিতি আবার pending দেখাবে না */
-        if(m.status!=="rejected"&&m.status!=="cancelled")m.status="pending";
-      }else if(m.status!=="rejected"&&m.status!=="cancelled"&&m.status!=="done"){
-        /* live/queue-তে নেই — পুরোনো pending আবেদন (ধরে রাখা, কিন্তু queue-তে
-           নেই মানে admin বাতিল করেছে → rejected হিসেবে দেখাই না; pendingই থাকে
-           যতক্ষণ না admin-এর সিদ্ধান্ত users/{uid}/data/mine-এ লেখা হয়) */
-      }
-    });
-    /* RTDB `requests`-এ আমার UID-তে থাকা আবেদনগুলো data/mine-এ না থাকলে যোগ করি —
-       নতুন ডিভাইসে log in করলেও "আমার আবেদন" লোড হবে */
-    if(uid){
-      st.requests.forEach(r=>{
-        if(!r||!r.id)return;
-        if(String(r.ownerUid||"")!==String(uid))return;
-        if(RAW.mine.some(m=>m&&m.id===r.id))return;
-        const ws=String(r.workflowStatus||r.status||"").toLowerCase();
-        RAW.mine.push({id:r.id,patient:r.patientName||"",group:r.bloodGroup||"",bags:r.bags||1,
-          hospital:r.hospitalName||"",address:r.hospitalAddress||"",area:r.hospitalAddress||"",
-          urgency:r.urgency||"",neededBy:(r.expiresAt||"").slice(0,10),
-          status:ws==="matched"?"matched":(ws==="cancelled"||ws==="rejected"||ws==="resolved")?ws:"approved",
-          createdAt:r.createdAt||"",responders:Array.isArray(r.responders)?r.responders:[]});
-      });
-    }
-    // donor detection — শুধু UID দিয়ে, phone দিয়ে অন্য user-এর donor লিক হবে না
-    const mine=st.donors.find(d=> STORE.account.uid && String(d.ownerUid)===String(STORE.account.uid));
+    /* Personal applications are loaded only by watchMyProfile/watchMyApplications
+       below.  Never use st.queue or the public shared cache here: either can be
+       incomplete for a donor and neither is a safe source for another user's
+       private history. */
+    // donor detection — শুধু Firebase Auth UID দিয়ে
+    const uid=firebaseCurrentUid();
+    const mine=st.donors.find(d=>uid&&String(d.ownerUid)===String(uid));
     if(mine){
       const wasDonor = STORE.donor.is;
       STORE.donor.is=true;
-      STORE.donor.status="approved";STORE.donor.donorId=mine.id;STORE.donor.bloodGroup=mine.bloodGroup || STORE.donor.bloodGroup;
-      STORE.donor.lastDonation=mine.lastDonationDate||"";
+      STORE.donor.status="approved";STORE.donor.donorId=mine.donorId||mine.id;
+      STORE.donor.bloodGroup=mine.group||mine.bloodGroup||STORE.donor.bloodGroup;
+      STORE.donor.lastDonation=mine.lastDonation||mine.lastDonationDate||"";
       /* admin-পরিবর্তিত প্রাপ্যতা/WhatsApp পাবলিক রেকর্ড থেকেই সাথে সাথে সিঙ্ক —
          নইলে ডোনারের পরবর্তী save() পুরোনো মান দিয়ে আবার admin-এর পরিবর্তন মুছে দেবে */
       if(mine.available!==undefined)STORE.donor.available=!!mine.available;
@@ -1815,7 +1806,7 @@ function initPage() {
   function publishPersonalShared(){
     if(SHARED_PULLING||!window.CBDCShared||!STORE.account.name)return;
     // UID-ভিত্তিক একক প্রোফাইল — phone/email fallback নয়, অন্য user-এর তথ্য লিক হবে না
-    const _uid = String(STORE.account.uid||"").trim();
+    const _uid = String(firebaseCurrentUid()||"").trim();
     if(!_uid) return;
     CBDCShared.update(st=>{
       const a=STORE.account,d=STORE.donor,owner=_uid;
@@ -1827,7 +1818,7 @@ function initPage() {
       const oldQ=st.queue.findIndex(q=>q.kind==="donor"&&String(q.ownerUid)===String(owner));
       if(d.is&&d.status==="pending"){
         const q={kind:"donor",id:qid,donorId:d.donorId,name:a.name,group:d.bloodGroup,area:a.area,
-          dob:d.ov.dob||a.dob||"",health:d.health||"",last:d.lastDonation||"",gender:a.gender,
+          dob:a.dob||"",health:d.health||"",last:d.lastDonation||"",gender:a.gender,
           phone:a.phone,whatsapp:d.whatsapp||"",photo:a.photo||"",ownerUid:owner,at:new Date().toISOString()};
         oldQ<0?st.queue.unshift(q):st.queue[oldQ]={...st.queue[oldQ],...q};
       }else if(oldQ>=0)st.queue.splice(oldQ,1);
@@ -1942,8 +1933,7 @@ function initPage() {
   pullSharedPublic();
   
   /* ---------- derived ---------- */
-  /* ডোনার প্রোফাইলে দেখানো তথ্য:
-     override থাকলে সেটি, নইলে অ্যাকাউন্টের তথ্য (single source of truth) */
+  /* ডোনার প্রোফাইলে দেখানো তথ্য — Account ও Donor-এর একক RTDB source */
   /* বয়স সবসময় জন্ম তারিখ থেকে হিসাব হয় (src/lib/age.ts) — কোথাও আলাদা করে
      বয়স লেখা বা সংরক্ষণ করা হয় না। */
   const ageFromDob=v=>{const a=calcAgeFromDob(v);return a===null?"":a};
@@ -1958,7 +1948,7 @@ function initPage() {
   ];
   const acctVal=k=>k==="age"?ageFromDob(STORE.account.dob):STORE.account[k];
   /* কোনো subject-এর (আমি বা অন্য ডোনার) বয়স — সবসময় জন্ম তারিখ থেকে */
-  const subjectAge=()=>{const S=cardSubject();const d=(S.mine?STORE.account.dob:(S.a&&S.a.dob))||(S.d&&S.d.ov&&S.d.ov.dob)||"";return ageFromDob(d)};
+  const subjectAge=()=>{const S=cardSubject();return ageFromDob(S.a&&S.a.dob||"");};
   const subjectAgeText=()=>{const a=subjectAge();return a===""?"—":ageText(String(a))};
   /* ── who is the card being drawn for? ──────────────────────────────
      Every card renderer used to read STORE directly, so it could only ever
@@ -1972,8 +1962,7 @@ function initPage() {
       mine:false,
       a:{name:x.name,gender:x.gender,area:x.area,phone:x.phone,photo:x.photo||"",dob:x.dob||""},
       d:{donorId:x.donorId,bloodGroup:x.group,lastDonation:x.lastDonation||"",
-         available:true,cardTheme:"green",whatsapp:!!x.phone,
-         ov:{name:x.name,gender:x.gender,dob:x.dob||"",area:x.area,phone:x.phone}}
+         available:true,cardTheme:"green",whatsapp:!!x.phone}
     };
   }
   /* বয়স কখনো সরাসরি সংরক্ষিত নয় — dv("dob") থেকে হিসাব করে দেখানো হয় */
@@ -1981,9 +1970,9 @@ function initPage() {
   const dvAgeText=()=>{const a=dvAge();return a===""?"":ageText(String(dv("dob")))};
   const dv=k=>{
     const S=cardSubject();
-    if(!S.mine){const o=S.d.ov[k];return (o===null||o===undefined||o==="")?"":o}
-    const o=STORE.donor.ov[k];return (o===null||o===undefined||o==="")?acctVal(k):o};
-  const isOv=k=>{const o=STORE.donor.ov[k];return !(o===null||o===undefined||o==="")};
+    if(!S.mine)return S.a&&S.a[k]||"";
+    return acctVal(k)||"";
+  };
   const isDonor=()=>STORE.donor.is;
   const dStatus=()=>STORE.donor.status;
   const restLeft=()=>STORE.donor.lastDonation?Math.max(0,90-dayDiff(STORE.donor.lastDonation)):0;
@@ -2007,6 +1996,12 @@ function initPage() {
   let CUR="home", SUB=null;
   
   function go(id,sub=null,push=true){
+    if(id==="req"&&(sub==="for"||sub==="mine"||sub==="become")){
+      reqTab=sub;
+      /* request tabs are state inside the request screen, not settings
+         sub-screens; keep the existing /doner/req route semantics. */
+      sub=null;
+    }
     CUR=id;SUB=sub;
     $$(".scr").forEach(s=>s.classList.remove("on"));
     if(sub){ $("#s-sub").classList.add("on"); renderSub(sub); }
@@ -2279,12 +2274,12 @@ function initPage() {
   
   /* my own data, shaped exactly like a directory record */
   function meAsDonor(){
-    const a=STORE.account,d=STORE.donor,ov=d.ov||{};
+    const a=STORE.account,d=STORE.donor;
     return {
       uid:"me", donorId:d.donorId||"—",
-      name:ov.name||a.name||"আপনি", gender:ov.gender||a.gender, photo:a.photo,
-      group:d.bloodGroup, area:ov.area||a.area, dob:ov.dob||a.dob||"", age:ageFromDob(ov.dob||a.dob),
-      occupation:a.occupation||"", phone:ov.phone||a.phone, whatsapp:!!d.whatsapp,
+      name:a.name||"আপনি", gender:a.gender, photo:a.photo,
+      group:d.bloodGroup, area:a.area, dob:a.dob||"", age:ageFromDob(a.dob),
+      occupation:a.occupation||"", phone:a.phone, whatsapp:!!d.whatsapp,
       lastDonation:d.lastDonation, totalDonations:DB().donations.length,
       joined:a.joined||"", verified:d.status==="approved", bio:a.bio||"",
       available:STORE.donor.available!==false,
@@ -2502,8 +2497,12 @@ function initPage() {
   
   /* ══════════ SCREEN: REQUEST ══════════ */
   let reqTab="for";
+  const applicationsLoadingBox=()=>`<div class="card"><div class="empty" aria-live="polite">
+    <div class="sk" style="width:56px;height:56px;margin:0 auto 12px;border-radius:50%"></div>
+    <b>আবেদন লোড হচ্ছে…</b><p>আপনার সর্বশেষ আবেদনগুলো আনা হচ্ছে</p></div></div>`;
   function rReq(){
     const inc=myReqs(),mine=DB().mine;
+    const totalApplications=MY_APPLICATION_COUNT_READY?Math.max(0,Number(STORE.account.applicationCount)||0):"—";
     $("#s-req").innerHTML=`
       <h2 class="ptitle">রক্তদাতা / জরুরি আবেদন</h2>
       <div class="tabs" id="rtabs">
@@ -2519,9 +2518,11 @@ function initPage() {
       el.innerHTML=inc.length?inc.map(incCard).join("")
         :emptyBox(ICON.checkC(26),"এখন কোনো জরুরি আবেদন নেই","আপনার গ্রুপের নতুন আবেদন এলে জানানো হবে");
     }else if(reqTab==="mine"){
-      el.innerHTML=`<button class="btn red w" style="margin-bottom:13px" data-act="newreq">${ICON.plus(18)} নতুন জরুরি আবেদন</button>`
-        +(mine.length?mine.map(mineCard).join("")
-        :emptyBox(ICON.file(26),"আপনি এখনো কোনো আবেদন করেননি","কারো রক্তের প্রয়োজন হলে এখান থেকে আবেদন করুন"));
+      el.innerHTML=`<p class="mut" style="font-size:.78rem;margin:0 0 10px">মোট আবেদন: <b>${bn(totalApplications)}</b></p>
+        <button class="btn red w" style="margin-bottom:13px" data-act="newreq">${ICON.plus(18)} নতুন জরুরি আবেদন</button>`
+        +(myApplicationsAreLoading()?applicationsLoadingBox()
+        :(mine.length?mine.map(mineCard).join("")
+        :emptyBox(ICON.file(26),"কোনো আবেদন নেই","কারো রক্তের প্রয়োজন হলে এখান থেকে আবেদন করুন")));
     }else{
       el.innerHTML=becomeView();
       /* "আমার প্রোফাইল" — সরাসরি নিজের ডোনার প্রোফাইল পেজ খোলে */
@@ -2543,15 +2544,18 @@ function initPage() {
       <button class="btn gh sm" data-mute="${esc(r.id)}">লুকান</button></div></div>`;
   
   const RS={pending:["a","যাচাই চলছে"],approved:["b","অনুমোদিত"],matched:["b","রক্তদাতা খোঁজা হচ্ছে"],
-    done:["g","সম্পন্ন"],expired:["m","মেয়াদোত্তীর্ণ"],cancelled:["m","বাতিল"],rejected:["r","বাতিল"]};
-  const mineCard=r=>{const[c,t]=RS[r.status]||["m",r.status];
-    const final=r.status==="done"||r.status==="cancelled"||r.status==="rejected";
+    done:["g","সম্পন্ন"],resolved:["g","সম্পন্ন"],expired:["m","মেয়াদোত্তীর্ণ"],
+    cancelled:["m","বাতিল"],rejected:["r","বাতিল"]};
+  const mineCard=r=>{const[c,t]=RS[r.status]||["m",r.status||"যাচাই চলছে"];
+    const responders=Array.isArray(r.responders)?r.responders:[];
+    const responderCount=Math.max(responders.length,Number(r.responderCount)||0);
+    const final=r.status==="done"||r.status==="resolved"||r.status==="expired"||r.status==="cancelled"||r.status==="rejected";
     return `<div class="reqc"><h4>${esc(r.id)} <span class="bg">${esc(r.group)}</span> <span class="pill ${c}">${t}</span></h4>
     <p>${esc(r.patient)} · ${bn(r.bags)} ব্যাগ</p>
     <p>${ICON.hospital(13)} ${esc(r.hospital)} · ${dS(r.neededBy)}</p>
     ${r.rejectNote?`<p class="mut" style="margin-top:6px">বাতিলের কারণ: ${esc(r.rejectNote)}</p>`:""}
-    ${r.responders.length?`<p style="color:var(--grn);font-weight:700">${bn(r.responders.length)} জন সাড়া দিয়েছেন</p>`:""}
-    <div class="a">${r.responders.length?`<button class="btn sm" data-resps="${esc(r.id)}">সাড়াদাতারা</button>`:""}
+    ${responderCount?`<p style="color:var(--grn);font-weight:700">${bn(responderCount)} জন সাড়া দিয়েছেন</p>`:""}
+    <div class="a">${responders.length?`<button class="btn sm" data-resps="${esc(r.id)}">সাড়াদাতারা</button>`:""}
       ${!final?
         `<button class="btn gh sm" data-done="${esc(r.id)}">${ICON.check(14)} সম্পন্ন</button>
          <button class="btn gh sm" data-cancel="${esc(r.id)}">বাতিল</button>`:""}</div></div>`};
@@ -2748,24 +2752,17 @@ function initPage() {
       <div class="card pad0">
         ${tgRow("আমি এখন রক্তদানে প্রস্তুত","বন্ধ থাকলে জরুরি তালিকায় নাম দেখাবে না","donor.available")}
       </div>
-      <div class="sec-t" style="display:flex;align-items:center;gap:7px">
-        <span style="flex:1">ডোনার তালিকায় দেখানো তথ্য</span>
-        ${DFIELDS.some(f=>isOv(f.k))?`<button class="btn lnk" data-act="resetOv" style="font-size:.7rem">সব রিসেট</button>`:""}
-      </div>
+      <div class="sec-t">ডোনার তথ্য (অ্যাকাউন্টের সাথে সংযুক্ত)</div>
       <div class="card pad0">
         ${DFIELDS.map(f=>`<button class="row" data-dfield="${f.k}">
           <span class="tx"><b>${esc(f.label)}</b>
             <small>${esc(f.k==="age"&&dv(f.k)?bn(dv(f.k))+" বছর":dv(f.k)||"দেওয়া হয়নি")}</small></span>
-          <span class="rt">${isOv(f.k)?`<span class="pill b n" style="font-size:.62rem">আলাদা</span>`
-            :`<span class="pill m n" style="font-size:.62rem">অ্যাকাউন্ট</span>`}${ICON.right(17)}</span></button>`).join("")}
+          <span class="rt">${ICON.right(17)}</span></button>`).join("")}
       </div>
-      <div class="note i">${ICON.info(17)}<span>${tp(
-        `এগুলো সাধারণত <b>অ্যাকাউন্ট থেকে</b> নেওয়া হয় — একবার বদলালে সব জায়গায় বদলায়। শুধু ডোনার তালিকার জন্য আলাদা দেখাতে চাইলে এখানে বদলান।`,
-        `These normally come <b>from your account</b> — change one and it changes everywhere. Override them here only if the donor list should show something different.`)}</span></div>
   
       <div class="sec-t">রক্ত সম্পর্কিত তথ্য</div>
       <div class="card pad0">
-        ${sRow("রক্তের গ্রুপ",d.bloodGroup,"reqGroup","lock")}
+        ${sRow("রক্তের গ্রুপ",d.bloodGroup,"editBloodGroup")}
         ${sRow("WhatsApp",d.whatsapp||"দেওয়া হয়নি","editWa")}
         ${sRow("সর্বশেষ রক্তদান",d.lastDonation?dL(d.lastDonation):"মনে নেই","editLast")}
         ${sRow("স্বাস্থ্য তথ্য",d.health?(isEN()?tText(d.health):d.health).slice(0,30)+"…":"দেওয়া হয়নি","editHealth")}
@@ -2919,7 +2916,7 @@ function initPage() {
       const faq=[["রক্তদাতা হতে কী কী লাগে?","বয়স ১৮–৬০ বছর, ওজন কমপক্ষে ৫০ কেজি এবং সুস্থ শরীর।"],
         ["কতদিন পরপর রক্ত দেওয়া যায়?","সাধারণত ৯০ দিন (৩ মাস) পর পর। অ্যাপে কাউন্টডাউন দেখানো হয়।"],
         ["তথ্য যাচাই হতে কত সময় লাগে?","সাধারণত ২৪–৪৮ ঘণ্টা।"],
-        ["রক্তের গ্রুপ ভুল দিয়েছি, বদলাব কীভাবে?","সেটিংস → ডোনার → রক্তের গ্রুপ → পরিবর্তনের অনুরোধ।"],
+        ["রক্তের গ্রুপ ভুল দিয়েছি, বদলাব কীভাবে?","সেটিংস → ডোনার থেকে রক্তের গ্রুপ সরাসরি পরিবর্তন করুন।"],
         ["আমার নম্বর কে দেখতে পায়?","সেটিংস → গোপনীয়তা থেকে আপনি নিজে ঠিক করতে পারেন।"]];
       return `<div class="card pad0">
         <a class="row" href="tel:${SITE.phone}"><span class="ic" style="background:var(--grn-s);color:var(--grn)">${ICON.phone(19)}</span>
@@ -3373,6 +3370,7 @@ function initPage() {
       };
       RAW.mine.unshift(m);
       saveData();                            /* localStorage + users/{uid}/data + queue (shared/RTDB) */
+      void incrementApplicationCount();
       logAct("জরুরি রক্তের আবেদন",m.group+" · "+m.bags+" ব্যাগ","donor");
       /* matching ডোনারদের notification RTDB-তে লেখা হয় না — আবেদন approve হয়ে
          live হলে প্রতিটি ডোনারের প্যানেল নিজে নিজে notification তৈরি করে */
@@ -3422,58 +3420,6 @@ function initPage() {
       logAct("রক্তদানের রেকর্ড মুছে ফেলা হয়েছে","","donor");
       renderSub("adddonation");toast("মুছে ফেলা হয়েছে");
     });
-  }
-
-  /* ── রক্তের গ্রুপ পরিবর্তনের অনুরোধ ── */
-  function sheetGroupChange(){
-    const d=STORE.donor;
-    const s=sheet("রক্তের গ্রুপ পরিবর্তন",`
-      <div class="note w">${ICON.warn(17)}<span>রক্তের গ্রুপ বদলালে অ্যাডমিনের অনুমোদন লাগবে — এটি অনুরোধ হিসেবে যাবে এবং অনুমোদনের আগে কার্যকর হবে না।</span></div>
-      <div class="f"><label>বর্তমান গ্রুপ</label><input value="${esc(d.bloodGroup||"")}" readonly></div>
-      <div class="f"><label>নতুন গ্রুপ <i>*</i></label>
-        <select id="gch"><option value="">নতুন গ্রুপ নির্বাচন করুন</option>
-        ${GROUPS.map(g=>`<option ${g===d.bloodGroup?"selected":""}>${esc(g)}</option>`).join("")}</select>
-        <span class="hint er hide" id="gche"></span></div>
-      <div class="f"><label>কারণ <i>*</i></label>
-        <textarea id="gcr" rows="2" placeholder="ভুল দিয়ে দিয়েছি / পরীক্ষার ফলাফল অনুযায়ী পরিবর্তন…"></textarea></div>
-      <div class="f"><label>রিপোর্ট / প্রমাণ (ছবি) <i>*</i></label>
-        <input id="gcf" type="file" accept="image/*" class="file">
-        <span class="hint">রক্তের গ্রুপের রিপোর্ট/ছবি দিন — ImgBB-তে আপলোড হয়ে অ্যাডমিন সরাসরি দেখতে পাবেন।</span>
-        <div id="gcpv" class="hide" style="margin-top:8px"><img alt="প্রিভিউ" style="max-height:120px;border-radius:10px;border:1px solid var(--line)"></div></div>`,
-      `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="ok">অনুরোধ পাঠান</button>`,{lock:true});
-    /* ছবি প্রিভিউ */
-    const _gcf=s.q("#gcf"); if(_gcf) _gcf.onchange=()=>{
-      const f=_gcf.files&&_gcf.files[0]; const pv=s.q("#gcpv");
-      if(!f||!pv)return;
-      const url=URL.createObjectURL(f); pv.querySelector("img").src=url; pv.classList.remove("hide");
-    };
-    s.q("#ok").onclick=async()=>{
-      const v=s.q("#gch").value;
-      const reason=(s.q("#gcr").value||"").trim();
-      if(!v){const e=s.q("#gche");e.textContent="নতুন গ্রুপ নির্বাচন করুন";e.classList.remove("hide");return}
-      if(v===d.bloodGroup){toast("এটি আপনার বর্তমান গ্রুপ","er");return}
-      if(!reason){toast("কারণ লিখুন","er");return}
-      const f=s.q("#gcf")&&s.q("#gcf").files&&s.q("#gcf").files[0];
-      if(!f){toast("রক্তের গ্রুপের রিপোর্ট/ছবি দিন","er");return}
-      if(f.size>4*1024*1024){toast("ছবি ৪ MB-এর কম হতে হবে","er");return}
-      const btn=s.q("#ok");btn.disabled=true;btn.textContent="আপলোড হচ্ছে…";
-      let proof="";
-      try{ const up=await imgbbUploadImage(f); proof=up.url; }
-      catch(e){ btn.disabled=false;btn.textContent="অনুরোধ পাঠান"; return toast(e&&e.message?e.message:"ছবি আপলোড করা যায়নি","er"); }
-      if(window.CBDCShared){
-        CBDCShared.update(st=>{
-          const owner=STORE.account.uid||""; if(!owner) return;
-          const gid="GR-"+String(owner).replace(/[^A-Za-z0-9]/g,"").slice(-8);
-          const existing=st.queue.findIndex(q=>q.kind==="group"&&q.ownerUid===owner);
-          const q={kind:"group",id:gid,name:STORE.account.name,from:d.bloodGroup,to:v,group:v,reason,
-            proof,ownerUid:owner,at:new Date().toISOString()};
-          existing>=0?st.queue[existing]={...st.queue[existing],...q}:st.queue.unshift(q);
-          return st;
-        },"doner:personal");
-      }
-      logAct("রক্তের গ্রুপ পরিবর্তনের অনুরোধ",d.bloodGroup+" → "+v+" · ছবি সহ","donor");
-      s.close();renderSub("donor");toast("অনুরোধ পাঠানো হয়েছে — অ্যাডমিন যাচাই করবেন","ok");
-    };
   }
 
   /* ── আমার সব তথ্য নামান ── */
@@ -3627,16 +3573,13 @@ function initPage() {
       case "editAddr":editField({key:"address",title:"ঠিকানা",label:"বিস্তারিত ঠিকানা",textarea:true,
         hint:"পাবলিক তালিকায় শুধু এলাকা দেখানো হয়, সম্পূর্ণ ঠিকানা নয়।"});break;
       case "editPass":sheetPassword();break;
+      case "editBloodGroup":editField({key:"bloodGroup",title:"রক্তের গ্রুপ",label:"রক্তের গ্রুপ",options:GROUPS,store:"donor",
+        validate:v=>GROUPS.includes(v)||"রক্তের গ্রুপ নির্বাচন করুন"});break;
       case "editWa":editField({key:"whatsapp",title:"WhatsApp",label:"WhatsApp নম্বর",store:"donor",max:11,
         validate:v=>!v||phoneOK(v)||"সঠিক ১১ সংখ্যার নম্বর দিন"});break;
       case "editLast":editField({key:"lastDonation",title:"সর্বশেষ রক্তদান",label:"তারিখ",type:"date",store:"donor",
         max2:iso(now()),hint:"মনে না থাকলে খালি রাখুন।"});break;
       case "editHealth":editField({key:"health",title:"স্বাস্থ্য তথ্য",label:"শারীরিক অবস্থা / রোগ",textarea:true,store:"donor"});break;
-      case "reqGroup":sheetGroupChange();break;
-      case "resetOv":if(await confirmS({title:"সব রিসেট করবেন?",
-        desc:"নাম, লিঙ্গ, বয়স, এলাকা ও মোবাইল আবার অ্যাকাউন্ট থেকে নেওয়া হবে।",ok:"রিসেট করুন"})){
-        DFIELDS.forEach(f=>STORE.donor.ov[f.k]=null);save();renderSub("donor");
-        toast("সব তথ্য অ্যাকাউন্ট থেকে নেওয়া হবে","ok")}break;
       case "leaveDonor":if(await confirmS({title:"ডোনার তালিকা থেকে সরে যাবেন?",
         desc:"অ্যাকাউন্ট থাকবে, শুধু ডোনার তথ্য ও কার্ড সরে যাবে। চাইলে আবার যুক্ত হতে পারবেন।",ok:"সরে যান",danger:true})){
         const leftId=STORE.donor.donorId||"";
@@ -3645,7 +3588,6 @@ function initPage() {
         STORE.donor.is=false;STORE.donor.status="none";STORE.donor.donorId="";
         STORE.donor.bloodGroup="";STORE.donor.whatsapp="";STORE.donor.lastDonation="";
         STORE.donor.health="";STORE.donor.appliedAt="";STORE.donor.available=true;
-        STORE.donor.ov={name:null,gender:null,dob:null,area:null,phone:null};
         save();
         /* donors, pending member ও queue record একসাথে সরালে Main Website,
            Doner Panel এবং profile/list-এর existing RTDB listeners-এ realtime update যায়। */
@@ -3697,13 +3639,13 @@ function initPage() {
   });
   
   /* ---------- generic field editor ---------- */
-  function editField({key,title,label,type="text",options,textarea,store="account",validate,hint,max,max2}){
+  function editField({key,title,label,type="text",options,textarea,store="account",validate,hint,min,max,max2}){
     const src=store==="donor"?STORE.donor:STORE.account;
     const cur=src[key]||"";
     const input=options
       ? `<select id="ev">${options.map(o=>`<option ${o===cur?"selected":""}>${esc(o)}</option>`).join("")}</select>`
       : textarea ? `<textarea id="ev">${esc(cur)}</textarea>`
-      : `<input id="ev" type="${type}" value="${esc(cur)}" ${max?`maxlength="${max}"`:""} ${max2?`max="${max2}"`:""}>`;
+      : `<input id="ev" type="${type}" value="${esc(cur)}" ${min?`min="${min}"`:""} ${max?`maxlength="${max}"`:""} ${max2?`max="${max2}"`:""}>`;
     const s=sheet(title,`<div class="f"><label>${esc(label)}</label>${input}
       ${hint?`<span class="hint">${esc(hint)}</span>`:""}<span class="hint er hide" id="ee"></span></div>`,
       `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="ok">সংরক্ষণ</button>`);
@@ -3718,60 +3660,21 @@ function initPage() {
   /* ---------- donor display field editor ---------- */
   function editDonorField(k){
     const f=DFIELDS.find(x=>x.k===k);
-    const acct=acctVal(k), ov=STORE.donor.ov[k];
-    let mode = isOv(k)?"custom":"account";
-    const fmt=v=>k==="dob"?(v?dL(v)+" ("+ageText(v)+")":"—"):(v||"—");
-  
-    const s=sheet(f.label,`
-      <div class="note i">${ICON.info(17)}<span>এই তথ্যটি ডোনার তালিকা ও কার্ডে দেখানো হবে।</span></div>
-      <button class="opt" data-m="account" style="width:100%;text-align:left">
-        <span class="dot"></span>
-        <span style="flex:1"><b>অ্যাকাউন্ট থেকে নিন</b>
-          <small>${esc(fmt(acct))}</small>
-          <small style="color:var(--mut)">অ্যাকাউন্টে বদলালে এখানেও বদলাবে</small></span></button>
-      <button class="opt" data-m="custom" style="width:100%;text-align:left">
-        <span class="dot"></span>
-        <span style="flex:1"><b>আলাদা মান দিন</b>
-          <small>শুধু ডোনার তালিকার জন্য</small></span></button>
-      <div id="cw" class="hide" style="margin-top:12px">
-        <div class="f" style="margin-bottom:0"><label>${esc(f.label)}</label>${
-          f.type==="select"
-            ? `<select id="fv">${f.options.map(o=>`<option ${String(ov||acct)===o?"selected":""}>${esc(o)}</option>`).join("")}</select>`
-            : `<input id="fv" type="${f.type==="date"?"date":f.type==="number"?"number":"text"}"
-                 ${f.min?`min="${f.min}"`:""} ${f.max&&(f.type==="number"||f.type==="date")?`max="${f.max}"`:""}
-                 ${f.max&&f.type==="tel"?`maxlength="${f.max}" inputmode="numeric"`:""}
-                 value="${esc(ov??acct??"")}">`}
-          <span class="hint er hide" id="fe"></span></div></div>`,
-      `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="ok">সংরক্ষণ</button>`);
-  
-    const paint=()=>{
-      s.querySelectorAll(".opt").forEach(o=>o.classList.toggle("on",o.dataset.m===mode));
-      s.q("#cw").classList.toggle("hide",mode!=="custom");
-    };
-    s.querySelectorAll(".opt").forEach(o=>o.onclick=()=>{mode=o.dataset.m;paint();
-      if(mode==="custom")setTimeout(()=>s.q("#fv")?.focus(),60)});
-    paint();
-  
-    s.q("#ok").onclick=()=>{
-      if(mode==="account"){
-        STORE.donor.ov[k]=null;save();s.close();renderSub("donor");
-        toast(f.label+" এখন অ্যাকাউন্ট থেকে নেওয়া হবে","ok");return;
-      }
-      const v=String(s.q("#fv").value||"").trim(),er=s.q("#fe");er.classList.add("hide");
-      const bad=m=>{er.textContent=m;er.classList.remove("hide")};
-      if(!v)return bad("মান দিন");
-      if(k==="name"&&v.length<2)return bad("নাম কমপক্ষে ২ অক্ষরের হতে হবে");
+    if(!f)return;
+    const validate=v=>{
+      if(k==="name"&&v.trim().length<2)return "নাম কমপক্ষে ২ অক্ষরের হতে হবে";
       if(k==="dob"){
-        if(!isValidDob(v))return bad("সঠিক জন্ম তারিখ নির্বাচন করুন");
+        if(!isValidDob(v))return "সঠিক জন্ম তারিখ নির্বাচন করুন";
         const a=calcAgeFromDob(v);
         if(a===null||a<SITE.rules.minAge||a>SITE.rules.maxAge)
-          return bad(`জন্ম তারিখ অনুযায়ী বয়স ${SITE.rules.minAge} থেকে ${SITE.rules.maxAge} বছরের মধ্যে হতে হবে`);
+          return `জন্ম তারিখ অনুযায়ী বয়স ${SITE.rules.minAge} থেকে ${SITE.rules.maxAge} বছরের মধ্যে হতে হবে`;
       }
-      if(k==="phone"&&!phoneOK(v))return bad("সঠিক ১১ সংখ্যার নম্বর দিন");
-      STORE.donor.ov[k]=v;save();
-      logAct("ডোনার তথ্য পরিবর্তন",f.label+": "+v,"donor");
-      s.close();renderSub("donor");toast(f.label+" সংরক্ষণ হয়েছে","ok");
+      if(k==="phone"&&!phoneOK(v))return "সঠিক ১১ সংখ্যার নম্বর দিন";
+      return true;
     };
+    editField({key:k,title:f.label,label:f.label,type:f.type,options:f.options,
+      min:f.min,max:f.type==="tel"?f.max:undefined,max2:f.type==="date"?f.max:undefined,
+      store:"account",validate});
   }
   
   /* ---------- photo ---------- */
@@ -4368,11 +4271,12 @@ function initPage() {
   let RTDB_UID="";
   let RTDB_PULLING=false;
   async function pushAccountToRtdb(){
-    if(!RTDB_UID||RTDB_PULLING)return;
+    const uid=firebaseCurrentUid();
+    if(!uid||uid!==RTDB_UID||RTDB_PULLING)return;
     const a=STORE.account,d=STORE.donor;
     try{
       const payload = {
-        uid:RTDB_UID, name:a.name||"", username:a.username||"", email:(a.email||"").toLowerCase(),
+        uid, name:a.name||"", username:a.username||"", email:(a.email||"").toLowerCase(),
         phone:a.phone||"", dob:a.dob||"", gender:a.gender||"", area:a.area||"",
         address:a.address||"", photoURL:a.photo||"", joined:a.joined||""
       };
@@ -4408,24 +4312,25 @@ function initPage() {
         payload.appliedAt = null;
         payload.cardTheme = null;
       }
-      await updateRow(NODES.users, RTDB_UID, payload);
+      await updateRow(NODES.users, uid, payload);
     }catch(e){ console.warn("profile push:", e && e.message); }
   }
   /* অনুমোদিত ডোনারের পাবলিক রেকর্ড (donors/{id}) — নিজের তথ্য বদলালে সাথে সাথে
      RTDB-তে update হয়, আর RTDB থেকে store-এর live listener-এর মাধ্যমে মেইন
      ওয়েবসাইট ও ডোনার প্যানেলের সব জায়গায় (তালিকা/কার্ড/প্রোফাইল) সাথে সাথে
-     দেখা যায় — কোনো refresh লাগে না। bloodGroup/verified/suspended/donations
-     ইত্যাদি admin-নিয়ন্ত্রিত ফিল্ড লেখা হয় না (rules-ও রক্ষা করে)। */
+     দেখা যায় — কোনো refresh লাগে না। verified/suspended/donations ইত্যাদি
+     admin-নিয়ন্ত্রিত ফিল্ড লেখা হয় না; Account/Donor তথ্য একসাথে sync হয়। */
   async function pushDonorRecordToRtdb(){
-    if(!RTDB_UID||RTDB_PULLING)return;
+    const uid=firebaseCurrentUid();
+    if(!uid||uid!==RTDB_UID||RTDB_PULLING)return;
     const d=STORE.donor;
     if(!d.is||d.status!=="approved"||!d.donorId)return;
     try{
       let donor=null;
-      try{ donor=await findBy(NODES.donors,"ownerUid",RTDB_UID); }catch(e){}
+      try{ donor=await findBy(NODES.donors,"ownerUid",uid); }catch(e){}
       if(!donor){
         const all=await listOnce(NODES.donors);
-        donor=all.find(x=>String(x.ownerUid||"")===String(RTDB_UID)||String(x.id||"")===String(d.donorId));
+        donor=all.find(x=>String(x.ownerUid||"")===String(uid)||String(x.id||"")===String(d.donorId));
       }
       const id=(donor&&donor.id)||d.donorId;
       if(!id)return;
@@ -4435,9 +4340,10 @@ function initPage() {
   /* ডোনারের নিজস্ব রেকর্ড (রক্তদান, নিজের আবেদন, বিজ্ঞপ্তি, কার্যক্রম) RTDB-তে —
      ডিভাইস বদলালেও একই তথ্য, এবং অ্যাডমিন প্যানেলও একই উৎস পড়ে। */
   async function pushMyDataToRtdb(){
-    if(!RTDB_UID||RTDB_PULLING)return;
+    const uid=firebaseCurrentUid();
+    if(!uid||uid!==RTDB_UID||RTDB_PULLING)return;
     try{
-      await updateRow(NODES.users, RTDB_UID, {
+      await updateRow(NODES.users, uid, {
         data:{
           donations:RAW.donations||[],
           mine:RAW.mine||[],
@@ -4446,6 +4352,236 @@ function initPage() {
       });
     }catch(e){ console.warn("data push:", e && e.message); }
   }
+  const APPLICATION_TERMINAL_STATUS=new Set(["rejected","cancelled","done","resolved","expired"]);
+
+  function applicationRows(value){
+    if(Array.isArray(value))return value.map((row,i)=>row&&typeof row==="object"?{...row,id:row.id||row.requestId||String(i)}:null).filter(Boolean);
+    if(value&&typeof value==="object")return Object.entries(value).map(([id,row])=>
+      row&&typeof row==="object"?{...row,id:row.id||row.requestId||id}:null).filter(Boolean);
+    return [];
+  }
+  function applicationStatus(row){
+    const status=String(row&&row.status||"").trim().toLowerCase();
+    const workflow=String(row&&row.workflowStatus||"").trim().toLowerCase();
+    const canonical=value=>{
+      if(value==="cancelled"||value==="canceled")return "cancelled";
+      if(value==="rejected")return "rejected";
+      if(value==="resolved"||value==="completed")return "resolved";
+      if(value==="done")return "done";
+      if(value==="expired")return "expired";
+      if(value==="matched")return "matched";
+      if(value==="approved"||value==="searching"||value==="active")return "approved";
+      if(value==="pending"||value==="waiting")return "pending";
+      return "";
+    };
+    /* workflowStatus is the more specific part of an approved request. */
+    return canonical(workflow)||canonical(status)||"pending";
+  }
+  function applicationHasExpired(row){
+    const raw=String(row&&row.expiresAt||row&&row.neededBy||"").trim();
+    if(!raw)return false;
+    const value=/^\d{4}-\d{2}-\d{2}$/.test(raw)?raw+"T23:59:59":raw;
+    const time=Date.parse(value);
+    return Number.isFinite(time)&&time<Date.now();
+  }
+  function normalizeApplication(row){
+    const r=row&&typeof row==="object"?row:{};
+    const responders=Array.isArray(r.responders)
+      ?r.responders
+      :(r.responders&&typeof r.responders==="object"?Object.values(r.responders):[]);
+    const responderCount=Array.isArray(r.responders)
+      ?responders.length
+      :Number(r.responders)||Number(r.responderCount)||0;
+    const expires=String(r.neededBy||r.expiresAt||"");
+    const status=applicationStatus(r);
+    return {
+      ...r,
+      id:String(r.id||r.requestId||""),
+      patient:r.patient||r.patientName||"",
+      group:r.group||r.bloodGroup||"",
+      bags:Number(r.bags||r.units||1)||1,
+      urgency:r.urgency||"",
+      hospital:r.hospital||r.hospitalName||"",
+      address:r.address||r.hospitalAddress||r.area||"",
+      area:r.area||r.hospitalAddress||r.address||"",
+      neededBy:expires.slice(0,10),
+      createdAt:r.createdAt||r.at||"",
+      /* Expiry is derived for display only; the original RTDB record remains
+         intact until the user explicitly updates or deletes it. */
+      status:!APPLICATION_TERMINAL_STATUS.has(status)&&applicationHasExpired(r)?"expired":status,
+      responders,
+      responderCount,
+      rejectNote:r.rejectNote||r.rejectionReason||""
+    };
+  }
+  function mergeApplicationStatus(userRow,requestRow){
+    const us=userRow&&userRow.status, rs=requestRow&&requestRow.status;
+    if(!userRow)return rs;
+    if(!requestRow)return us;
+    /* Admin decisions written to users/{uid}/data/mine must not be replaced by
+       an older public request snapshot. */
+    if(APPLICATION_TERMINAL_STATUS.has(us))return us;
+    if(APPLICATION_TERMINAL_STATUS.has(rs))return rs;
+    if(rs==="pending"&&us!=="pending")return us;
+    return rs!=="pending"?rs:us;
+  }
+  let MY_APPLICATION_COUNT_PROMISE=null;
+  let MY_APPLICATION_COUNT_PROMISE_UID="";
+  function knownApplicationCount(){
+    const ids=new Set();
+    [...MY_APPLICATION_USER_ROWS,...MY_APPLICATION_REQUEST_ROWS].forEach(row=>{
+      const id=String(row&& (row.id||row.requestId)||"").trim();
+      if(id)ids.add(id);
+    });
+    return ids.size;
+  }
+  function syncApplicationCount(){
+    const uid=firebaseCurrentUid();
+    if(!uid||uid!==MY_APPLICATION_UID)return Promise.resolve(0);
+    if(MY_APPLICATION_COUNT_PROMISE&&MY_APPLICATION_COUNT_PROMISE_UID===uid)return MY_APPLICATION_COUNT_PROMISE;
+    const minimum=knownApplicationCount();
+    const work=ensureFieldAtLeast(NODES.users,uid,"applicationCount",minimum)
+      .then(count=>{
+        if(Number(count)<minimum)throw new Error("application count was not persisted");
+        if(firebaseCurrentUid()===uid){
+          STORE.account.applicationCount=Math.max(Number(STORE.account.applicationCount)||0,Number(count)||0);
+          MY_APPLICATION_COUNT_READY=true;
+          persistLocalAccount();
+          if(CUR==="req"&&!document.querySelector(".sheet"))rReq();
+        }
+        return count;
+      })
+      .catch(error=>{console.warn("application count:",error&&error.message);return null;});
+    const promise=work.finally(()=>{
+      if(MY_APPLICATION_COUNT_PROMISE===promise){MY_APPLICATION_COUNT_PROMISE=null;MY_APPLICATION_COUNT_PROMISE_UID="";}
+    });
+    MY_APPLICATION_COUNT_PROMISE=promise;
+    MY_APPLICATION_COUNT_PROMISE_UID=uid;
+    return promise;
+  }
+  async function incrementApplicationCount(){
+    const uid=firebaseCurrentUid();
+    if(!uid||uid!==MY_APPLICATION_UID)return;
+    try{
+      const count=await incrementField(NODES.users,uid,"applicationCount",1);
+      if(firebaseCurrentUid()===uid){
+        STORE.account.applicationCount=Math.max(Number(STORE.account.applicationCount)||0,Number(count)||0);
+        MY_APPLICATION_COUNT_READY=true;
+        persistLocalAccount();
+        if(CUR==="req"&&!document.querySelector(".sheet"))rReq();
+      }
+    }catch(error){console.warn("application count increment:",error&&error.message)}
+  }
+  async function purgeExpiredApplications(){
+    if(MY_APPLICATION_CLEANUP)return;
+    const uid=firebaseCurrentUid();
+    if(!uid||uid!==MY_APPLICATION_UID||!MY_APPLICATION_USER_READY)return;
+    const expired=RAW.mine.filter(row=>row&&(row.status==="expired"||applicationHasExpired(row)));
+    if(!expired.length)return;
+    MY_APPLICATION_CLEANUP=true;
+    const previousMine=RAW.mine.slice(),previousUserRows=MY_APPLICATION_USER_ROWS.slice(),previousRequestRows=MY_APPLICATION_REQUEST_ROWS.slice();
+    try{
+      /* Count is persisted before the records disappear, so expiry never loses
+         the donor's historical total. A public request can arrive while the
+         first count transaction is in flight, so check the current floor again
+         immediately before deleting anything. */
+      await syncApplicationCount();
+      const count=await syncApplicationCount();
+      if(count===null)throw new Error("historical application count could not be saved");
+      const ids=new Set(expired.map(row=>String(row.id)));
+      RAW.mine=RAW.mine.filter(row=>!ids.has(String(row&&row.id||"")));
+      MY_APPLICATION_USER_ROWS=MY_APPLICATION_USER_ROWS.filter(row=>!ids.has(String(row&&row.id||"")));
+      const requestIds=MY_APPLICATION_REQUEST_ROWS.filter(row=>ids.has(String(row&&row.id||""))).map(row=>String(row.id));
+      MY_APPLICATION_REQUEST_ROWS=MY_APPLICATION_REQUEST_ROWS.filter(row=>!ids.has(String(row&&row.id||"")));
+      mergeMyApplications();
+      const paths={[`users/${uid}/data/mine`]:MY_APPLICATION_USER_ROWS};
+      ids.forEach(id=>{paths[`queue/${id}`]=null});
+      requestIds.forEach(id=>{paths[`requests/${id}`]=null});
+      await updatePaths(paths);
+    }catch(error){
+      RAW.mine=previousMine;MY_APPLICATION_USER_ROWS=previousUserRows;MY_APPLICATION_REQUEST_ROWS=previousRequestRows;
+      mergeMyApplications();
+      console.warn("expired application cleanup:",error&&error.message);
+    }finally{MY_APPLICATION_CLEANUP=false}
+  }
+  function mergeMyApplications(){
+    const byId=new Map();
+    MY_APPLICATION_REQUEST_ROWS.map(normalizeApplication).forEach(row=>{
+      if(row.id)byId.set(row.id,row);
+    });
+    MY_APPLICATION_USER_ROWS.map(normalizeApplication).forEach(userRow=>{
+      if(!userRow.id)return;
+      const requestRow=byId.get(userRow.id);
+      if(!requestRow){byId.set(userRow.id,userRow);return;}
+      const merged={...requestRow};
+      /* The private record contains the complete form/history; retain public
+         fields when an older private record does not have them. */
+      ["patient","group","bags","urgency","hospital","address","area","neededBy","createdAt","rejectNote"].forEach(key=>{
+        if(userRow[key]!==undefined&&userRow[key]!==null&&userRow[key]!=="")merged[key]=userRow[key];
+      });
+      if(userRow.responders.length)merged.responders=userRow.responders;
+      merged.responderCount=Math.max(requestRow.responderCount||0,userRow.responderCount||0,merged.responders.length||0);
+      merged.status=mergeApplicationStatus(userRow,requestRow);
+      byId.set(userRow.id,merged);
+    });
+    RAW.mine=[...byId.values()].sort((a,b)=>{
+      const bt=Date.parse(b.createdAt||"")||0,at=Date.parse(a.createdAt||"")||0;
+      return bt-at;
+    });
+    try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
+    if(CUR==="req"&&!document.querySelector(".sheet"))rReq();
+  }
+  function beginMyApplications(uid){
+    uid=String(uid||"").trim();
+    if(MY_APPLICATION_UID===uid)return;
+    MY_APPLICATION_UID=uid;
+    MY_APPLICATION_COUNT_READY=false;
+    STORE.account.applicationCount=0;
+    MY_APPLICATION_USER_READY=false;
+    MY_APPLICATION_REQUESTS_READY=false;
+    MY_APPLICATION_USER_ROWS=[];
+    MY_APPLICATION_REQUEST_ROWS=[];
+    /* Do not let a previous account's local cache paint this screen while the
+       Firebase Auth user's own snapshot is being fetched. */
+    RAW.mine=[];
+  }
+  function setMyApplicationsFromUser(uid,row){
+    if(String(uid||"")!==MY_APPLICATION_UID)return;
+    MY_APPLICATION_USER_ROWS=applicationRows(row&&row.data&&row.data.mine);
+    MY_APPLICATION_USER_READY=true;
+    mergeMyApplications();
+    void syncApplicationCount();
+    void purgeExpiredApplications();
+  }
+  function watchMyApplications(uid){
+    if(!uid)return;
+    stopMyApplicationRequests();
+    MY_APPLICATION_REQUESTS_READY=false;
+    stopMyApplicationRequests=watchList(NODES.requests,rows=>{
+      if(String(uid)!==String(firebaseCurrentUid()))return;
+      MY_APPLICATION_REQUEST_ROWS=rows.filter(row=>{
+        const owner=String(row&& (row.ownerUid||row.uid||row.userId||row.requesterUid)||"").trim();
+        return owner===String(uid);
+      });
+      MY_APPLICATION_REQUESTS_READY=true;
+      mergeMyApplications();
+      void syncApplicationCount();
+      void purgeExpiredApplications();
+    });
+  }
+  function myApplicationsAreLoading(){
+    /* The private users/{uid} snapshot is the required source. The public
+       requests listener is only an additional live source; a temporary
+       listener/network issue must never leave this tab blocked forever. */
+    return !AUTH_SESSION_READY||!!MY_APPLICATION_UID&&!MY_APPLICATION_USER_READY;
+  }
+  function firebaseCurrentUid(){
+    try{
+      const shared=initSharedFirebase();
+      return String(shared&&shared.auth&&shared.auth.currentUser&&shared.auth.currentUser.uid||"").trim();
+    }catch(e){return ""}
+  }
+
   function applyRtdbRow(uid, row, authUser){
     const a=STORE.account;
     a.uid=uid;
@@ -4468,6 +4604,10 @@ function initPage() {
     else if(a.photo && !row.photoURL) a.photoSource = "google";
     else a.photoSource = "none";
     if(row.joined)a.joined=row.joined;
+    if(row.applicationCount!==undefined&&Number.isFinite(Number(row.applicationCount))){
+      a.applicationCount=Math.max(0,Number(row.applicationCount));
+      MY_APPLICATION_COUNT_READY=true;
+    }
     // donor fields — একই UID তে donor তথ্য একীভূত, কোনো duplicate নয়
     const _bg = row.bloodGroup || row.group || "";
     /* Account-এর `status:"active"` কে কখনোই donor status ভাবা যাবে না।
@@ -4514,8 +4654,9 @@ function initPage() {
     if(row.appliedAt) STORE.donor.appliedAt = String(row.appliedAt||"");
     if(row.cardTheme) STORE.donor.cardTheme = String(row.cardTheme||"green");
     if(row.data&&typeof row.data==="object"){
-      /* notifs আর users/data থেকে লোড হয় না — উৎস এখন notifications/{uid} নোড */
-      ["donations","mine","activity"].forEach(k=>{ if(Array.isArray(row.data[k]))RAW[k]=row.data[k]; });
+      /* `mine` is applied by setMyApplicationsFromUser() so it is always
+         scoped to this Auth UID and merged with the live requests listener. */
+      ["donations","activity"].forEach(k=>{ if(Array.isArray(row.data[k]))RAW[k]=row.data[k]; });
       try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
     }
   }
@@ -4611,25 +4752,28 @@ function initPage() {
   function watchMyProfile(uid, authUser){
     if(!uid)return;
     RTDB_UID=uid;
-    watchRow(NODES.users, uid, async (row)=>{
-      // RTDB তে row না থাকলে কিন্তু local-এ complete profile + donor থাকলে overwrite করি না
-      if(!row && STORE.account.uid === uid && isProfileComplete(STORE.account) && STORE.donor.is) return;
+    beginMyApplications(uid);
+    watchMyApplications(uid);
+    stopMyProfileListener();
+    stopMyProfileListener=watchRow(NODES.users, uid, async (row)=>{
+      /* A late callback from a previous account must never overwrite the
+         current user's application state. */
+      if(String(uid)!==String(firebaseCurrentUid()))return;
       RTDB_PULLING=true;
       applyRtdbRow(uid, row, authUser);
+      setMyApplicationsFromUser(uid,row);
       // users/{uid} এ donor তথ্য না থাকলেও donors/members/queue এ থাকলে UID দিয়ে hydrate
       if(!STORE.donor.is){
         try{ await hydrateDonorFromRtdb(uid); }catch(e){ console.warn("hydrate in watch:", e && e.message); }
       }
-      /* data/mine লোড হওয়ার পর queue/requests-এর সাথে status মিলিয়ে নিই —
-         ফলে "আমার আবেদন" ঠিকমতো লোড হয় (pending/approved/rejected/cancelled) */
-      try{ pullSharedPublic(); }catch(e){ console.warn("resync mine:", e && e.message); }
+      try{ pullSharedPublic(); }catch(e){ console.warn("resync personal data:", e && e.message); }
       persistLocalAccount();
       RTDB_PULLING=false;
       if(!document.querySelector(".sheet")&&!PUBLIC_MODE){ try{ paintTop(); go(CUR,SUB,false); }catch(e){} }
     });
     /* notification storage live update — আলাদা website storage (RTDB-তে নয়);
        RTDB পরিবর্তন → syncNotifsFromData() → এখানে subscriber → সাথে সাথে UI */
-    notifSubscribe(()=>{
+    if(!myApplicationNotifUnsubscribe)myApplicationNotifUnsubscribe=notifSubscribe(()=>{
       paintTop();
       if(npOpen)renderNotifPanel();
     });
@@ -4648,17 +4792,34 @@ function initPage() {
       let authUid = STORE.account.uid || "";
       onAuthStateChanged(shared.auth, async (user)=>{
         if(PUBLIC_MODE)return;
+        AUTH_SESSION_READY=true;
         if(!user){
           authUid="";
+          stopMyApplicationRequests();
+          stopMyProfileListener();
+          MY_APPLICATION_UID="";
+          MY_APPLICATION_COUNT_READY=false;
+          STORE.account.applicationCount=0;
+          MY_APPLICATION_USER_READY=false;
+          MY_APPLICATION_REQUESTS_READY=false;
+          MY_APPLICATION_USER_ROWS=[];
+          MY_APPLICATION_REQUEST_ROWS=[];
+          RAW.mine=[];
           setTimeout(()=>{navigateToPage("home")},400);
           return;
         }
         /* শুধু অন্য uid-তে স্যুইচ করলেই cache পরিষ্কার —
            প্রথম লোডে (authUid খালি বা একই uid) আগের সংরক্ষিত তথ্য রাখি। */
         if(authUid && authUid !== user.uid){
+          stopMyApplicationRequests();
+          stopMyProfileListener();
           resetUserCache();
           if(!PUBLIC_MODE){ try{ paintTop(); go(CUR,SUB,false); }catch(e){} }
         }
+        /* The Firebase Auth session, not localStorage, is the identity used for
+           every personal application read.  Clear any cached list before the
+           first RTDB snapshot for this UID arrives. */
+        beginMyApplications(user.uid);
         authUid = user.uid;
         /* Role gate — Admin/Moderator কখনোই Doner Dashboard ব্যবহার করে না;
            তাদের নিজ নিজ প্যানেলে পাঠিয়ে দেওয়া হয় (role আসে RTDB থেকে)। */
@@ -4676,6 +4837,7 @@ function initPage() {
         let row = null;
         try{ row = await loadUserProfile(user.uid); }catch(e){}
         applyRtdbRow(user.uid, row, user);
+        setMyApplicationsFromUser(user.uid,row);
         // users/{uid} এ donor না থাকলেও existing donor record (donors/members/queue) UID দিয়ে detect
         if(!STORE.donor.is){
           try{ await hydrateDonorFromRtdb(user.uid); }catch(e){ console.warn("hydrate on login:", e && e.message); }
@@ -4747,6 +4909,9 @@ function initPage() {
   /* ২৪ ঘণ্টা পুরোনো notification স্বয়ংক্রিয় cleanup — আলাদা website
      notification storage থেকেই মুছে যায় (RTDB-তে কিছু লেখা হয় না) */
   setInterval(()=>{ try{ pruneExpired(); }catch(e){} }, 30*60*1000);
+  /* Expired applications are removed from RTDB automatically.  The historical
+     total is written separately before this cleanup runs. */
+  setInterval(()=>{ try{ void purgeExpiredApplications(); }catch(e){} },60*1000);
   
 }
 
@@ -4775,13 +4940,13 @@ export function donorPublicPatch(
 ): Record<string, string | boolean> {
   const a = account || {};
   const d = donor || {};
-  const ov = (d.ov && typeof d.ov === "object" ? d.ov : {}) as Record<string, any>;
   return {
-    name: String(ov.name || a.name || ""),
-    gender: String(ov.gender || a.gender || ""),
-    dob: String(ov.dob || a.dob || ""),
-    area: String(ov.area || a.area || ""),
-    phone: String(ov.phone || a.phone || ""),
+    name: String(a.name || ""),
+    gender: String(a.gender || ""),
+    dob: String(a.dob || ""),
+    area: String(a.area || ""),
+    phone: String(a.phone || ""),
+    bloodGroup: String(d.bloodGroup || ""),
     whatsapp: String(d.whatsapp || ""),
     lastDonationDate: String(d.lastDonation || ""),
     available: d.available !== false,
