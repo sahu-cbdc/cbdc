@@ -1857,6 +1857,12 @@ function initPage() {
              queue থেকে বাদ; বাতিল/সম্পন্ন হলে requests থেকেও বাদ (resurrect নয়) */
           if(qi>=0)st.queue.splice(qi,1);
           if((m.status==="cancelled"||m.status==="done"||m.status==="rejected")&&ri>=0)st.requests.splice(ri,1);
+          else if(ri>=0&&String(st.requests[ri].ownerUid||"")===owner){
+            /* Account info বদলালে approved emergency request-এও requester/phone/area
+               এক source থেকে sync থাকে; request status/workflow untouched. */
+            st.requests[ri]={...st.requests[ri],requesterName:a.name,requester:a.name,
+              phone:a.phone,whatsapp:a.phone,hospitalAddress:st.requests[ri].hospitalAddress||m.address||a.area};
+          }
         }
       });
       RAW.donations.filter(x=>!x.ok).forEach((x,i)=>{
