@@ -223,6 +223,8 @@ export type SeenState = {
   donorStatus?: string;
   bloodGroup?: string;
   lastDonation?: string;
+  /** রক্তের গ্রুপ পরিবর্তনের অনুরোধের সর্বশেষ দেখা status (pending/approved/rejected) */
+  groupChangeStatus?: string;
 };
 
 export function loadSeen(): SeenState {
