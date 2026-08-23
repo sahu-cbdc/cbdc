@@ -204,8 +204,42 @@ check("pending view has NO send button (single pending request)", !$(".sheet #gc
 check("pending view offers withdrawal", !!$(".sheet #gc_cancel"));
 check("pending view shows from → to", sheet && sheet.textContent.includes("A+ → B+"));
 check("blood group still the old one while pending", w.STORE.donor.bloodGroup === "A+");
+// ISO timestamp must never render as "Invalid Date"
+check("pending view has no 'Invalid Date'", sheet && !sheet.textContent.includes("Invalid Date"));
+check("pending view shows a readable sent time", sheet && sheet.textContent.includes("পাঠানো হয়েছে"));
 closeSheet();
 await sleep(100);
+
+// ── 3.1 admin approves → row and sheet show Approved, new group live ──
+w.STORE.donor.groupChange.status = "approved";
+w.STORE.donor.groupChange.decidedAt = new Date().toISOString();
+w.STORE.donor.bloodGroup = "B+";
+w.renderSub("donor");
+await sleep(100);
+const bgRowA = $$("#s-sub button.row[data-act='editBloodGroup']")[0];
+check("row shows the approved text after approval", !!bgRowA && bgRowA.textContent.includes("অনুমোদিত"));
+check("row shows the NEW blood group", !!bgRowA && bgRowA.textContent.includes("B+"));
+if (bgRowA) { bgRowA.click(); await sleep(150); }
+sheet = $(".sheet");
+check("approved view opens (no pending state left)", !!sheet && sheet.textContent.includes("অনুরোধ অনুমোদিত") && !sheet.textContent.includes("অনুরোধ অপেক্ষমাণ"));
+check("approved view names the new group", sheet && sheet.textContent.includes("B+"));
+check("approved view has no 'Invalid Date'", sheet && !sheet.textContent.includes("Invalid Date"));
+check("approved view offers a fresh request", !!$(".sheet #gc_again"));
+closeSheet();
+await sleep(100);
+
+// ── 3.2 self-heal: status write was missed but the group DID change in RTDB ──
+w.STORE.donor.bloodGroup = "O+";
+w.STORE.donor.groupChange = {
+  id: "GC-TEST-2", from: "B+", to: "O+", reason: "x",
+  proof: "", status: "pending", at: Date.now(), note: "",
+};
+w.renderSub("donor");
+await sleep(100);
+check("self-heal: stale pending becomes approved once the group is live",
+  w.STORE.donor.groupChange && w.STORE.donor.groupChange.status === "approved");
+const bgRowH = $$("#s-sub button.row[data-act='editBloodGroup']")[0];
+check("self-heal: row no longer says pending", !!bgRowH && !bgRowH.textContent.includes("অপেক্ষমাণ"));
 
 // ── 4. a rejected request shows the rejection note and allows a fresh request ──
 w.STORE.donor.groupChange = {

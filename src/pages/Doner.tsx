@@ -19,7 +19,7 @@ import {
   isProfileComplete,
   requestPasswordReset,
 } from "../lib/authx";
-import { getRow, setRow, updateRow, watchRow, watchList, addRow, findBy, listOnce, nowIso, updatePaths, removeRow, incrementField, ensureFieldAtLeast } from "../lib/rtdb";
+import { getRow, setRow, updateRow, watchRow, watchList, addRow, findBy, listOnce, nowIso, updatePaths, removeRow, incrementField, ensureFieldAtLeast, serverTime } from "../lib/rtdb";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
@@ -839,6 +839,11 @@ function initPage() {
   "অপেক্ষমাণ":"Pending",
   "অনুরোধ প্রত্যাহার":"Withdraw request",
   "নতুন রক্তের গ্রুপ":"New blood group",
+  "অনুরোধ অনুমোদিত":"Request approved",
+  "অনুমোদিত হয়েছে":"Approved on",
+  "নতুন অনুরোধ পাঠান":"Send a new request",
+  "পাঠানো হয়েছে":"Sent on",
+  "পরিবর্তনের অনুরোধ অনুমোদিত":"change request approved",
   "প্রমাণ — রক্ত পরীক্ষার রিপোর্টের ছবি":"Proof — photo of the blood test report",
   "পরিবর্তনের অনুরোধ অপেক্ষমাণ":"change request pending",
   "সর্বশেষ অনুরোধ বাতিল হয়েছে":"last request was rejected",
@@ -2788,9 +2793,11 @@ function initPage() {
   
       <div class="sec-t">রক্ত সম্পর্কিত তথ্য</div>
       <div class="card pad0">
-        ${(()=>{const gc=d.groupChange&&typeof d.groupChange==="object"?d.groupChange:null;
+        ${(()=>{const gc=typeof gcState==="function"?gcState():null;
           const sub=gc&&gc.status==="pending"
             ?`${d.bloodGroup} · পরিবর্তনের অনুরোধ অপেক্ষমাণ (${gc.from||d.bloodGroup} → ${gc.to||""})`
+            :gc&&gc.status==="approved"
+            ?`${d.bloodGroup} · পরিবর্তনের অনুরোধ অনুমোদিত`
             :gc&&gc.status==="rejected"
             ?`${d.bloodGroup} · সর্বশেষ অনুরোধ বাতিল হয়েছে`
             :d.bloodGroup;
@@ -3700,7 +3707,51 @@ function initPage() {
      (pending / approved / rejected) users/{uid}/groupChange-এ থাকে, তাই
      Doner Panel ও Main Website দুটোই realtime-এ আপডেট পায়।
      একই সময়ে একাধিক pending অনুরোধ পাঠানো যায় না। */
-  function sheetGroupChange(){
+
+  /* অনুরোধের টাইমস্ট্যাম্প নিরাপদে দেখানো — RTDB-তে serverTimestamp (number)
+     অথবা ISO string দুটোই থাকতে পারে; কোনোটাই parse না হলে খালি string,
+     কখনোই "Invalid Date" নয়। (dL শুধু YYYY-MM-DD তারিখের জন্য।) */
+  function gcWhen(v){
+    if(v===undefined||v===null||v==="")return "";
+    const t=typeof v==="number"?v:Date.parse(String(v));
+    if(!Number.isFinite(t)||t<=0)return "";
+    return bdDateLabel(t)+" · "+bdTimeStr(t);
+  }
+  /* অনুরোধের বর্তমান অবস্থা — সবসময় একই RTDB data (users/{uid}/groupChange +
+     কার্যকর bloodGroup) থেকে হিসাব হয়। Self-heal: Admin Approve করলে আসল গ্রুপ
+     donors/users নোডে বদলে যায়; কোনো কারণে status লেখা না পৌঁছালেও (পুরোনো
+     Admin build / নেটওয়ার্ক) নতুন গ্রুপ কার্যকর হয়ে গেলে অনুরোধটি Approved —
+     এখানে সেটি ধরে RTDB-র status-ও ঠিক করে দেওয়া হয়, ফলে "অপেক্ষমাণ" আটকে
+     থাকে না। */
+  function gcState(){
+    const d=STORE.donor;
+    const gc=d.groupChange&&typeof d.groupChange==="object"?{...d.groupChange}:null;
+    if(!gc||!gc.status)return null;
+    if(gc.status==="pending"&&gc.to&&d.bloodGroup===gc.to){
+      gc.status="approved";
+      if(!gc.decidedAt)gc.decidedAt=nowIso();
+      STORE.donor.groupChange={...gc};
+      const uid=String(firebaseCurrentUid()||STORE.account.uid||"").trim();
+      if(uid)updatePaths({
+        ["users/"+uid+"/groupChange/status"]:"approved",
+        ["users/"+uid+"/groupChange/decidedAt"]:gc.decidedAt
+      }).catch(e=>console.warn("gc heal:",e&&e.message));
+    }
+    return gc;
+  }
+  /* Sheet খোলা থাকা অবস্থায় Admin Approve/Reject করলে — watchMyProfile-এর
+     callback থেকে এটি ডাকা হয়; pending sheet-টি বন্ধ করে নতুন status-এর
+     view খোলে (form-এ টাইপ চলাকালীন কিছুই স্পর্শ করা হয় না)। */
+  function refreshGroupChangeSheet(){
+    const sh=document.querySelector(".sheet[data-gc='pending']");
+    if(!sh)return;
+    const gc=gcState();
+    if(gc&&gc.status==="pending")return;   /* এখনো pending — কিছু করার নেই */
+    try{sh.close();}catch(e){}
+    try{if(CUR==="set")renderSub(SUB);}catch(e){}
+    sheetGroupChange();
+  }
+  function sheetGroupChange(forceForm){
     const d=STORE.donor;
     /* অনুমোদনের আগে গ্রুপ এখনো পাবলিক নয় — আবেদনপত্রের অংশ হিসেবে আগের মতোই
        সম্পাদনাযোগ্য; আবেদনটি এমনিতেই Admin-এর যাচাইয়ের অপেক্ষায় থাকে। */
@@ -3709,7 +3760,7 @@ function initPage() {
         validate:v=>GROUPS.includes(v)||"রক্তের গ্রুপ নির্বাচন করুন"});
       return;
     }
-    const gc=d.groupChange&&typeof d.groupChange==="object"?d.groupChange:null;
+    const gc=gcState();
     /* একটি pending অনুরোধ থাকা অবস্থায় নতুন অনুরোধ পাঠানো যায় না */
     if(gc&&gc.status==="pending"){
       const s=sheet("রক্তের গ্রুপ পরিবর্তনের অনুরোধ",`
@@ -3720,13 +3771,14 @@ function initPage() {
           <div class="row"><span class="tx"><b>পরিবর্তন</b><small>${esc(gc.from||d.bloodGroup)} → ${esc(gc.to||"")}</small></span>
             <span class="rt"><span class="pill a">অপেক্ষমাণ</span></span></div>
           <div class="row"><span class="tx"><b>কারণ</b><small>${esc(gc.reason||"")}</small></span></div>
-          <div class="row"><span class="tx"><b>পাঠানো হয়েছে</b><small>${esc(gc.at?dL(gc.at):"")}</small></span></div>
+          ${(()=>{const t=gcWhen(gc.atTs||gc.at);return t?`<div class="row"><span class="tx"><b>পাঠানো হয়েছে</b><small>${esc(t)}</small></span></div>`:""})()}
         </div>
         ${gc.proof?`<div class="sec-t">প্রমাণ</div>
           <a href="${esc(gc.proof)}" target="_blank" rel="noopener"><img src="${esc(gc.proof)}" alt="রক্তের গ্রুপের প্রমাণ"
             style="width:100%;max-height:220px;object-fit:contain;border-radius:12px;border:1px solid var(--line);background:var(--card2)"></a>`:""}`,
         `<button class="btn gh" data-close>বন্ধ</button>
          <button class="btn gh" id="gc_cancel" style="color:var(--red-d)">অনুরোধ প্রত্যাহার</button>`);
+      s.dataset.gc="pending";
       s.q("#gc_cancel").onclick=async()=>{
         if(!await confirmS({title:"অনুরোধ প্রত্যাহার করবেন?",desc:"পরে আবার নতুন অনুরোধ পাঠাতে পারবেন।",ok:"প্রত্যাহার",danger:true}))return;
         const uid=String(firebaseCurrentUid()||STORE.account.uid||"").trim();
@@ -3740,10 +3792,28 @@ function initPage() {
       };
       return;
     }
+    /* Approved — নতুন গ্রুপ কার্যকর; status view দেখাই (নতুন অনুরোধ চাইলে ফর্মে যাওয়া যায়) */
+    if(gc&&gc.status==="approved"&&!forceForm){
+      const s=sheet("রক্তের গ্রুপ পরিবর্তনের অনুরোধ",`
+        <div class="note g" style="margin-bottom:12px">${ICON.checkC(17)}<span><b>অনুরোধ অনুমোদিত</b> —
+          আপনার নতুন রক্তের গ্রুপ <b>${esc(gc.to||d.bloodGroup)}</b> কার্যকর হয়েছে এবং ডোনার প্যানেল ও
+          মূল ওয়েবসাইটে আপডেট হয়ে গেছে।</span></div>
+        <div class="card pad0" style="margin:0 0 10px">
+          <div class="row"><span class="tx"><b>পরিবর্তন</b><small>${esc(gc.from||"")} → ${esc(gc.to||"")}</small></span>
+            <span class="rt"><span class="pill g">অনুমোদিত</span></span></div>
+          ${(()=>{const t=gcWhen(gc.atTs||gc.at);return t?`<div class="row"><span class="tx"><b>পাঠানো হয়েছে</b><small>${esc(t)}</small></span></div>`:""})()}
+          ${(()=>{const t=gcWhen(gc.decidedAtTs||gc.decidedAt);return t?`<div class="row"><span class="tx"><b>অনুমোদিত হয়েছে</b><small>${esc(t)}</small></span></div>`:""})()}
+        </div>`,
+        `<button class="btn gh" data-close>বন্ধ</button>
+         <button class="btn" id="gc_again">নতুন অনুরোধ পাঠান</button>`);
+      s.dataset.gc="approved";
+      s.q("#gc_again").onclick=()=>{s.close();sheetGroupChange(true);};
+      return;
+    }
     /* নতুন অনুরোধ ফর্ম — কারণ ও প্রমাণ (রিপোর্টের ছবি) দুটোই বাধ্যতামূলক */
     const s=sheet("রক্তের গ্রুপ পরিবর্তনের অনুরোধ",`
       ${gc&&gc.status==="rejected"?`<div class="note r" style="margin-bottom:12px">${ICON.x(17)}<span>
-        <b>আগের অনুরোধটি বাতিল হয়েছে</b>${gc.note?` — কারণ: ${esc(gc.note)}`:""}। চাইলে সঠিক প্রমাণসহ আবার পাঠাতে পারেন।</span></div>`:""}
+        <b>আগের অনুরোধটি বাতিল হয়েছে</b>${gc.note?` — কারণ: ${esc(gc.note)}`:""}${(()=>{const t=gcWhen(gc.decidedAtTs||gc.decidedAt);return t?` (${esc(t)})`:""})()}। চাইলে সঠিক প্রমাণসহ আবার পাঠাতে পারেন।</span></div>`:""}
       <p class="mut" style="font-size:.83rem;margin:0 0 12px">নিরাপত্তার জন্য রক্তের গ্রুপ সরাসরি পরিবর্তন করা যায় না।
         কারণ ও প্রমাণসহ অনুরোধ পাঠান — অ্যাডমিন যাচাই করে অনুমোদন দিলে নতুন গ্রুপ
         ডোনার প্যানেল ও মূল ওয়েবসাইটে সাথে সাথে আপডেট হয়ে যাবে।</p>
@@ -3758,6 +3828,7 @@ function initPage() {
         <span class="hint">সর্বোচ্চ ৪ MB — ব্লাড গ্রুপিং রিপোর্ট বা কার্ডের স্পষ্ট ছবি দিন।</span>
         <span class="hint er hide" id="gc_err"></span></div>`,
       `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="gc_send">অনুরোধ পাঠান</button>`);
+    s.dataset.gc="form";
     s.q("#gc_send").onclick=async()=>{
       const er=m=>{const e=s.q("#gc_err");e.textContent=m;e.classList.remove("hide")};
       s.q("#gc_err").classList.add("hide");
@@ -3780,16 +3851,21 @@ function initPage() {
           return fail("একটি অনুরোধ ইতিমধ্যে অপেক্ষমাণ আছে — অ্যাডমিনের সিদ্ধান্তের অপেক্ষা করুন");
         }
         const up=await imgbbUploadImage(f);
-        const at=new Date().toISOString();
+        const at=nowIso();
         const id=genId("GC");
-        /* ১) Admin/Moderator-এর Pending Work queue-তে (kind:"group") */
+        /* ১) Admin/Moderator-এর Pending Work queue-তে (kind:"group") —
+           atTs হলো Firebase server timestamp (client-এর ঘড়ি ভুল থাকলেও সঠিক) */
         await setRow(NODES.queue,id,{kind:"group",id,name:STORE.account.name||"",from:d.bloodGroup,to,
           reason,proof:up.url,phone:STORE.account.phone||"",area:STORE.account.area||"",
-          donorId:d.donorId||"",ownerUid:uid,at});
+          donorId:d.donorId||"",ownerUid:uid,at,atTs:serverTime()});
         /* ২) নিজের status ট্র্যাকিং — users/{uid}/groupChange (Pending) */
-        const gcNew={id,from:d.bloodGroup,to,reason,proof:up.url,status:"pending",at,note:""};
-        await updateRow(NODES.users,uid,{groupChange:gcNew});
-        STORE.donor.groupChange=gcNew;save();
+        await updateRow(NODES.users,uid,{groupChange:{id,from:d.bloodGroup,to,reason,proof:up.url,
+          status:"pending",at,atTs:serverTime(),note:""}});
+        /* local copy — server timestamp placeholder নয়, প্রদর্শনযোগ্য মান;
+           পরের watchRow snapshot-এ RTDB-র আসল server মান চলে আসবে */
+        STORE.donor.groupChange={id,from:d.bloodGroup,to,reason,proof:up.url,
+          status:"pending",at,atTs:Date.now(),note:""};
+        save();
         logAct("রক্তের গ্রুপ পরিবর্তনের অনুরোধ",`${d.bloodGroup} → ${to}`,"donor");
         s.close();renderSub(SUB);
         toast("অনুরোধ পাঠানো হয়েছে — অ্যাডমিন অনুমোদন দিলে নতুন গ্রুপ কার্যকর হবে","ok");
@@ -4424,7 +4500,11 @@ function initPage() {
       // "approved" is admin-controlled and comes from donors/{id}, not from users/{uid}.
       if(d.is && d.status && d.status!=="none"){
         if(d.status!=="approved") payload.donorStatus = d.status;
-        payload.bloodGroup = d.bloodGroup||"";
+        /* অনুমোদিত ডোনারের bloodGroup admin-নিয়ন্ত্রিত — Admin group-change
+           approve করার ঠিক পরে ডোনারের stale local মান users/{uid}/bloodGroup
+           overwrite করে দিত (race)। approved অবস্থায় এটি এখান থেকে আর লেখা হয়
+           না; pending আবেদনে আগের মতোই লেখা হয়। */
+        if(d.status!=="approved") payload.bloodGroup = d.bloodGroup||"";
         payload.donorId = d.donorId||"";
         payload.lastDonation = d.lastDonation||"";
         payload.whatsapp = d.whatsapp||"";
@@ -4913,6 +4993,10 @@ function initPage() {
       try{ pullSharedPublic(); }catch(e){ console.warn("resync personal data:", e && e.message); }
       persistLocalAccount();
       RTDB_PULLING=false;
+      /* গ্রুপ-বদল অনুরোধের sheet খোলা থাকা অবস্থায় Admin Approve/Reject করলে —
+         sheet-টিও সাথে সাথে নতুন status দেখায় (সাধারণ re-render sheet খোলা
+         থাকলে স্কিপ হয়, তাই এখানে আলাদাভাবে) */
+      try{ refreshGroupChangeSheet(); }catch(e){}
       if(!document.querySelector(".sheet")&&!PUBLIC_MODE){ try{ paintTop(); go(CUR,SUB,false); }catch(e){} }
     });
     /* notification storage live update — আলাদা website storage (RTDB-তে নয়);
@@ -5044,6 +5128,9 @@ function initPage() {
       }catch(e){}
       return;
     }
+    /* pending গ্রুপ-বদল sheet খোলা থাকলে donors-নোডের পরিবর্তন থেকেও নতুন
+       status ধরা পড়ে (self-heal path) — sheet সাথে সাথে আপডেট হয় */
+    try{ refreshGroupChangeSheet(); }catch(e){}
     if(!document.querySelector(".sheet"))go(CUR,SUB,false);
   });
   /* onboarding শুধু auth + RTDB প্রোফাইল লোডের পর (maybeShowSetup) —

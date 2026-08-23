@@ -11,7 +11,7 @@ import "../lib/store";
 import { initFirebase as initSharedFirebase, NODES } from "../lib/firebase";
 import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
 import { authErrorMessage, resolveUserRole, panelForRole } from "../lib/authx";
-import { getRow, setRow, updateRow, removeRow, watchList, findBy, nowIso, nextDonorId, updatePaths } from "../lib/rtdb";
+import { getRow, setRow, updateRow, removeRow, watchList, findBy, nowIso, nextDonorId, updatePaths, serverTime } from "../lib/rtdb";
 import { ageText, ageFromDob, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
@@ -3441,6 +3441,8 @@ function initPage() {
     const paths={};
     paths[`users/${ownerUid}/groupChange/status`]=status;
     paths[`users/${ownerUid}/groupChange/decidedAt`]=new Date().toISOString();
+    /* Firebase server timestamp — client-এর ঘড়ি ভুল থাকলেও সঠিক সময় */
+    paths[`users/${ownerUid}/groupChange/decidedAtTs`]=serverTime();
     if(note)paths[`users/${ownerUid}/groupChange/note`]=String(note).slice(0,200);
     updatePaths(paths).catch(e=>console.warn("mark group change:",e&&e.message));
   }
