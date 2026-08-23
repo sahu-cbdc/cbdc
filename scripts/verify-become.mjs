@@ -203,7 +203,10 @@ check("pending user can withdraw the application", $("#s-become") && !!$("#s-bec
 w.STORE.donor.is = false;
 w.STORE.donor.status = "none";
 w.STORE.donor.donorId = "";
-w.STORE.donor.bloodGroup = "B+";
+// This is the real edge case: the account already has a group although there
+// is no donor record yet. The form must use the account value, not donor state.
+w.STORE.account.bloodGroup = "B+";
+w.STORE.donor.bloodGroup = "";
 w.STORE.donor.lastDonation = "";
 w.STORE.donor.whatsapp = "";
 w.STORE.donor.health = "";
