@@ -3322,7 +3322,7 @@ function initPage() {
             <option value="">রক্তের গ্রুপ নির্বাচন করুন</option>
             ${GROUPS.map(g=>`<option ${(lockedBloodGroup||d.bloodGroup)===g?"selected":""}>${esc(g)}</option>`).join("")}
           </select>
-          ${lockedBloodGroup?`<span class="hint">রক্তের গ্রুপ পরিবর্তন করতে Donor → রক্তের গ্রুপ পরিবর্তনের অনুরোধ থেকে Admin approval request পাঠান।</span>`:""}</div>
+        </div>
         <div class="f"><label>সর্বশেষ রক্তদান <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
           <input id="bc_last" name="bc_last" type="date" max="${iso(now())}" value="${esc(d.lastDonation||"")}">
           <span class="hint">মনে না থাকলে খালি রাখুন।</span></div>
