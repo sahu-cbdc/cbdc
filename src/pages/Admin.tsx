@@ -8,7 +8,7 @@
  */
 import { useEffect } from "react";
 import "../lib/store";
-import { initFirebase as initSharedFirebase, NODES } from "../lib/firebase";
+import { initFirebase as initSharedFirebase, NODES, getAuthInstance } from "../lib/firebase";
 import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
 import { authErrorMessage, resolveUserRole, panelForRole } from "../lib/authx";
 import { getRow, setRow, updateRow, removeRow, watchList, watchRow, findBy, nowIso, nextDonorId, updatePaths, serverTime, getPath, setPath, removePath, watchPath } from "../lib/rtdb";
@@ -4690,6 +4690,7 @@ function initPage() {
   let dbState="idle";       /* idle|loading|ready|error */
   let dbErr="";             /* listener-এর সর্বশেষ error (permission ইত্যাদি) */
   let dbUnsub=null;         /* একমাত্র root listener-এর unsubscribe handle */
+  let dbWatchdog=null;      /* নিরাপত্তা timer — callback না এলে "loading"-এ চিরকাল আটকে রাখবে না */
   let dbOpen=new Set();     /* expand করা node-গুলোর path */
   let dbQuery="";           /* সার্চ টেক্সট */
   let dbFocus="";           /* breadcrumb-এ ফোকাস করা path (root-relative) */
@@ -4772,22 +4773,51 @@ function initPage() {
     else cur[last]=newVal;
   }
   /* একমাত্র realtime root listener চালু করো — পুরো database একসাথে mirror-এ।
-     আগে থেকে চললে কিছু না (duplicate listener হয় না)। */
+     আগে থেকে চললে কিছু না (duplicate listener হয় না)।
+     তিনটি নিরাপত্তা যাতে UI কখনো "লোড হচ্ছে…"-এ চিরকাল আটকে না থাকে:
+       (১) auth gate — current admin ছাড়া listener চালু হয় না;
+       (২) settled guard — success/error একবারই settle হয়;
+       (৩) watchdog — কোনো callback না এলে নির্দিষ্ট সময় পরে স্পষ্ট error দেখায়। */
   function dbEnsureListener(){
     if(dbUnsub)return;
+    if(dbWatchdog){clearTimeout(dbWatchdog);dbWatchdog=null;}
+    /* (১) auth gate: অ্যাডমিন সেশন প্রস্তুত না হলে listener চালু করা বৃথা —
+           Firebase token ছাড়া root read কখনো সফল হবে না। */
+    const au=getAuthInstance();
+    if(!au||!au.currentUser){
+      dbState="auth";dbErr="";dbRender();
+      /* সাময়িক auth handshake হচ্ছে থাকলে একটু পরে আবার চেষ্টা করা হয় */
+      dbWatchdog=setTimeout(()=>{dbWatchdog=null;if(!dbUnsub)dbEnsureListener();},1500);
+      return;
+    }
     dbState="loading";dbErr="";dbRender();
+    let settled=false;
+    /* (৩) watchdog: Firebase-কে অবশ্যই success বা error দিতে হবে। কেউ না এলে
+           স্পষ্ট error + retry দেখায় — চিরকাল "লোড হচ্ছে…" নয়। */
+    dbWatchdog=setTimeout(()=>{
+      if(settled)return;
+      dbWatchdog=null;
+      if(dbUnsub){try{dbUnsub();}catch(e){}dbUnsub=null;}
+      dbState="error";
+      dbErr="Realtime Database থেকে কোনো সাড়া আসেনি (timeout)। নেটওয়ার্ক/Firebase সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।";
+      dbRender();
+    },10000);
     dbUnsub=watchPath("/",(v)=>{
+      if(settled)return;settled=true;
+      if(dbWatchdog){clearTimeout(dbWatchdog);dbWatchdog=null;}
       dbMirror=(v&&typeof v==="object")?v:{};
       dbState="ready";
       dbRender();
     },(err)=>{
-      /* permission/rules error সরাসরি পাতায় দেখানো যায় */
+      if(settled)return;settled=true;
+      if(dbWatchdog){clearTimeout(dbWatchdog);dbWatchdog=null;}
       dbState="error";dbErr=(err&&err.message)||String(err);dbRender();
     });
   }
   /* listener বন্ধ করো (পেজ ছাড়ার সময়)। dbMirror রেখে দেওয়া হয় যাতে দ্রুত ফিরে
      এলে আগের state দেখায়, তারপর listener রিফ্রেশ করে। */
   function dbStop(){
+    if(dbWatchdog){clearTimeout(dbWatchdog);dbWatchdog=null;}
     if(dbUnsub){try{dbUnsub();}catch(e){}dbUnsub=null;}
     dbState="idle";
   }
@@ -4810,6 +4840,8 @@ function initPage() {
       else if(a==="add")dbAddSheet(p);
       else if(a==="rename")dbRenameSheet(p);
       else if(a==="del")dbDelete(p);
+      else if(a==="retry")dbRefresh();
+      else if(a==="addroot")dbAddSheet("");
       return;
     }
     const tg=e.target.closest("[data-toggle]");
@@ -4823,21 +4855,39 @@ function initPage() {
   }
   function dbRender(){
     const tree=dbEl&&dbEl.querySelector("#dbtree");
-    if(tree)tree.innerHTML=dbTreeHtml();
+    if(tree){
+      /* রেন্ডারে কোনো exception এলে #dbtree পুরোনো "loading"-এ আটকে না থেকে
+         স্পষ্ট ত্রুটি দেখায় — listener-এর success callback যেন swallow না হয়। */
+      let html;
+      try{html=dbTreeHtml();}
+      catch(e){console.error("db render:",(e&&e.message)||e);
+        html=`<div class="empty"><div class="ic" style="color:var(--red)">${SI.warn(26)}</div><b>রেন্ডারে সমস্যা</b><p style="word-break:break-word">${esc((e&&e.message)||String(e))}</p></div>`;}
+      tree.innerHTML=html;
+    }
     const bc=dbEl&&dbEl.querySelector("#dbcrumb");
-    if(bc)bc.innerHTML=dbCrumbHtml();
+    if(bc){try{bc.innerHTML=dbCrumbHtml();}catch(e){/* breadcrumb optional */}}
   }
   /* ডায়নামিক রুট — root-এ যা আছে (dbMirror) তার keys, কোনো hardcoded list নয়।
      ভবিষ্যতে নতুন node যোগ হলে listener-এর মাধ্যমে স্বয়ংক্রিয়ভাবে এখানে আসে। */
   function dbTreeHtml(){
     if(dbQuery.trim())return dbSearchHtml();
+    /* auth যাচাই হচ্ছে — admin সেশন প্রস্তুত হওয়া পর্যন্ত অপেক্ষা */
+    if(dbState==="auth")
+      return `<div class="empty"><div class="ic" style="color:var(--grn)">${SI.shield(26)}</div><b>Admin authentication যাচাই হচ্ছে...</b><p>অ্যাডমিন সেশন প্রস্তুত হওয়া পর্যন্ত অপেক্ষা করা হচ্ছে, তারপর ডেটাবেস লোড হবে।</p></div>`;
+    /* loading — কিন্তু watchdog থাকায় চিরকাল এখানে আটকে থাকবে না */
     if(dbState==="loading"&&!(dbMirror&&Object.keys(dbMirror).length))
-      return `<div class="empty"><div class="ic">${SI.refresh(26)}</div><b>লোড হচ্ছে…</b><p>সম্পূর্ণ Realtime Database realtime-এ লোড হচ্ছে।</p></div>`;
-    if(dbState==="error")
-      return `<div class="empty"><div class="ic" style="color:var(--red)">${SI.warn(26)}</div><b>অ্যাক্সেস করা যায়নি</b><p>Realtime Database-এর root পড়ার permission নেই বা Security Rules এখনো আপডেট হয়নি। নিশ্চিত হোন যে আপনি admin এবং root-এ admin read অনুমোদিত।</p><p style="font-size:.72rem;color:var(--red-d);word-break:break-word">${esc(dbErr)}</p></div>`;
+      return `<div class="empty"><div class="ic">${SI.refresh(26)}</div><b>লোড হচ্ছে…</b><p>সম্পূর্ণ Realtime Database realtime-এ লোড হচ্ছে। কিছুক্ষণেও সাড়া না এলে স্বয়ংক্রিয়ভাবে ত্রুটি দেখানো হবে।</p></div>`;
+    if(dbState==="error"){
+      const permDenied=/permission|denied|অনুমতি|access|rules/i.test(dbErr);
+      const title=permDenied?"Firebase permission denied":"ডেটাবেস লোড করা যায়নি";
+      const msg=permDenied
+        ?"Firebase permission denied — আপনার Admin database access নেই। নিশ্চিত হোন যে Firebase Security Rules-এ root-এ admin read অনুমোদিত, আপনার admins/{uid}/role === \"admin\" আছে, এবং নতুন rules deploy করা হয়েছে।"
+        :"Realtime Database থেকে সাড়া আসেনি। নেটওয়ার্ক বা Firebase সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।";
+      return `<div class="empty"><div class="ic" style="color:var(--red)">${SI.warn(26)}</div><b>${esc(title)}</b><p style="word-break:break-word">${msg}</p><p style="font-size:.72rem;color:var(--red-d);word-break:break-word;margin-bottom:10px">${esc(dbErr)}</p><button class="btn sm" data-act="retry">${SI.refresh(15)} আবার চেষ্টা করুন</button></div>`;
+    }
     const roots=dbMirror?dbSortKeys(dbMirror):[];
     if(!roots.length&&dbState==="ready")
-      return `<div class="empty"><div class="ic">${SI.db(26)}</div><b>ডেটাবেস খালি</b><p>Realtime Database-এ এখনো কোনো root node নেই।</p></div>`;
+      return `<div class="empty"><div class="ic">${SI.db(26)}</div><b>Database empty</b><p>Realtime Database-এ এখনো কোনো root node নেই (root = null বা {})।</p><button class="btn sm" data-act="addroot">${SI.plus(15)} root node যোগ করুন</button></div>`;
     return roots.map(r=>dbRowHtml(r,0,dbMirror[r])).join("");
   }
   function chevR(s){return I('<path d="M9 5l7 7-7 7"/>',s);}

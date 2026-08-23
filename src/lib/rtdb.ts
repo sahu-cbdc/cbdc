@@ -294,26 +294,42 @@ export function watchPath(
   cb: (value: any) => void,
   onErr?: (err: Error) => void
 ): () => void {
+  /* কোনো silent failure নয় — যদি database instance না থাকে বা setup ব্যর্থ হয়,
+     caller-কে সরাসরি error জানানো হয়, যাতে UI "লোড হচ্ছে…"-এ চিরকাল আটকে না থাকে। */
   const d = db();
-  if (!d) return () => undefined;
+  if (!d) {
+    const err = new Error("Firebase Realtime Database প্রস্তুত নয় (init হয়নি)।");
+    console.error("watchPath: db not ready for", path);
+    if (typeof onErr === "function") {
+      try { onErr(err); } catch (e) { console.error("watchPath onErr:", e); }
+    }
+    return () => undefined;
+  }
   const p = String(path || "").replace(/^\/+/, "");
+  const target = p ? ref(d, p) : ref(d);   /* "" → নির্দিষ্ট root reference (path edge-case এড়াতে) */
   try {
     return onValue(
-      ref(d, p),
+      target,
       (snap) => {
         try {
           cb(snap.val());
         } catch (e) {
-          console.warn("watchPath cb:", (e as Error)?.message);
+          /* caller-এর render error লুকিয়ে রাখা হয় না — console-এ দৃশ্যমান */
+          console.error("watchPath cb (" + p + "):", (e as Error)?.message);
         }
       },
       (err) => {
-        if (typeof onErr === "function") onErr(err as Error);
-        else console.warn("watchPath:", p, err && err.message);
+        if (typeof onErr === "function") {
+          try { onErr(err as Error); } catch (e) { console.error("watchPath onErr:", (err as Error)?.message, e); }
+        } else console.error("watchPath (" + p + "):", err && err.message);
       }
     );
   } catch (e) {
-    console.warn("watchPath setup:", (e as Error)?.message);
+    const err = new Error("watchPath setup failed: " + ((e as Error)?.message || e));
+    console.error(err.message);
+    if (typeof onErr === "function") {
+      try { onErr(err); } catch (_) { /* ignore */ }
+    }
     return () => undefined;
   }
 }
