@@ -77,7 +77,6 @@ const donor = { is: true, status: "approved", donorId: "CBDC-2026-0001", bloodGr
 const p = donorPublicPatch(account, donor);
 check("patch uses the account name", p.name === "রফিক উদ্দিন", p.name);
 check("patch uses the account area", p.area === "চকবাজার", p.area);
-check("patch uses the donor blood group", p.bloodGroup === "O+", p.bloodGroup);
 check("patch uses the account gender", p.gender === "পুরুষ", p.gender);
 check("patch falls back to account dob", p.dob === "1995-03-12", p.dob);
 check("patch falls back to account phone", p.phone === "01812345678", p.phone);
@@ -87,7 +86,7 @@ check("patch keeps availability", p.available === true);
 check("patch keeps photo (ImgBB)", p.photo === "https://i.ibb.co/abc/rafiq.jpg", p.photo);
 
 const PROTECTED = ["id","donorId","uid","ownerUid","verified","suspended","donations",
-  "totalDonations","joined","status","occupation"];
+  "totalDonations","joined","status","occupation","bloodGroup","group"];
 const leaked = PROTECTED.filter((k) => Object.prototype.hasOwnProperty.call(p, k));
 check("patch never carries admin-controlled fields", leaked.length === 0, "leaked: " + leaked.join(","));
 
@@ -110,7 +109,7 @@ check("rules: donor may update own record", write.includes("data.exists() && dat
 check("rules: moderator may write donors", write.includes("role').val() === 'moderator'"), "");
 check("rules: owner delete still allowed", write.includes("!newData.exists()"), "");
 check("rules: admin-controlled fields validated", validate.includes("verified") && validate.includes("suspended") && validate.includes("donations"), validate.slice(0, 80));
-check("rules: owner blood group is syncable", !validate.includes("newData.child('bloodGroup').val() === data.child('bloodGroup').val()"), validate.slice(0, 80));
+check("rules: owner blood group is locked (change needs admin approval)", validate.includes("newData.child('bloodGroup').val() === data.child('bloodGroup').val()"), validate.slice(0, 80));
 check("rules: delete exempt from validate", validate.includes("!newData.exists()"), "");
 
 console.log(failed ? "\nSOME CHECKS FAILED" : "\nALL CHECKS PASSED");

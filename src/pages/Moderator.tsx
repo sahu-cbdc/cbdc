@@ -11,7 +11,7 @@ import "../lib/store";
 import { initFirebase as initSharedFirebase, NODES } from "../lib/firebase";
 import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
 import { authErrorMessage, resolveUserRole, panelForRole } from "../lib/authx";
-import { getRow, setRow, updateRow, removeRow, watchList, findBy, nowIso, nextDonorId, updatePaths } from "../lib/rtdb";
+import { getRow, setRow, updateRow, removeRow, watchList, findBy, nowIso, nextDonorId, updatePaths, serverTime } from "../lib/rtdb";
 import { ageText, ageFromDob, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
@@ -3434,6 +3434,18 @@ function initPage() {
       updatePaths(paths).catch(e=>console.warn("mark rejected:",e&&e.message));
     }).catch(e=>console.warn("mark rejected:",e&&e.message));
   }
+  /* রক্তের গ্রুপ পরিবর্তনের অনুরোধের সিদ্ধান্ত users/{uid}/groupChange-এ লেখা হয় —
+     Pending → Approved/Rejected। ডোনার প্যানেল watchRow দিয়ে realtime পায়। */
+  function markGroupChangeStatus(ownerUid,status,note){
+    if(!ownerUid)return;
+    const paths={};
+    paths[`users/${ownerUid}/groupChange/status`]=status;
+    paths[`users/${ownerUid}/groupChange/decidedAt`]=new Date().toISOString();
+    /* Firebase server timestamp — client-এর ঘড়ি ভুল থাকলেও সঠিক সময় */
+    paths[`users/${ownerUid}/groupChange/decidedAtTs`]=serverTime();
+    if(note)paths[`users/${ownerUid}/groupChange/note`]=String(note).slice(0,200);
+    updatePaths(paths).catch(e=>console.warn("mark group change:",e&&e.message));
+  }
   async function decide(id,ok,note,quiet){
     const i=DB.queue.findIndex(x=>x.id===id);if(i<0)return;
     const q=DB.queue[i];
@@ -3474,13 +3486,26 @@ function initPage() {
         ownerUid:q.ownerUid||""});
     }
     if(q.kind==="group"&&ok){
-      const d=DB.donors.find(x=>x.name===q.name);if(d)d.group=q.to;
+      const d=(q.ownerUid&&DB.donors.find(x=>String(x.ownerUid)===String(q.ownerUid)))||DB.donors.find(x=>x.name===q.name);
+      if(d)d.group=q.to;
+      /* অনুমোদনের পর স্থায়ীভাবে আপডেট — users/{uid} ও donors নোডে; এরপরই ডোনার
+         প্যানেল ও মূল ওয়েবসাইটে নতুন গ্রুপ realtime-এ দেখা যায় */
+      if(q.ownerUid){
+        updateRow(NODES.users, q.ownerUid, {bloodGroup:q.to, donorStatus:"approved"}).catch(e=>console.warn("bg update user:",e));
+        findBy(NODES.donors, "ownerUid", q.ownerUid).then(donor=>{
+          if(donor&&donor.id) setRow(NODES.donors, donor.id, {...donor, bloodGroup:q.to, group:q.to}).catch(e=>console.warn("bg update donor:",e));
+        }).catch(e=>console.warn(e));
+        /* অনুরোধের status → Approved (users/{uid}/groupChange) */
+        markGroupChangeStatus(q.ownerUid,"approved",note);
+      }
     }
     if(!ok){
       /* বাতিলের status main RTDB data-তে (users/{uid}/data/mine) লেখা হয় —
          ডোনার প্যানেল সেটি দেখে নিজের notification তৈরি করে (আলাদা storage-এ) */
       const owner=String(q.ownerUid||q.uid||"").trim();
       if(q.kind==="request"&&owner)markRequestRejected(owner,q.id,note);
+      /* গ্রুপ-বদল অনুরোধ বাতিল — status Rejected; রক্তের গ্রুপ অপরিবর্তিত থাকে */
+      if(q.kind==="group"&&owner)markGroupChangeStatus(owner,"rejected",note);
     }
     DB.queue.splice(i,1);
     logAudit(ok?QK[q.kind].t+" অনুমোদন":QK[q.kind].t+" বাতিল",id+(note?" — "+note.slice(0,40):""),q.kind);

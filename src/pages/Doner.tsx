@@ -19,7 +19,7 @@ import {
   isProfileComplete,
   requestPasswordReset,
 } from "../lib/authx";
-import { getRow, setRow, updateRow, watchRow, watchList, addRow, findBy, listOnce, nowIso, updatePaths, removeRow, incrementField, ensureFieldAtLeast } from "../lib/rtdb";
+import { getRow, setRow, updateRow, watchRow, watchList, addRow, findBy, listOnce, nowIso, updatePaths, removeRow, incrementField, ensureFieldAtLeast, serverTime } from "../lib/rtdb";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
@@ -771,7 +771,7 @@ function initPage() {
   "রক্তদানের হিসাব রাখতে আপনার রক্তের গ্রুপ ও তথ্য দরকার":"We need your blood group and details to track donations",
   "বয়স ১৮–৬০ বছর, ওজন কমপক্ষে ৫০ কেজি এবং সুস্থ শরীর।":"Age 18–60, at least 50 kg, and good health.",
   "অ্যাডমিন যাচাইয়ের পর এটি আপনার রেকর্ডে যুক্ত হবে।":"It will be added to your record after an admin verifies it.",
-  "সেটিংস → ডোনার → রক্তের গ্রুপ → সরাসরি পরিবর্তন করুন।":"Settings → Donor → Blood group → change it directly.",
+  "সেটিংস → ডোনার → রক্তের গ্রুপ → কারণ ও প্রমাণসহ পরিবর্তনের অনুরোধ পাঠান। অ্যাডমিন অনুমোদন দিলে নতুন গ্রুপ কার্যকর হবে।":"Settings → Donor → Blood group → send a change request with a reason and proof. The new group takes effect once an admin approves it.",
   "সেটিংস → গোপনীয়তা থেকে আপনি নিজে ঠিক করতে পারেন।":"You decide, in Settings → Privacy.",
   "ফেসবুক ও WhatsApp-এ শেয়ারের জন্য · ৯০০×১৬০০ px":"For Facebook and WhatsApp · 900×1600 px",
   "৩–২০ অক্ষর · ছোট হাতের ইংরেজি, সংখ্যা, _ এবং .":"3–20 characters · lowercase letters, numbers, _ and .",
@@ -835,6 +835,22 @@ function initPage() {
   "ওই ডিভাইসে আবার লগইন করতে হবে।":"That device will have to log in again.",
   "এখন অ্যাকাউন্ট থেকে নেওয়া হবে":"now comes from your account",
   "রক্তের গ্রুপ পরিবর্তনের অনুরোধ":"Blood group change requested",
+  "অনুরোধ অপেক্ষমাণ":"Request pending",
+  "অপেক্ষমাণ":"Pending",
+  "অনুরোধ প্রত্যাহার":"Withdraw request",
+  "নতুন রক্তের গ্রুপ":"New blood group",
+  "অনুরোধ অনুমোদিত":"Request approved",
+  "অনুমোদিত হয়েছে":"Approved on",
+  "নতুন অনুরোধ পাঠান":"Send a new request",
+  "পাঠানো হয়েছে":"Sent on",
+  "পরিবর্তনের অনুরোধ অনুমোদিত":"change request approved",
+  "প্রমাণ — রক্ত পরীক্ষার রিপোর্টের ছবি":"Proof — photo of the blood test report",
+  "পরিবর্তনের অনুরোধ অপেক্ষমাণ":"change request pending",
+  "সর্বশেষ অনুরোধ বাতিল হয়েছে":"last request was rejected",
+  "রক্তের গ্রুপ পরিবর্তনের অনুরোধ বাতিল":"Blood group change request rejected",
+  "অনুরোধ পাঠানো হয়েছে — অ্যাডমিন অনুমোদন দিলে নতুন গ্রুপ কার্যকর হবে":"Request sent — the new group takes effect once an admin approves it",
+  "অনুরোধ প্রত্যাহার করা হয়েছে":"Request withdrawn",
+  "একটি অনুরোধ ইতিমধ্যে অপেক্ষমাণ আছে — অ্যাডমিনের সিদ্ধান্তের অপেক্ষা করুন":"A request is already pending — please wait for the admin's decision",
   "ভবিষ্যতের তারিখ দেওয়া যাবে না":"You can't use a future date",
   "পাসওয়ার্ড দিয়ে নিশ্চিত করুন":"Confirm with your password",
   "নাম কমপক্ষে ২ অক্ষরের হতে হবে":"Name must be at least 2 characters",
@@ -1624,7 +1640,10 @@ function initPage() {
       is:false, status:"none", donorId:"",
       bloodGroup:"", whatsapp:"", lastDonation:"",
       health:"",
-      available:true, appliedAt:"", cardTheme:"green"
+      available:true, appliedAt:"", cardTheme:"green",
+      /* রক্তের গ্রুপ পরিবর্তনের অনুরোধ — users/{uid}/groupChange থেকে sync হয়।
+         {id,from,to,reason,proof,status:"pending"|"approved"|"rejected",at,note} */
+      groupChange:null
     },
     privacy:{ profile:"all", showPhone:"responders", showWhatsapp:true, showGroup:true, showArea:true, searchable:true },
     notif:{ emergency:true, onlyGroup:true, onlyArea:false, donor:true, account:true, security:true, quiet:false },
@@ -1730,7 +1749,7 @@ function initPage() {
     Object.assign(STORE.account,{uid:"",name:"",username:"",email:"",phone:"",photo:"",photoSource:"none",
       emailVerified:false,phoneVerified:false,dob:"",gender:"",area:"",address:"",applicationCount:0,joined:iso(now())});
     Object.assign(STORE.donor,{is:false,status:"none",donorId:"",bloodGroup:"",whatsapp:"",lastDonation:"",
-      health:"",available:true,appliedAt:"",cardTheme:"green"});
+      health:"",available:true,appliedAt:"",cardTheme:"green",groupChange:null});
     Object.assign(STORE.privacy,{profile:"all",showPhone:"responders",showWhatsapp:true,showGroup:true,showArea:true,searchable:true});
     Object.assign(STORE.notif,{emergency:true,onlyGroup:true,onlyArea:false,donor:true,account:true,security:true,quiet:false});
     Object.assign(STORE.security,{loginAlert:true,passwordChangedAt:""});
@@ -1865,6 +1884,7 @@ function initPage() {
       seen.donorStatus=d.status||"";
       seen.bloodGroup=d.bloodGroup||"";
       seen.lastDonation=d.lastDonation||"";
+      seen.groupChangeStatus=(d.groupChange&&d.groupChange.status)||"";
       seen.booted=true;
       saveSeen(seen);
       return;
@@ -1920,6 +1940,17 @@ function initPage() {
       addNotif({id:"grp-"+sanitizeKey(seen.bloodGroup+"-"+d.bloodGroup),title:"রক্তের গ্রুপ পরিবর্তন অনুমোদিত",
         body:`${seen.bloodGroup} → ${d.bloodGroup}`,type:"approval",go:"set:donor"});
     if(d.bloodGroup)seen.bloodGroup=d.bloodGroup;
+    /* ৪.১) গ্রুপ-বদল অনুরোধের status (users/{uid}/groupChange) — Pending → Rejected হলে জানাই।
+       Approved হলে উপরের ৪ নম্বর থেকেই notification আসে (donors নোডের গ্রুপ বদলায়)। */
+    {
+      const gc=d.groupChange&&typeof d.groupChange==="object"?d.groupChange:null;
+      const gs=(gc&&gc.status)||"";
+      if(gs==="rejected"&&seen.groupChangeStatus==="pending")
+        addNotif({id:"grp-rej-"+sanitizeKey(String(gc.id||gc.at||"")),title:"রক্তের গ্রুপ পরিবর্তনের অনুরোধ বাতিল",
+          body:gc.note?`কারণ: ${gc.note}`:`${gc.from||""} → ${gc.to||""} অনুরোধটি অনুমোদিত হয়নি।`,
+          type:"rejected",go:"set:donor"});
+      seen.groupChangeStatus=gs;
+    }
     /* ৫) রক্তদান যাচাই — donors record-এর last আমার যাচাইবিহীন রেকর্ডের সাথে মিললে */
     if(d.lastDonation&&seen.lastDonation&&seen.lastDonation!==d.lastDonation){
       const hit=RAW.donations.find(x=>x&&x.date===d.lastDonation);
@@ -2762,7 +2793,15 @@ function initPage() {
   
       <div class="sec-t">রক্ত সম্পর্কিত তথ্য</div>
       <div class="card pad0">
-        ${sRow("রক্তের গ্রুপ",d.bloodGroup,"editBloodGroup")}
+        ${(()=>{const gc=typeof gcState==="function"?gcState():null;
+          const sub=gc&&gc.status==="pending"
+            ?`${d.bloodGroup} · পরিবর্তনের অনুরোধ অপেক্ষমাণ (${gc.from||d.bloodGroup} → ${gc.to||""})`
+            :gc&&gc.status==="approved"
+            ?`${d.bloodGroup} · পরিবর্তনের অনুরোধ অনুমোদিত`
+            :gc&&gc.status==="rejected"
+            ?`${d.bloodGroup} · সর্বশেষ অনুরোধ বাতিল হয়েছে`
+            :d.bloodGroup;
+          return sRow("রক্তের গ্রুপ",sub,"editBloodGroup",dStatus()==="approved"?"lock":"");})()}
         ${sRow("WhatsApp",d.whatsapp||"দেওয়া হয়নি","editWa")}
         ${sRow("সর্বশেষ রক্তদান",d.lastDonation?dL(d.lastDonation):"মনে নেই","editLast")}
         ${sRow("স্বাস্থ্য তথ্য",d.health?(isEN()?tText(d.health):d.health).slice(0,30)+"…":"দেওয়া হয়নি","editHealth")}
@@ -2916,7 +2955,7 @@ function initPage() {
       const faq=[["রক্তদাতা হতে কী কী লাগে?","বয়স ১৮–৬০ বছর, ওজন কমপক্ষে ৫০ কেজি এবং সুস্থ শরীর।"],
         ["কতদিন পরপর রক্ত দেওয়া যায়?","সাধারণত ৯০ দিন (৩ মাস) পর পর। অ্যাপে কাউন্টডাউন দেখানো হয়।"],
         ["তথ্য যাচাই হতে কত সময় লাগে?","সাধারণত ২৪–৪৮ ঘণ্টা।"],
-        ["রক্তের গ্রুপ ভুল দিয়েছি, বদলাব কীভাবে?","সেটিংস → ডোনার থেকে রক্তের গ্রুপ সরাসরি পরিবর্তন করুন।"],
+        ["রক্তের গ্রুপ ভুল দিয়েছি, বদলাব কীভাবে?","সেটিংস → ডোনার → রক্তের গ্রুপ → কারণ ও প্রমাণসহ পরিবর্তনের অনুরোধ পাঠান। অ্যাডমিন অনুমোদন দিলে নতুন গ্রুপ কার্যকর হবে।"],
         ["আমার নম্বর কে দেখতে পায়?","সেটিংস → গোপনীয়তা থেকে আপনি নিজে ঠিক করতে পারেন।"]];
       return `<div class="card pad0">
         <a class="row" href="tel:${SITE.phone}"><span class="ic" style="background:var(--grn-s);color:var(--grn)">${ICON.phone(19)}</span>
@@ -3573,8 +3612,7 @@ function initPage() {
       case "editAddr":editField({key:"address",title:"ঠিকানা",label:"বিস্তারিত ঠিকানা",textarea:true,
         hint:"পাবলিক তালিকায় শুধু এলাকা দেখানো হয়, সম্পূর্ণ ঠিকানা নয়।"});break;
       case "editPass":sheetPassword();break;
-      case "editBloodGroup":editField({key:"bloodGroup",title:"রক্তের গ্রুপ",label:"রক্তের গ্রুপ",options:GROUPS,store:"donor",
-        validate:v=>GROUPS.includes(v)||"রক্তের গ্রুপ নির্বাচন করুন"});break;
+      case "editBloodGroup":sheetGroupChange();break;
       case "editWa":editField({key:"whatsapp",title:"WhatsApp",label:"WhatsApp নম্বর",store:"donor",max:11,
         validate:v=>!v||phoneOK(v)||"সঠিক ১১ সংখ্যার নম্বর দিন"});break;
       case "editLast":editField({key:"lastDonation",title:"সর্বশেষ রক্তদান",label:"তারিখ",type:"date",store:"donor",
@@ -3588,6 +3626,7 @@ function initPage() {
         STORE.donor.is=false;STORE.donor.status="none";STORE.donor.donorId="";
         STORE.donor.bloodGroup="";STORE.donor.whatsapp="";STORE.donor.lastDonation="";
         STORE.donor.health="";STORE.donor.appliedAt="";STORE.donor.available=true;
+        const leftGc=STORE.donor.groupChange;STORE.donor.groupChange=null;
         save();
         /* donors, pending member ও queue record একসাথে সরালে Main Website,
            Doner Panel এবং profile/list-এর existing RTDB listeners-এ realtime update যায়। */
@@ -3614,7 +3653,10 @@ function initPage() {
               paths[NODES.users+"/"+uid+"/available"]=null;
               paths[NODES.users+"/"+uid+"/appliedAt"]=null;
               paths[NODES.users+"/"+uid+"/cardTheme"]=null;
+              paths[NODES.users+"/"+uid+"/groupChange"]=null;
             }
+            /* অপেক্ষমাণ গ্রুপ-বদল অনুরোধ থাকলে queue থেকেও সরাই */
+            if(leftGc&&leftGc.id&&leftGc.status==="pending")paths[NODES.queue+"/"+leftGc.id]=null;
             if(Object.keys(paths).length)await updatePaths(paths);
           }catch(e){ console.warn("leave donor remove:",e&&e.message); }
         })();
@@ -3654,6 +3696,180 @@ function initPage() {
       if(validate){const r=validate(v);if(r!==true){s.q("#ee").textContent=r;s.q("#ee").classList.remove("hide");return}}
       src[key]=v;save();logAct(title+" পরিবর্তন",v.slice(0,30),store==="donor"?"donor":"account");
       s.close();renderSub(SUB);toast("সংরক্ষণ হয়েছে","ok");
+    };
+  }
+  
+  /* ---------- রক্তের গ্রুপ পরিবর্তনের অনুরোধ ----------
+     অনুমোদিত ডোনার রক্তের গ্রুপ **সরাসরি** পরিবর্তন করতে পারেন না। কারণ ও
+     প্রমাণসহ Change Blood Group Request পাঠাতে হয় (queue-এ kind:"group")।
+     Admin/Moderator Approve করলে তবেই RTDB-র donors ও users নোডে নতুন গ্রুপ
+     লেখা হয় — তার আগ পর্যন্ত পুরোনো গ্রুপই সব জায়গায় থাকে। অনুরোধের অবস্থা
+     (pending / approved / rejected) users/{uid}/groupChange-এ থাকে, তাই
+     Doner Panel ও Main Website দুটোই realtime-এ আপডেট পায়।
+     একই সময়ে একাধিক pending অনুরোধ পাঠানো যায় না। */
+
+  /* অনুরোধের টাইমস্ট্যাম্প নিরাপদে দেখানো — RTDB-তে serverTimestamp (number)
+     অথবা ISO string দুটোই থাকতে পারে; কোনোটাই parse না হলে খালি string,
+     কখনোই "Invalid Date" নয়। (dL শুধু YYYY-MM-DD তারিখের জন্য।) */
+  function gcWhen(v){
+    if(v===undefined||v===null||v==="")return "";
+    const t=typeof v==="number"?v:Date.parse(String(v));
+    if(!Number.isFinite(t)||t<=0)return "";
+    return bdDateLabel(t)+" · "+bdTimeStr(t);
+  }
+  /* অনুরোধের বর্তমান অবস্থা — সবসময় একই RTDB data (users/{uid}/groupChange +
+     কার্যকর bloodGroup) থেকে হিসাব হয়। Self-heal: Admin Approve করলে আসল গ্রুপ
+     donors/users নোডে বদলে যায়; কোনো কারণে status লেখা না পৌঁছালেও (পুরোনো
+     Admin build / নেটওয়ার্ক) নতুন গ্রুপ কার্যকর হয়ে গেলে অনুরোধটি Approved —
+     এখানে সেটি ধরে RTDB-র status-ও ঠিক করে দেওয়া হয়, ফলে "অপেক্ষমাণ" আটকে
+     থাকে না। */
+  function gcState(){
+    const d=STORE.donor;
+    const gc=d.groupChange&&typeof d.groupChange==="object"?{...d.groupChange}:null;
+    if(!gc||!gc.status)return null;
+    if(gc.status==="pending"&&gc.to&&d.bloodGroup===gc.to){
+      gc.status="approved";
+      if(!gc.decidedAt)gc.decidedAt=nowIso();
+      STORE.donor.groupChange={...gc};
+      const uid=String(firebaseCurrentUid()||STORE.account.uid||"").trim();
+      if(uid)updatePaths({
+        ["users/"+uid+"/groupChange/status"]:"approved",
+        ["users/"+uid+"/groupChange/decidedAt"]:gc.decidedAt
+      }).catch(e=>console.warn("gc heal:",e&&e.message));
+    }
+    return gc;
+  }
+  /* Sheet খোলা থাকা অবস্থায় Admin Approve/Reject করলে — watchMyProfile-এর
+     callback থেকে এটি ডাকা হয়; pending sheet-টি বন্ধ করে নতুন status-এর
+     view খোলে (form-এ টাইপ চলাকালীন কিছুই স্পর্শ করা হয় না)। */
+  function refreshGroupChangeSheet(){
+    const sh=document.querySelector(".sheet[data-gc='pending']");
+    if(!sh)return;
+    const gc=gcState();
+    if(gc&&gc.status==="pending")return;   /* এখনো pending — কিছু করার নেই */
+    try{sh.close();}catch(e){}
+    try{if(CUR==="set")renderSub(SUB);}catch(e){}
+    sheetGroupChange();
+  }
+  function sheetGroupChange(forceForm){
+    const d=STORE.donor;
+    /* অনুমোদনের আগে গ্রুপ এখনো পাবলিক নয় — আবেদনপত্রের অংশ হিসেবে আগের মতোই
+       সম্পাদনাযোগ্য; আবেদনটি এমনিতেই Admin-এর যাচাইয়ের অপেক্ষায় থাকে। */
+    if(d.status!=="approved"){
+      editField({key:"bloodGroup",title:"রক্তের গ্রুপ",label:"রক্তের গ্রুপ",options:GROUPS,store:"donor",
+        validate:v=>GROUPS.includes(v)||"রক্তের গ্রুপ নির্বাচন করুন"});
+      return;
+    }
+    const gc=gcState();
+    /* একটি pending অনুরোধ থাকা অবস্থায় নতুন অনুরোধ পাঠানো যায় না */
+    if(gc&&gc.status==="pending"){
+      const s=sheet("রক্তের গ্রুপ পরিবর্তনের অনুরোধ",`
+        <div class="note w" style="margin-bottom:12px">${ICON.clock(17)}<span><b>অনুরোধ অপেক্ষমাণ</b> —
+          অ্যাডমিন যাচাই করে অনুমোদন দিলে তবেই নতুন গ্রুপ কার্যকর হবে। তার আগ পর্যন্ত
+          পুরোনো গ্রুপ (${esc(gc.from||d.bloodGroup)}) সব জায়গায় থাকবে। একই সময়ে একাধিক অনুরোধ পাঠানো যায় না।</span></div>
+        <div class="card pad0" style="margin:0 0 10px">
+          <div class="row"><span class="tx"><b>পরিবর্তন</b><small>${esc(gc.from||d.bloodGroup)} → ${esc(gc.to||"")}</small></span>
+            <span class="rt"><span class="pill a">অপেক্ষমাণ</span></span></div>
+          <div class="row"><span class="tx"><b>কারণ</b><small>${esc(gc.reason||"")}</small></span></div>
+          ${(()=>{const t=gcWhen(gc.atTs||gc.at);return t?`<div class="row"><span class="tx"><b>পাঠানো হয়েছে</b><small>${esc(t)}</small></span></div>`:""})()}
+        </div>
+        ${gc.proof?`<div class="sec-t">প্রমাণ</div>
+          <a href="${esc(gc.proof)}" target="_blank" rel="noopener"><img src="${esc(gc.proof)}" alt="রক্তের গ্রুপের প্রমাণ"
+            style="width:100%;max-height:220px;object-fit:contain;border-radius:12px;border:1px solid var(--line);background:var(--card2)"></a>`:""}`,
+        `<button class="btn gh" data-close>বন্ধ</button>
+         <button class="btn gh" id="gc_cancel" style="color:var(--red-d)">অনুরোধ প্রত্যাহার</button>`);
+      s.dataset.gc="pending";
+      s.q("#gc_cancel").onclick=async()=>{
+        if(!await confirmS({title:"অনুরোধ প্রত্যাহার করবেন?",desc:"পরে আবার নতুন অনুরোধ পাঠাতে পারবেন।",ok:"প্রত্যাহার",danger:true}))return;
+        const uid=String(firebaseCurrentUid()||STORE.account.uid||"").trim();
+        try{
+          if(gc.id){try{await removeRow(NODES.queue,gc.id);}catch(e){console.warn("gc queue remove:",e&&e.message);}}
+          if(uid)await updateRow(NODES.users,uid,{groupChange:null});
+          STORE.donor.groupChange=null;save();
+          logAct("রক্তের গ্রুপ পরিবর্তনের অনুরোধ প্রত্যাহার",`${gc.from||""} → ${gc.to||""}`,"donor");
+          s.close();renderSub(SUB);toast("অনুরোধ প্রত্যাহার করা হয়েছে");
+        }catch(e){toast(e&&e.message?e.message:"প্রত্যাহার করা যায়নি","er");}
+      };
+      return;
+    }
+    /* Approved — নতুন গ্রুপ কার্যকর; status view দেখাই (নতুন অনুরোধ চাইলে ফর্মে যাওয়া যায়) */
+    if(gc&&gc.status==="approved"&&!forceForm){
+      const s=sheet("রক্তের গ্রুপ পরিবর্তনের অনুরোধ",`
+        <div class="note g" style="margin-bottom:12px">${ICON.checkC(17)}<span><b>অনুরোধ অনুমোদিত</b> —
+          আপনার নতুন রক্তের গ্রুপ <b>${esc(gc.to||d.bloodGroup)}</b> কার্যকর হয়েছে এবং ডোনার প্যানেল ও
+          মূল ওয়েবসাইটে আপডেট হয়ে গেছে।</span></div>
+        <div class="card pad0" style="margin:0 0 10px">
+          <div class="row"><span class="tx"><b>পরিবর্তন</b><small>${esc(gc.from||"")} → ${esc(gc.to||"")}</small></span>
+            <span class="rt"><span class="pill g">অনুমোদিত</span></span></div>
+          ${(()=>{const t=gcWhen(gc.atTs||gc.at);return t?`<div class="row"><span class="tx"><b>পাঠানো হয়েছে</b><small>${esc(t)}</small></span></div>`:""})()}
+          ${(()=>{const t=gcWhen(gc.decidedAtTs||gc.decidedAt);return t?`<div class="row"><span class="tx"><b>অনুমোদিত হয়েছে</b><small>${esc(t)}</small></span></div>`:""})()}
+        </div>`,
+        `<button class="btn gh" data-close>বন্ধ</button>
+         <button class="btn" id="gc_again">নতুন অনুরোধ পাঠান</button>`);
+      s.dataset.gc="approved";
+      s.q("#gc_again").onclick=()=>{s.close();sheetGroupChange(true);};
+      return;
+    }
+    /* নতুন অনুরোধ ফর্ম — কারণ ও প্রমাণ (রিপোর্টের ছবি) দুটোই বাধ্যতামূলক */
+    const s=sheet("রক্তের গ্রুপ পরিবর্তনের অনুরোধ",`
+      ${gc&&gc.status==="rejected"?`<div class="note r" style="margin-bottom:12px">${ICON.x(17)}<span>
+        <b>আগের অনুরোধটি বাতিল হয়েছে</b>${gc.note?` — কারণ: ${esc(gc.note)}`:""}${(()=>{const t=gcWhen(gc.decidedAtTs||gc.decidedAt);return t?` (${esc(t)})`:""})()}। চাইলে সঠিক প্রমাণসহ আবার পাঠাতে পারেন।</span></div>`:""}
+      <p class="mut" style="font-size:.83rem;margin:0 0 12px">নিরাপত্তার জন্য রক্তের গ্রুপ সরাসরি পরিবর্তন করা যায় না।
+        কারণ ও প্রমাণসহ অনুরোধ পাঠান — অ্যাডমিন যাচাই করে অনুমোদন দিলে নতুন গ্রুপ
+        ডোনার প্যানেল ও মূল ওয়েবসাইটে সাথে সাথে আপডেট হয়ে যাবে।</p>
+      <div class="f"><label>বর্তমান গ্রুপ</label><input value="${esc(d.bloodGroup)}" disabled></div>
+      <div class="f"><label>নতুন রক্তের গ্রুপ <i>*</i></label><select id="gc_to">
+        <option value="">নির্বাচন করুন</option>
+        ${GROUPS.filter(g=>g!==d.bloodGroup).map(g=>`<option>${esc(g)}</option>`).join("")}</select></div>
+      <div class="f"><label>কারণ <i>*</i></label><textarea id="gc_reason" rows="3"
+        placeholder="যেমন: সাম্প্রতিক ল্যাব টেস্টে ভিন্ন গ্রুপ এসেছে"></textarea></div>
+      <div class="f"><label>প্রমাণ — রক্ত পরীক্ষার রিপোর্টের ছবি <i>*</i></label>
+        <input id="gc_file" type="file" accept="image/*">
+        <span class="hint">সর্বোচ্চ ৪ MB — ব্লাড গ্রুপিং রিপোর্ট বা কার্ডের স্পষ্ট ছবি দিন।</span>
+        <span class="hint er hide" id="gc_err"></span></div>`,
+      `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="gc_send">অনুরোধ পাঠান</button>`);
+    s.dataset.gc="form";
+    s.q("#gc_send").onclick=async()=>{
+      const er=m=>{const e=s.q("#gc_err");e.textContent=m;e.classList.remove("hide")};
+      s.q("#gc_err").classList.add("hide");
+      const to=s.q("#gc_to").value, reason=s.q("#gc_reason").value.trim();
+      if(!GROUPS.includes(to)||to===d.bloodGroup)return er("নতুন রক্তের গ্রুপ নির্বাচন করুন");
+      if(reason.length<5)return er("গ্রুপ পরিবর্তনের কারণ লিখুন (কমপক্ষে ৫ অক্ষর)");
+      const f=s.q("#gc_file").files&&s.q("#gc_file").files[0];
+      if(!f)return er("প্রমাণ হিসেবে রিপোর্টের ছবি সংযুক্ত করুন");
+      if(f.size>4*1024*1024)return er("ছবি ৪ MB-এর কম হতে হবে");
+      const uid=String(firebaseCurrentUid()||STORE.account.uid||"").trim();
+      if(!uid)return er("লগইন সেশন পাওয়া যায়নি — আবার লগইন করুন");
+      const btn=s.q("#gc_send");btn.disabled=true;btn.textContent="পাঠানো হচ্ছে…";
+      const fail=m=>{btn.disabled=false;btn.textContent="অনুরোধ পাঠান";er(m)};
+      try{
+        /* server-side double-check — অন্য ডিভাইস থেকে পাঠানো pending অনুরোধ থাকলে আটকাই */
+        const u=await getRow(NODES.users,uid);
+        const cur=u&&u.groupChange;
+        if(cur&&cur.status==="pending"){
+          STORE.donor.groupChange={...cur};save();renderSub(SUB);
+          return fail("একটি অনুরোধ ইতিমধ্যে অপেক্ষমাণ আছে — অ্যাডমিনের সিদ্ধান্তের অপেক্ষা করুন");
+        }
+        const up=await imgbbUploadImage(f);
+        const at=nowIso();
+        const id=genId("GC");
+        /* ১) Admin/Moderator-এর Pending Work queue-তে (kind:"group") —
+           atTs হলো Firebase server timestamp (client-এর ঘড়ি ভুল থাকলেও সঠিক) */
+        await setRow(NODES.queue,id,{kind:"group",id,name:STORE.account.name||"",from:d.bloodGroup,to,
+          reason,proof:up.url,phone:STORE.account.phone||"",area:STORE.account.area||"",
+          donorId:d.donorId||"",ownerUid:uid,at,atTs:serverTime()});
+        /* ২) নিজের status ট্র্যাকিং — users/{uid}/groupChange (Pending) */
+        await updateRow(NODES.users,uid,{groupChange:{id,from:d.bloodGroup,to,reason,proof:up.url,
+          status:"pending",at,atTs:serverTime(),note:""}});
+        /* local copy — server timestamp placeholder নয়, প্রদর্শনযোগ্য মান;
+           পরের watchRow snapshot-এ RTDB-র আসল server মান চলে আসবে */
+        STORE.donor.groupChange={id,from:d.bloodGroup,to,reason,proof:up.url,
+          status:"pending",at,atTs:Date.now(),note:""};
+        save();
+        logAct("রক্তের গ্রুপ পরিবর্তনের অনুরোধ",`${d.bloodGroup} → ${to}`,"donor");
+        s.close();renderSub(SUB);
+        toast("অনুরোধ পাঠানো হয়েছে — অ্যাডমিন অনুমোদন দিলে নতুন গ্রুপ কার্যকর হবে","ok");
+      }catch(e){fail(e&&e.message?e.message:"অনুরোধ পাঠানো যায়নি — আবার চেষ্টা করুন");}
     };
   }
   
@@ -4284,7 +4500,11 @@ function initPage() {
       // "approved" is admin-controlled and comes from donors/{id}, not from users/{uid}.
       if(d.is && d.status && d.status!=="none"){
         if(d.status!=="approved") payload.donorStatus = d.status;
-        payload.bloodGroup = d.bloodGroup||"";
+        /* অনুমোদিত ডোনারের bloodGroup admin-নিয়ন্ত্রিত — Admin group-change
+           approve করার ঠিক পরে ডোনারের stale local মান users/{uid}/bloodGroup
+           overwrite করে দিত (race)। approved অবস্থায় এটি এখান থেকে আর লেখা হয়
+           না; pending আবেদনে আগের মতোই লেখা হয়। */
+        if(d.status!=="approved") payload.bloodGroup = d.bloodGroup||"";
         payload.donorId = d.donorId||"";
         payload.lastDonation = d.lastDonation||"";
         payload.whatsapp = d.whatsapp||"";
@@ -4311,6 +4531,7 @@ function initPage() {
         payload.available = null;
         payload.appliedAt = null;
         payload.cardTheme = null;
+        payload.groupChange = null;
       }
       await updateRow(NODES.users, uid, payload);
     }catch(e){ console.warn("profile push:", e && e.message); }
@@ -4653,6 +4874,9 @@ function initPage() {
     if(row.available !== undefined) STORE.donor.available = !!row.available;
     if(row.appliedAt) STORE.donor.appliedAt = String(row.appliedAt||"");
     if(row.cardTheme) STORE.donor.cardTheme = String(row.cardTheme||"green");
+    /* রক্তের গ্রুপ পরিবর্তনের অনুরোধ — একমাত্র উৎস users/{uid}/groupChange।
+       Admin Approve/Reject করলে এই field-ই বদলায়, watchRow দিয়ে realtime এখানে আসে। */
+    STORE.donor.groupChange = row.groupChange && typeof row.groupChange==="object" ? {...row.groupChange} : null;
     if(row.data&&typeof row.data==="object"){
       /* `mine` is applied by setMyApplicationsFromUser() so it is always
          scoped to this Auth UID and merged with the live requests listener. */
@@ -4769,6 +4993,10 @@ function initPage() {
       try{ pullSharedPublic(); }catch(e){ console.warn("resync personal data:", e && e.message); }
       persistLocalAccount();
       RTDB_PULLING=false;
+      /* গ্রুপ-বদল অনুরোধের sheet খোলা থাকা অবস্থায় Admin Approve/Reject করলে —
+         sheet-টিও সাথে সাথে নতুন status দেখায় (সাধারণ re-render sheet খোলা
+         থাকলে স্কিপ হয়, তাই এখানে আলাদাভাবে) */
+      try{ refreshGroupChangeSheet(); }catch(e){}
       if(!document.querySelector(".sheet")&&!PUBLIC_MODE){ try{ paintTop(); go(CUR,SUB,false); }catch(e){} }
     });
     /* notification storage live update — আলাদা website storage (RTDB-তে নয়);
@@ -4900,6 +5128,9 @@ function initPage() {
       }catch(e){}
       return;
     }
+    /* pending গ্রুপ-বদল sheet খোলা থাকলে donors-নোডের পরিবর্তন থেকেও নতুন
+       status ধরা পড়ে (self-heal path) — sheet সাথে সাথে আপডেট হয় */
+    try{ refreshGroupChangeSheet(); }catch(e){}
     if(!document.querySelector(".sheet"))go(CUR,SUB,false);
   });
   /* onboarding শুধু auth + RTDB প্রোফাইল লোডের পর (maybeShowSetup) —
@@ -4946,7 +5177,10 @@ export function donorPublicPatch(
     dob: String(a.dob || ""),
     area: String(a.area || ""),
     phone: String(a.phone || ""),
-    bloodGroup: String(d.bloodGroup || ""),
+    /* bloodGroup ইচ্ছা করেই নেই — রক্তের গ্রুপ ডোনার সরাসরি বদলাতে পারেন না।
+       Change Blood Group Request পাঠাতে হয়; Admin Approve করলে Admin/Moderator
+       প্যানেল থেকেই donors/{id}/bloodGroup আপডেট হয় (RTDB rules-ও এটি owner-এর
+       জন্য অপরিবর্তনীয় রাখে)। */
     whatsapp: String(d.whatsapp || ""),
     lastDonationDate: String(d.lastDonation || ""),
     available: d.available !== false,
