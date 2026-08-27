@@ -2327,7 +2327,7 @@ function initPage() {
     /* Firebase is the single source of truth — no seeded/dummy records.
        The shape is kept so every consumer finds the same keys. */
     return {donors:[],queue:[],live:[],audit:[],notices:[],messages:[],
-      team:[],gallery:[],
+      team:[],gallery:[],reports:[],
       site:{heroTitle:SITE.hero.title,
         heroText:SITE.hero.text,
         phone:SITE.phone,email:SITE.email,address:SITE.address,
@@ -2368,9 +2368,11 @@ function initPage() {
       area:r.hospitalAddress,requester:r.requesterName||"স্বজন",phone:r.phone,whatsapp:r.whatsapp||"",
       at:r.createdAt||new Date().toISOString(),expiresAt:r.expiresAt||"",
       ownerUid:r.ownerUid||r.uid||r.userId||""}));
-    if(st.gallery.length)DB.gallery=st.gallery.map(g=>({...g,url:g.url||g.imageUrl}));
+    /* সবসময় সম্পূর্ণ তালিকা বসাই — অন্য জায়গা থেকে ছবি/রেকর্ড মুছলে এখানেও
+       সাথে সাথে প্রতিফলিত হয় (আগের `length` guard ডিলিট আটকে দিত) */
+    DB.gallery=st.gallery.map(g=>({...g,url:g.url||g.imageUrl}));
     DB.notices=st.notices.map(x=>CBDCShared.clone(x));
-    if(st.accounts.length)DB.accounts=st.accounts.map(x=>CBDCShared.clone(x));
+    DB.accounts=st.accounts.map(x=>CBDCShared.clone(x));
     SHARED_PULLING=false;
     lastPersistedDB=CBDCShared.clone(DB);
   }
@@ -2409,9 +2411,14 @@ function initPage() {
   }
   /* settings live listener — এক প্যানেলে বদলালে অন্য প্যানেল ও ওয়েবসাইটেও সাথে সাথে
      (শুধু rules — ওয়েবসাইট site-সেটিংস এখানে নেই, সেগুলো src/config/site.ts থেকে আসে) */
+  let lastSettingsJson="";
   watchList(NODES.settings,(rows)=>{
     const app=rows.find(r=>r.id==="app");
     if(!app)return;
+    /* অপরিবর্তিত ডেটা (যেমন নিজের লেখারই প্রতিধ্বনি) এলে আবার কাজ করবে না */
+    const sig=JSON.stringify([app.rules||{},app.autoApproveEmergency??null]);
+    if(sig===lastSettingsJson)return;
+    lastSettingsJson=sig;
     SETTINGS_PULLING=true;
     if(app.rules&&typeof app.rules==="object")Object.assign(DB.rules,app.rules);
     /* Old installations only have autoApproveEmergency. Preserve it while the
@@ -2421,7 +2428,10 @@ function initPage() {
     if(DB.rules.reqApproval===undefined && DB.rules.emergencyApproval!==undefined)
       DB.rules.reqApproval=DB.rules.emergencyApproval;
     SETTINGS_PULLING=false;
-    try{ if(!document.querySelector(".sheet"))go(CUR,SUB,false,ARG); }catch(e){}
+    /* সেটিংস বদলালে শুধু নিয়ম/হোম স্ক্রিন আবার আঁকা হয় — পুরো ডেটা রিলোড নয় */
+    try{
+      if(!document.querySelector(".sheet")&&(SUB==="rules"||(CUR==="home"&&!SUB)))go(CUR,SUB,false,ARG);
+    }catch(e){}
   });
   pullSharedState();
   /* পুরোনো/ব্যাকফিল: ডোনার রেকর্ডে প্রোফাইল ছবি (ImgBB link) না থাকলে
@@ -2485,7 +2495,7 @@ function initPage() {
     donors:{title:"রক্তদাতা তালিকা",perm:"donor.view"},
     live:{title:"চলমান আবেদন",perm:"request.view"},
     users:{title:"ব্যবহারকারী",perm:"user.view"},
-    team:{title:"টিম ও ভূমিকা",perm:"team.view"},
+    team:{title:"ডোনার ব্যবস্থাপনা",perm:"team.view"},
     site:{title:"ওয়েবসাইট",perm:"website.view"},
     gallery:{title:"গ্যালারি",perm:"website.view"},
     notice:{title:"নোটিশ",perm:"website.view"},
@@ -2547,7 +2557,7 @@ function initPage() {
         <button class="bell" id="tbell" aria-label="বিজ্ঞপ্তি">${SI.bell(21)}${badge()}</button>`;
     }
   }
-  const badge=()=>{const u=DB.queue.length+unread();
+  const badge=()=>{const u=DB.queue.length+unread()+DB.reports.filter(r=>r.status!=="resolved").length;
     return u&&(!ME.prefs||ME.prefs.badge!==false)?`<span class="bd">${bn(u)}</span>`:""};
   
   document.addEventListener("click",e=>{
@@ -2578,6 +2588,8 @@ function initPage() {
       b:"নতুন ডোনার আবেদন",s:q.name+" · "+q.group,at:q.at,go:()=>{wTab="donor";go("work")}}));
     DB.messages.filter(m=>!m.read).forEach(m=>items.push({ic:"mail",cl:"var(--blu)",
       b:"নতুন বার্তা",s:m.name+" — "+m.text.slice(0,40),at:m.at,go:()=>go(CUR,"inbox")}));
+    DB.reports.filter(r=>r.status!=="resolved").slice(0,4).forEach(r=>items.push({ic:"help",cl:"var(--amb)",
+      b:"নতুন অভিযোগ/রিপোর্ট",s:`${r.type} · ${r.name||"—"}`,at:r.createdAt,go:()=>go(CUR,"users")}));
     const low=GROUPS.filter(g=>bloodCounts()[g]<3);
     if(low.length)items.push({ic:"drop",cl:"var(--amb)",b:"রক্তের ঘাটতি",
       s:low.join(", ")+" গ্রুপে ৩ জনের কম প্রস্তুত",at:new Date().toISOString(),go:()=>go(CUR,"stats")});
@@ -2811,7 +2823,9 @@ function initPage() {
     (DB.accounts||[]).forEach(a=>by.set(String(a.uid||a.id),{...a}));
     accountUsers.forEach(u=>{const uid=String(u.uid||u.id);if(!uid)return;by.set(uid,{...by.get(uid),...u,uid,role:by.get(uid)?.role||u.role||"user"});});
     accountAdmins.forEach(a=>{const uid=String(a.uid||a.id);if(!uid)return;by.set(uid,{...by.get(uid),...a,uid,role:a.role||by.get(uid)?.role||"mod",permissions:a.permissions||by.get(uid)?.permissions||[]});});
-    DB.accounts=Array.from(by.values()).map(a=>({...a,role:normRole(a.role),phone:a.phone||a.mobile||"",photo:a.photo||a.photoURL||"",status:a.status||"active"}));
+    const nextAccounts=Array.from(by.values()).map(a=>({...a,role:normRole(a.role),phone:a.phone||a.mobile||"",photo:a.photo||a.photoURL||"",status:a.status||"active"}));
+    const accountsChanged=JSON.stringify(nextAccounts)!==JSON.stringify(DB.accounts);
+    DB.accounts=nextAccounts;
     /* Build the team from the same two listeners. There is deliberately no
        second admins fetch: profile changes in users/{uid} also update the
        existing team row without reloading the database. */
@@ -2827,7 +2841,10 @@ function initPage() {
         last:r.updatedAt||r.createdAt||""};
     }).sort((a,b)=>(a.role==="admin"?0:1)-(b.role==="admin"?0:1)
       ||String(a.name).localeCompare(String(b.name),"bn"));
-    if(JSON.stringify(team)!==JSON.stringify(DB.team))DB.team=team;
+    const teamChanged=JSON.stringify(team)!==JSON.stringify(DB.team);
+    if(teamChanged)DB.team=team;
+    /* সত্যিকারের পরিবর্তন ছাড়া আবার কোনো কাজ হবে না — বারবার লোডিং/রিলোড নেই */
+    if(!accountsChanged&&!teamChanged)return;
     try{paintNav();if(!document.querySelector(".sheet")&&["team","access"].includes(SUB))go(CUR,SUB,false,ARG)}catch(e){}
   }
   function watchAccounts(){
@@ -2875,6 +2892,26 @@ function initPage() {
       DB.messages=list;
       try{paintTop();paintNav();
         if(!document.querySelector(".sheet")&&SUB==="inbox")go(CUR,SUB,false,ARG)}catch(e){}
+    });
+  }
+
+  /* ── ডোনার প্যানেলের রিপোর্ট/অভিযোগ — RTDB `reports` node থেকে live ──
+     ডোনার প্যানেলের "সমস্যা জানান" থেকে আসা রিপোর্ট এখানে realtime-এ দেখা ও
+     ব্যবস্থাপনা (সমাধান/মুছুন) করা যায়। অপরিবর্তিত ডেটা এলে আবার render হয়
+     না — শুধু সত্যিকারের পরিবর্তনেই প্রয়োজনীয় অংশ আপডেট হয়। */
+  let stopReportsWatch=()=>{};
+  function watchReports(){
+    stopReportsWatch();
+    stopReportsWatch=watchList(NODES.reports,(rows)=>{
+      const list=rows.map(r=>({id:r.id,ownerUid:r.ownerUid||r.uid||"",name:r.name||"",
+        username:r.username||"",email:r.email||"",type:r.type||"রিপোর্ট",
+        text:r.text||"",screenshot:r.screenshot||"",status:r.status==="resolved"?"resolved":"open",
+        createdAt:r.createdAt||r.at||""}))
+        .filter(x=>x.text||x.type).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));
+      if(JSON.stringify(list)===JSON.stringify(DB.reports))return;
+      DB.reports=list;
+      try{paintTop();paintNav();
+        if(!document.querySelector(".sheet")&&SUB==="users")renderSub("users")}catch(e){}
     });
   }
   /* replaces the plain object created in the data block */
@@ -3187,8 +3224,8 @@ function initPage() {
           <span class="tx"><b>আমার কার্যকলাপ</b><small>আমার অ্যাকাউন্টে কী কী বদলেছে</small></span>
           <span class="rt">${SI.right(17)}</span></button>
       </div>
-      <div class="note w">${SI.warn(17)}<span>${tp("আপনার অ্যাকাউন্টে","Your account has")} <b>${tp(bn(myPerms().size)+"টি অনুমতি",myPerms().size+" permissions")}</b>${tp(" আছে","")} —
-        পাসওয়ার্ড কারও সাথে ভাগ করবেন না।</span></div>`;
+      <div class="note w">${SI.warn(17)}<span>পাসওয়ার্ড কারও সাথে ভাগ করবেন না।
+        ${tp("আপনার ভূমিকা ডেটাবেজ থেকে নির্ধারিত হয়।","Your role is set from the database.")}</span></div>`;
     bindMe(el,"security");
   };
   
@@ -3321,23 +3358,16 @@ function initPage() {
       toast(isEN()?"Language changed to English":"ভাষা বাংলা করা হয়েছে","ok")});
   };
   
+  /* আলাদা permission তালিকা আর নেই — শুধু বর্তমান ভূমিকা দেখায়।
+     (ভূমিকা ডেটাবেজ থেকে নির্ধারিত হয় — নিজে বদলানো যায় না।) */
   SUBP.myperm=el=>{
-    const mine=myPerms();
     el.innerHTML=`<div class="card">
         <div class="per"><span class="bg2" style="width:46px;height:46px;border-radius:50%;
           background:var(--grn-s);color:var(--grn);font-size:1.1rem">${ROLES[ME.role].icon}</span>
-          <div class="i"><b>${esc(ME.name)}</b><small>${ROLES[ME.role].label} · ${tp(bn(mine.size)+"টি অনুমতি",mine.size+" permissions")}</small></div></div>
+          <div class="i"><b>${esc(ME.name)}</b><small>${ROLES[ME.role].label}</small></div></div>
         <p class="hint2" style="margin-top:10px" data-noi18n>${tp(
           "ভূমিকা ডেটাবেজ থেকে নির্ধারিত হয় — নিজে বদলানো যায় না। কিছু দরকার হলে অ্যাডমিনকে বলুন।",
-          "Your role is set from the database and cannot be changed by you. Ask an admin if you need more access.")}</p></div>
-      ${Object.entries(PERM_GROUPS).map(([g,ps])=>`
-        <div class="sec-t">${esc(g)}</div>
-        <div class="card pad0">${ps.map(p=>`<div class="row">
-          <span class="ic" style="color:${mine.has(p)?"var(--grn)":"var(--mut)"}">
-            ${mine.has(p)?SI.checkC(18):SI.lock(16)}</span>
-          <span class="tx"><b>${PERM_LABEL[p]||p}</b><small>${p}</small></span>
-          <span class="rt">${mine.has(p)?`<span class="pill g">আছে</span>`:`<span class="pill m">নেই</span>`}</span>
-        </div>`).join("")}</div>`).join("")}`;
+          "Your role is set from the database and cannot be changed by you. Ask an admin if you need more access.")}</p></div>`;
   };
   
   SUBP.manage=el=>{
@@ -4050,14 +4080,14 @@ function initPage() {
     +`<div class="astat">
         <button class="g" data-sub="donors"><b>${bn(DB.donors.length)}</b><span>রক্তদাতা</span></button>
         <button class="r" data-sub="donors"><b>${bn(ready)}</b><span>প্রস্তুত</span></button>
-        <button class="a" data-sub="users"><b>${bn(qCount("report"))}</b><span>অভিযোগ</span></button>
-        <button class="b" data-sub="team"><b>${bn(DB.team.length)}</b><span>টিম সদস্য</span></button>
+        <button class="a" data-sub="users"><b>${bn(DB.reports.filter(r=>r.status!=="resolved").length)}</b><span>অভিযোগ</span></button>
+        <button class="b" data-sub="team"><b>${bn(DB.donors.length)}</b><span>ডোনার</span></button>
       </div>`
     +sect("",[
         row("donor.view","donors","drop","রক্তদাতা তালিকা","খুঁজুন, সম্পাদনা করুন, স্থগিত করুন",bn(DB.donors.length)),
-        row("user.view","users","users","ব্যবহারকারী ও অভিযোগ","অ্যাকাউন্ট ও রিপোর্ট",qCount("report")?bn(qCount("report")):""),
+        row("user.view","users","users","ব্যবহারকারী ও অভিযোগ","অ্যাকাউন্ট ও রিপোর্ট",DB.reports.filter(r=>r.status!=="resolved").length?bn(DB.reports.filter(r=>r.status!=="resolved").length):""),
         row("user.view","inbox","mail","বার্তা","ওয়েবসাইটের যোগাযোগ ফর্ম",unread()?`<span class="tag r">${bn(unread())} নতুন</span>`:""),
-        row("team.view","team","shield","টিম ও ভূমিকা","কে কী করতে পারবে","")])
+        row("team.view","team","users","ডোনার ব্যবস্থাপনা","ডোনার অ্যাকাউন্ট ও ডোনার আইডি",bn(DB.donors.length))])
     +`<div class="sec-t">শীর্ষ রক্তদাতা</div>
       <div class="card pad0">${DB.donors.slice().sort((a,b)=>b.donations-a.donations).slice(0,5)
         .map((d,i)=>`<button class="prow" data-dn="${d.id}">
@@ -4098,8 +4128,9 @@ function initPage() {
     +meHeader()
     +sect("",ACC_PAGES.map(a=>row(null,a.id,a.icon,a.title,a.desc,"")))
     +sect("ব্যবস্থাপনা",[
-        row("access.manage","access","key","অ্যাক্সেস ও ভূমিকা","কাকে অ্যাডমিন বা মডারেটর করবেন",""),
-        row("team.view","team","shield","টিম ও ভূমিকা","কে কী করতে পারবে",""),
+        row("access.manage","access","key","অ্যাক্সেস ও ভূমিকা","অ্যাডমিন, মডারেটর বা ডোনার ভূমিকা পরিবর্তন",""),
+        row("team.view","team","users","ডোনার ব্যবস্থাপনা","ডোনার অ্যাকাউন্ট ও ডোনার আইডি",bn(DB.donors.length)),
+        row("gallery.manage","gallery","cam","গ্যালারি","ওয়েবসাইটের গ্যালারিতে ছবি যোগ/মুছুন",bn(DB.gallery.length)),
         row("settings.manage","rules","gear","নিয়ম ও সেটিংস","বয়স, বিশ্রাম, অনুমোদন, সংযোগ","")])
     +sect("ডেটাবেস",[
         row("database.manage","database","db","ডেটাবেস ব্যবস্থাপনা","Firebase Realtime Database — সব node দেখুন ও সম্পাদনা করুন","")])
@@ -4316,19 +4347,23 @@ function initPage() {
   
   /* ---------- users & reports ---------- */
   SUBP.users=el=>{
-    const reports=DB.queue.filter(q=>q.kind==="report");
+    /* রিপোর্ট/অভিযোগ — ডোনার প্যানেলের "সমস্যা জানান" থেকে আসা,
+       RTDB `reports` node-এর live ডেটা (watchReports)। */
+    const reports=DB.reports;
+    const openReports=reports.filter(r=>r.status!=="resolved");
     el.innerHTML=`<div class="astat">
         <button class="g"><b>${bn(DB.donors.length)}</b><span>অ্যাকাউন্ট</span></button>
-        <button class="a"><b>${bn(reports.length)}</b><span>অভিযোগ</span></button>
+        <button class="a"><b>${bn(openReports.length)}</b><span>অভিযোগ</span></button>
         <button class="r"><b>${bn(DB.donors.filter(d=>d.suspended).length)}</b><span>স্থগিত</span></button>
         <button class="b"><b>${bn(DB.donors.filter(d=>!d.verified).length)}</b><span>যাচাই বাকি</span></button>
       </div>
       <div class="sec-t">অভিযোগ ও রিপোর্ট</div>`
     +(reports.length?`<div class="card pad0">${reports.map(q=>`<button class="row" data-open="${q.id}">
         <span class="ic" style="color:var(--amb)">${SI.help(18)}</span>
-        <span class="tx"><b>${esc(q.type)} — ${esc(q.name)}</b><small>${esc(q.text)}</small></span>
-        <span class="rt">${timeAgo(q.at)}</span></button>`).join("")}</div>`
-      :`<div class="card">${emptyBox("check","কোনো অভিযোগ নেই")}</div>`)
+        <span class="tx"><b>${esc(q.type)} — ${esc(q.name||"নাম নেই")}</b><small>${esc(q.text)}</small>
+          ${q.screenshot?`<small>📷 স্ক্রিনশট সংযুক্ত</small>`:""}</span>
+        <span class="rt">${q.status==="resolved"?`<span class="pill g">সমাধান</span>`:timeAgo(q.createdAt)}</span></button>`).join("")}</div>`
+      :`<div class="card">${emptyBox("check","কোনো অভিযোগ নেই","ডোনার প্যানেলের 'সমস্যা জানান' থেকে এলে এখানে দেখা যাবে")}</div>`)
     +`<div class="sec-t">স্থগিত অ্যাকাউন্ট</div>`
     +(DB.donors.filter(d=>d.suspended).length
       ?`<div class="card pad0">${DB.donors.filter(d=>d.suspended).map(d=>`<button class="prow" data-dn="${d.id}">
@@ -4341,43 +4376,144 @@ function initPage() {
         <button class="row" data-sub="donors"><span class="ic">${SI.users(18)}</span>
           <span class="tx"><b>${tp("রক্তদাতা তালিকা দেখুন","Open the donor list")}</b><small>খোঁজা, ফিল্টার ও সম্পাদনা</small></span>
           <span class="rt">${SI.right(16)}</span></button></div>`;
-    el.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>openReview(b.dataset.open));
+    el.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>openReportSheet(b.dataset.open));
     el.querySelectorAll("[data-dn]").forEach(b=>b.onclick=()=>openDonor(b.dataset.dn));
   };
+
+  /* একটি রিপোর্টের বিস্তারিত — স্ক্রিনশটসহ; সমাধান/মুছে ফেলা যায়।
+     প্রতিটি পরিবর্তন RTDB-তে হয়, তাই ডোনার নিজের প্যানেলেও সাথে সাথে
+     আপডেট দেখে; সব পদক্ষেপ অডিট লগে থাকে। */
+  function openReportSheet(id){
+    const r=DB.reports.find(x=>String(x.id)===String(id));
+    if(!r)return toast("রিপোর্টটি আর পাওয়া যায়নি","er");
+    const s=sheet("রিপোর্ট বিস্তারিত",`
+      <div class="kv">
+        <div><span>ধরন</span><b>${esc(r.type)}</b></div>
+        <div><span>নাম</span><b>${esc(r.name||"—")}${r.username?" (@"+esc(r.username)+")":""}</b></div>
+        <div><span>ইমেইল</span><b>${esc(r.email||"—")}</b></div>
+        <div><span>সময়</span><b>${timeAgo(r.createdAt)}</b></div>
+        <div><span>অবস্থা</span><b>${r.status==="resolved"?"✓ সমাধান হয়েছে":"অপেক্ষমাণ"}</b></div>
+      </div>
+      <div class="sec-t">বিস্তারিত</div>
+      <div class="card" style="white-space:pre-wrap">${esc(r.text)}</div>
+      ${r.screenshot?`<div class="sec-t">স্ক্রিনশট</div>
+        <div class="card" style="text-align:center"><img src="${esc(r.screenshot)}" alt="রিপোর্টের স্ক্রিনশট"
+          style="max-width:100%;max-height:300px;border-radius:10px;border:1px solid var(--line)"></div>`:""}
+      ${r.ownerUid?`<p class="hint2">UID: ${esc(r.ownerUid)}</p>`:""}`,
+      `<button class="btn gh" data-close>বাতিল</button>
+       ${r.status!=="resolved"?`<button class="btn" id="rp_ok">${SI.check(15)} সমাধান হয়েছে</button>`:""}
+       <button class="btn red" id="rp_del">${SI.trash(15)} মুছুন</button>`);
+    s.q("#rp_ok")&&(s.q("#rp_ok").onclick=async()=>{
+      const btn=s.q("#rp_ok");btn.disabled=true;
+      try{
+        await updateRow(NODES.reports,r.id,{status:"resolved",resolvedAt:nowIso(),resolvedBy:ME.name||"admin"});
+        await logAudit("রিপোর্ট সমাধান",`${r.type} · ${r.name}`,`report`);
+        s.close();toast("রিপোর্টটি সমাধান হিসেবে চিহ্নিত হয়েছে","ok");
+      }catch(e){btn.disabled=false;toast("রিপোর্ট আপডেট করা যায়নি","er");}
+    });
+    s.q("#rp_del").onclick=async()=>{
+      if(!await confirmS({title:"রিপোর্ট মুছবেন?",desc:"এই রিপোর্টটি স্থায়ীভাবে মুছে যাবে।",ok:"মুছুন",danger:true}))return;
+      try{
+        await removeRow(NODES.reports,r.id);
+        await logAudit("রিপোর্ট মুছে ফেলা",`${r.type} · ${r.name}`,"report");
+        s.close();toast("রিপোর্ট মুছে ফেলা হয়েছে","ok");
+      }catch(e){toast("রিপোর্ট মুছে ফেলা যায়নি","er");}
+    };
+  }
   
-  /* ---------- team & roles ---------- */
+  /* ---------- ডোনার ব্যবস্থাপনা (সাবেক "টিম ও ভূমিকা") ----------
+     শুধুমাত্র Donor অ্যাকাউন্ট ও Donor ID-এর তালিকা। প্রতিটি ডোনারের জন্য
+     সংক্ষিপ্ত তথ্য: প্রোফাইল ছবি, নাম, Username, রক্তের গ্রুপ, এলাকা,
+     ডোনার আইডি ও স্ট্যাটাস। তালিকায় ক্লিক করলে বিদ্যমান রক্তদাতার
+     প্রোফাইল ভিউ খোলে; একক বা একাধিক (bulk) ডোনার নির্বাচন করে
+     নিশ্চিতকরণসহ সম্পূর্ণ ডিলিট করা যায়। */
+  let teamSel=new Set();
   SUBP.team=el=>{
-    el.innerHTML=`<div class="card pad0">${DB.team.map(t=>`<div class="prow">
-        ${t.photo?`<img src="${esc(t.photo)}" alt="" style="width:40px;height:40px;border-radius:11px;object-fit:cover;background:var(--card2)">`
-          :`<span class="bg2" style="background:var(--grn-s);color:var(--grn)">${ROLES[t.role].icon}</span>`}
-        <span class="tx"><b>${esc(t.name)}${t.uid===ME.uid?tp(" (আপনি)"," (you)"):""}</b>
-          <small>${ROLES[t.role].label} · ${esc(t.status||"active")} · ${t.last?timeAgo(t.last):"—"}</small>
-          <small>${bn((t.permissions||[]).length)}টি permission/access</small></span>
-        ${can("team.manage")?`<button class="btn gh sm" data-mr="${t.uid}">${SI.edit(14)}</button>`
-          :`<span class="tag">${ROLES[t.role].label}</span>`}</div>`).join("")}</div>`
-    +`<div class="sec-t">ভূমিকা অনুযায়ী অনুমতি</div>
-      <div class="card pad0">${Object.entries(ROLES).filter(([k])=>k!=="admin"||DB.team.some(t=>t.role===k)).map(([k,r])=>`<div class="row">
-        <span class="ic">${r.icon}</span>
-        <span class="tx"><b>${r.label}</b><small>${tp(bn(r.perms.length)+"টি অনুমতি",r.perms.length+" permissions")}</small></span>
-        <span class="rt">${tp(bn(DB.team.filter(t=>t.role===k).length)+" জন",DB.team.filter(t=>t.role===k).length+" people")}</span></div>`).join("")}</div>`
-    +`<div class="sec-t">নিরাপত্তা নিয়ম</div>
-      <div class="card"><ul class="wl">
-        <li>নিজের আবেদন নিজে অনুমোদন করা যায় না</li>
-        <li>নিজের ভূমিকা নিজে বাড়ানো যায় না</li>
-        <li>নিজের অ্যাডমিন অ্যাক্সেস নিজে সরানো যায় না</li>
-        <li>অডিট লগ একবার লেখা হলে বদলানো যায় না</li>
-        <li>ফোন নম্বর দেখলে তা লগে থেকে যায়</li></ul></div>`
-    +`<div class="sec-t">টিম সদস্যদের permission/access</div>
-      <div class="card"><p class="hint2">প্রতিটি সদস্যের Edit থেকে তার role ও নির্দিষ্ট access customize করা যাবে।</p></div>`
-    +(can("team.manage")?`<button class="btn gh w" style="margin-top:12px" id="tAdd">${SI.plus(15)} সদস্য যোগ</button>`:"");
-    el.querySelectorAll("[data-mr]").forEach(b=>b.onclick=()=>roleSheet(b.dataset.mr));
-    $("#tAdd")&&($("#tAdd").onclick=()=>toast("সদস্য যোগ করতে আগে একটি registered account নির্বাচন করুন"));
+    /* username আসে RTDB `users` node-এর live listener (accountUsers) থেকে */
+    const usersByUid=new Map(accountUsers.map(u=>[String(u.uid||u.id),u]));
+    const rows=DB.donors.map(d=>{
+      const prof=d.ownerUid?usersByUid.get(String(d.ownerUid)):null;
+      return {d,username:String((prof&&prof.username)||""),photo:String(d.photo||(prof&&prof.photo)||"")};
+    });
+    const selCount=[...teamSel].filter(id=>DB.donors.some(d=>String(d.id)===String(id))).length;
+    teamSel=new Set([...teamSel].filter(id=>DB.donors.some(d=>String(d.id)===String(id))));
+    const allChecked=rows.length>0&&selCount===rows.length;
+
+    el.innerHTML=`
+      <div class="frow" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+        <label style="display:flex;align-items:center;gap:7px;font-size:.78rem;font-weight:700;cursor:pointer">
+          <input type="checkbox" id="tall" ${allChecked?"checked":""} style="width:17px;height:17px;accent-color:var(--grn)">
+          সব নির্বাচন করুন</label>
+        <span class="mut" style="font-size:.75rem">${bn(rows.length)} জন ডোনার</span>
+        <button class="btn red sm" id="tdel" ${selCount?"":"disabled"}
+          style="margin-left:auto">${SI.trash(14)} ডিলিট করুন${selCount?" ("+bn(selCount)+")":""}</button>
+      </div>`
+    +(rows.length
+      ?`<div class="card pad0">${rows.map(({d,username,photo})=>`<div class="prow" style="cursor:pointer">
+          <input type="checkbox" data-tsel="${esc(d.id)}" ${teamSel.has(String(d.id))?"checked":""}
+            style="width:17px;height:17px;accent-color:var(--red);flex:none" aria-label="নির্বাচন করুন">
+          ${photo?`<img src="${esc(photo)}" alt="" style="width:40px;height:40px;border-radius:11px;object-fit:cover;background:var(--card2)">`
+            :`<span class="bg2" style="background:var(--grn-s);color:var(--grn)">${esc(d.group||"")}</span>`}
+          <span class="tx" data-top="${esc(d.id)}" style="cursor:pointer"><b>${esc(d.name)}${d.ownerUid===ME.uid?" (আপনি)":""}</b>
+            <small>${username?"@"+esc(username)+" · ":""}${esc(d.group||"")} · ${esc(d.area||"")}</small>
+            <small>${esc(d.donorId||d.id)} · ${d.suspended?`<span style="color:var(--red)">স্থগিত</span>`:`<span style="color:var(--grn)">অনুমোদিত</span>`}</small></span>
+          <button class="btn gh sm" data-top="${esc(d.id)}" style="flex:none">${SI.eye(14)} দেখুন</button>
+        </div>`).join("")}</div>`
+      :`<div class="card">${emptyBox("users","কোনো ডোনার নেই","অনুমোদিত রক্তদাতারা এখানে দেখা যাবেন")}</div>`);
+
+    $("#tall").onchange=e=>{
+      teamSel=e.target.checked?new Set(rows.map(r=>String(r.d.id))):new Set();
+      renderSub("team");
+    };
+    el.querySelectorAll("[data-tsel]").forEach(c=>c.onchange=()=>{
+      const id=c.dataset.tsel;
+      c.checked?teamSel.add(String(id)):teamSel.delete(String(id));
+      renderSub("team");
+    });
+    /* নাম/তথ্যে ক্লিক করলে বিদ্যমান প্রোফাইল ভিউ খোলে (চেকবক্স নয়) */
+    el.querySelectorAll("[data-top]").forEach(x=>x.onclick=()=>openDonor(x.dataset.top));
+    $("#tdel").onclick=()=>bulkDeleteDonors([...teamSel]);
   };
+
+  /* ডোনার ডিলিট — একক বা একাধিক (bulk)। নিশ্চিতকরণের পরে প্রতিটি ডোনারের
+     অ্যাকাউন্ট, ডোনার আইডি ও সংশ্লিষ্ট সব Firebase তথ্য মুছে যায়। */
+  async function bulkDeleteDonors(ids){
+    const list=DB.donors.filter(d=>ids.includes(String(d.id)));
+    if(!list.length)return toast("কোনো ডোনার নির্বাচিত হয়নি","er");
+    const names=list.slice(0,3).map(d=>d.name).join(", ")+(list.length>3?" সহ "+bn(list.length)+" জন":"");
+    if(!await confirmS({title:list.length>1?"নির্বাচিত ডোনারদের মুছবেন?":"ডোনার মুছবেন?",
+      desc:`${names}-এর অ্যাকাউন্ট, ডোনার আইডি এবং সংশ্লিষ্ট সব তথ্য মুছে যাবে। এটি ফেরানো যাবে না।`,
+      ok:"হ্যাঁ, মুছুন",danger:true}))return;
+    let done=0;
+    for(const d of list){
+      try{
+        const owner=String(d.ownerUid||d.uid||"").trim();
+        if(owner){
+          /* Cloud Function — Firebase Auth account + মালিকানাধীন সব রেকর্ড মুছে দেয় */
+          await deleteAccountCompletely(owner);
+        }else{
+          /* পুরোনো/account-বিহীন রেকর্ড — শুধু ডোনার তালিকা থেকে মুছি */
+          await removeRow(NODES.donors,d.id);
+        }
+        done++;
+        toast("মুছে ফেলা হচ্ছে… ("+bn(done)+"/"+bn(list.length)+")","");
+      }catch(e){
+        console.warn("donor delete:",d.id,e&&e.message);
+        toast((d.name||d.id)+" মুছে ফেলা যায়নি — আবার চেষ্টা করুন","er");
+      }
+    }
+    if(done){
+      await logAudit("ডোনার মুছে ফেলা",bn(done)+" জন · ডোনার ব্যবস্থাপনা","donor");
+      teamSel=new Set();
+      toast(bn(done)+" জন ডোনার সম্পূর্ণভাবে মুছে ফেলা হয়েছে","ok");
+    }
+    renderSub("team");paintNav();paintTop();
+  }
 
   /* Team editing and the account directory use one guarded editor. This
      avoids a role being changed in one screen while its permissions remain
      stale in the other. */
-  function roleSheet(uid){ accessSheet(uid); }
+  function roleSheet(uid){ roleManageSheet(uid); }
   
   /* ══════════════════════════════════════════════════════════════
      DONOR WORKSPACE — one page, tabbed, for everything about a donor
@@ -4716,221 +4852,139 @@ function initPage() {
   
   let acFilter="all", acQuery="";
   
+  /* ══════════════════════════════════════════════════════════════
+     অ্যাক্সেস ও ভূমিকা — সম্পূর্ণ নতুন রূপ
+     ──────────────────────────────────────────────────────────────
+     • মূল তালিকায় শুধু: প্রোফাইল ছবি, নাম, Username, Email এবং
+       বর্তমান Role (অ্যাডমিন / ডোনার / মডারেটর) — কোনো UID, Donor ID বা
+       অতিরিক্ত অ্যাকাউন্ট তথ্য দেখানো হয় না।
+     • কোনো সদস্যের উপর ক্লিক করলে শুধুই ভূমিকা পরিবর্তনের interface খোলে —
+       পুরোনো অ্যাকাউন্ট তথ্য / Existing permissions ভিউ আর নেই।
+     • Permission-based access সিস্টেম সম্পূর্ণ রিমুভ করা হয়েছে; ভূমিকা ৩টি:
+       অ্যাডমিন, মডারেটর, ডোনার — প্রয়োজন অনুযায়ী পরিবর্তন করা যায়।
+     • নিচে শুধু ৩টি বোতাম: বাতিল / সংরক্ষণ / ডিলিট। ডিলিট করলে
+       নিশ্চিতকরণের পরে ওই সদস্যের Firebase Authentication account এবং
+       সংশ্লিষ্ট সকল Realtime Database তথ্য মুছে যায়
+       (Cloud Function `deleteAccountCompletely`)।
+     ══════════════════════════════════════════════════════════════ */
+  const ROLE_SORT={admin:0,mod:1,user:2};
   SUBP.access=el=>{
     if(!can("access.manage"))return el.innerHTML=noPerm();
     DB.accounts.forEach(a=>{a.role=normRole(a.role)});
     const q=acQuery.trim().toLowerCase();
     let list=DB.accounts.filter(a=>{
-      if(acFilter==="staff"&&!isStaff(a.role))return false;
-      if(acFilter==="user"&&isStaff(a.role))return false;
       if(!q)return true;
-      return [a.name,a.username,a.email,a.donorId,a.uid].join(" ").toLowerCase().includes(q);
+      return [a.name,a.username,a.email].join(" ").toLowerCase().includes(q);
     });
-    /* staff first, then alphabetical — the people you manage are on top */
-    list.sort((a,b)=>(ROLE_ORDER.indexOf(b.role)-ROLE_ORDER.indexOf(a.role))
-      ||a.name.localeCompare(b.name,"bn"));
-    const staffN=DB.accounts.filter(a=>isStaff(a.role)).length;
-    const userN=DB.accounts.length-staffN;
-  
+    /* ভূমিকার ক্রম (অ্যাডমিন → মডারেটর → ডোনার), তারপর নাম অনুযায়ী */
+    list.sort((a,b)=>(ROLE_SORT[a.role]-ROLE_SORT[b.role])
+      ||String(a.name||a.email||"").localeCompare(String(b.name||b.email||""),"bn"));
+
     el.innerHTML=`
-      <div class="note i">${SI.info(17)}<span>${tp(
-        "যাকে অ্যাক্সেস দেবেন তার অ্যাকাউন্ট আগে থেকেই থাকতে হবে। নাম, ইউজারনেম বা ইমেইল দিয়ে খুঁজুন।",
-        "The person must already have an account. Search by name, username or email.")}</span></div>
+      <div class="note i">${SI.info(17)}<span>প্রতিটি সদস্যের ভূমিকা পরিবর্তন করা যায় — অ্যাডমিন, মডারেটর বা ডোনার।
+        তালিকা থেকে একজন সদস্যকে নির্বাচন করুন।</span></div>
       <div class="f"><input id="acq"
-        value="${esc(acQuery)}" autocomplete="off"></div>
-      <div class="strip chips" id="acf">
-        <button data-f="all" class="${acFilter==="all"?"on":""}">সবাই <i class="c">${bn(DB.accounts.length)}</i></button>
-        <button data-f="staff" class="${acFilter==="staff"?"on":""}">টিমে আছে <i class="c">${bn(staffN)}</i></button>
-        <button data-f="user" class="${acFilter==="user"?"on":""}">সাধারণ <i class="c">${bn(userN)}</i></button>
-      </div>`
+        value="${esc(acQuery)}" placeholder="নাম, ইউজারনেইম বা ইমেইল দিয়ে খুঁজুন…" autocomplete="off"></div>`
     +(list.length
       ? `<div class="card pad0">${list.map(a=>`<button class="prow" data-ac="${a.uid}">
-          <span class="bg2" style="${isStaff(a.role)
-            ?"background:var(--grn-s);color:var(--grn)":"background:var(--red-s);color:var(--red-d)"}"
-            >${roleIcon(a.role)}</span>
-          <span class="tx"><b>${esc(a.name||a.email||"—")}${a.uid===ME.uid?tp(" (আপনি)"," (you)"):""}</b>
-            <small>@${esc(a.username||"—")} · ${esc(a.email||"—")} · ${esc(a.phone||"—")}</small>
-            <small>UID: ${esc(a.uid)} · ${esc(a.status||"active")}</small></span>
-          <span class="tag ${isStaff(a.role)?"g":""}">${roleLabel(a.role)}</span>
+          ${a.photo?`<img src="${esc(a.photo)}" alt="" style="width:40px;height:40px;border-radius:11px;object-fit:cover;background:var(--card2)">`
+            :`<span class="bg2" style="${isStaff(a.role)
+              ?"background:var(--grn-s);color:var(--grn)":"background:var(--card2);color:var(--mut)"};font-size:1.05rem">${roleIcon(a.role)}</span>`}
+          <span class="tx"><b>${esc(a.name||a.email||"—")}${a.uid===ME.uid?" (আপনি)":""}</b>
+            <small>@${esc(a.username||"—")} · ${esc(a.email||"—")}</small></span>
+          <span class="tag ${a.role==="admin"?"g":""}">${roleLabel(a.role)}</span>
         </button>`).join("")}</div>`
-      : `<div class="card">${emptyBox("search","কেউ মেলেনি",
-          "অন্য নাম, ইউজারনেম বা ইমেইল দিয়ে চেষ্টা করুন")}</div>`)
-    +`<div class="sec-t">নিয়ম</div>
-      <div class="card"><ul class="wl">
-        <li>${tp("নিজের ভূমিকা নিজে বদলানো যায় না","You cannot change your own role")}</li>
-        <li>${tp("অ্যাডমিনের কাছে Full Access থাকবে","Admin has full access")}</li>
-        <li>${tp("প্রতিটি পরিবর্তন কারণসহ অডিট লগে থাকে","Every change is logged with its reason")}</li>
-      </ul></div>`;
-  
+      : `<div class="card">${emptyBox("search","কেউ মেলেনি","অন্য নাম, ইউজারনেইম বা ইমেইল দিয়ে চেষ্টা করুন")}</div>`);
+
     let t;
     $("#acq").oninput=e=>{acQuery=e.target.value;clearTimeout(t);
       t=setTimeout(()=>{renderSub("access");
         const i=$("#acq");i.focus();i.setSelectionRange(i.value.length,i.value.length)},280)};
-    el.querySelectorAll("[data-f]").forEach(b=>b.onclick=()=>{acFilter=b.dataset.f;renderSub("access")});
-    el.querySelectorAll("[data-ac]").forEach(b=>b.onclick=()=>accessSheet(b.dataset.ac));
-  };
-  
-  /* what a role can and cannot do, in plain Bangla */
-  function rolePowers(role){
-    if(role==="user")return {can:["ডোনার অ্যাপ ব্যবহার","নিজের তথ্য বদলানো"],
-      cant:["প্যানেলে ঢোকা"]};
-    const perms=ROLES[role]?ROLES[role].perms:[];
-    const nice=p=>PERM_LABEL[p]||p;
-    const all=PERMS;
-    return {can:perms.slice(0,6).map(nice),
-      cant:all.filter(p=>!perms.includes(p)).slice(0,4).map(nice)};
-  }
-  
-  const permissionKeyMap=ps=>Object.fromEntries((ps||[]).map(p=>[String(p).replace(/\./g,"_"),true]));
-  const accountPermissionList=a=>{
-    const role=normRole(a&&a.role);
-    if(role==="user")return [];
-    return Array.isArray(a&&a.permissions)&&a.permissions.length
-      ?a.permissions.slice():(role==="mod"?ROLES.mod.perms.slice():PERMS.slice());
+    el.querySelectorAll("[data-ac]").forEach(b=>b.onclick=()=>roleManageSheet(b.dataset.ac));
   };
 
-  async function deleteManagedAccount(uid){
-    if(!can("access.manage")||String(uid)===String(ME.uid))return toast("নিজের অ্যাকাউন্ট মুছতে পারবেন না","er");
-    const a=DB.accounts.find(x=>String(x.uid)===String(uid));
-    if(!a)return;
-    if(!await confirmS({title:"অ্যাকাউন্ট সম্পূর্ণ মুছবেন?",
-      desc:`${a.name||a.email||uid}-এর Firebase Authentication account, Donor ID এবং RTDB-র সকল related data মুছে যাবে। এটি ফেরানো যাবে না।`,
-      ok:"সম্পূর্ণ মুছুন",danger:true}))return;
-    try{
-      await deleteAccountCompletely(uid);
-      DB.accounts=DB.accounts.filter(x=>String(x.uid)!==String(uid));
-      DB.team=DB.team.filter(x=>String(x.uid)!==String(uid));
-      DB.donors=DB.donors.filter(x=>String(x.ownerUid)!==String(uid));
-      renderSub("access");paintNav();paintTop();
-      toast("অ্যাকাউন্ট, Authentication এবং related RTDB data মুছে গেছে","ok");
-    }catch(e){
-      console.warn("complete account deletion:",e&&e.message);
-      toast("অ্যাকাউন্ট সম্পূর্ণ মুছা যায়নি। Cloud Function deploy/সংযোগ পরীক্ষা করুন।","er");
-    }
-  }
-
-  SUBP.access=el=>{
-    if(!can("access.manage"))return el.innerHTML=noPerm();
-    const q=acQuery.trim().toLowerCase();
-    let list=DB.accounts.filter(a=>{
-      if(acFilter==="staff"&&!isStaff(a.role))return false;
-      if(acFilter==="user"&&isStaff(a.role))return false;
-      if(!q)return true;
-      return [a.name,a.username,a.email,a.donorId,a.uid].join(" ").toLowerCase().includes(q);
-    });
-    list.sort((a,b)=>(ROLE_ORDER.indexOf(normRole(b.role))-ROLE_ORDER.indexOf(normRole(a.role)))
-      ||String(a.name||a.email).localeCompare(String(b.name||b.email),"bn"));
-    const staffN=DB.accounts.filter(a=>isStaff(a.role)).length;
-    const userN=DB.accounts.length-staffN;
-    el.innerHTML=`
-      <div class="note i">${SI.info(17)}<span>${tp(
-        "Firebase Realtime Database-এর সব registered account এখানে একবার load হয় এবং live listener-এ পরিবর্তন দেখা হয়। Name, Username, Email, UID বা Donor ID দিয়ে খুঁজুন।",
-        "All registered accounts are loaded once from Firebase Realtime Database and kept live. Search by name, username, email, UID or Donor ID.")}</span></div>
-      <div class="f"><input id="acq" placeholder="নাম, username, email, UID বা Donor ID" value="${esc(acQuery)}" autocomplete="off"></div>
-      <div class="strip chips" id="acf">
-        <button data-f="all" class="${acFilter==="all"?"on":""}">সবাই <i class="c">${bn(DB.accounts.length)}</i></button>
-        <button data-f="staff" class="${acFilter==="staff"?"on":""}">টিমে আছে <i class="c">${bn(staffN)}</i></button>
-        <button data-f="user" class="${acFilter==="user"?"on":""}">সাধারণ <i class="c">${bn(userN)}</i></button>
-      </div>`
-    +(list.length
-      ? `<div class="card pad0">${list.map(a=>`<button class="prow" data-ac="${esc(a.uid)}">
-          ${a.photo?`<img src="${esc(a.photo)}" alt="" style="width:40px;height:40px;border-radius:11px;object-fit:cover;background:var(--card2)">`
-            :`<span class="bg2" style="${isStaff(a.role)?"background:var(--grn-s);color:var(--grn)":"background:var(--red-s);color:var(--red-d)"}">${roleIcon(a.role)}</span>`}
-          <span class="tx"><b>${esc(a.name||a.email||"—")}${a.uid===ME.uid?tp(" (আপনি)"," (you)"):""}</b>
-            <small>@${esc(a.username||"—")} · ${esc(a.email||"—")}</small>
-            <small>UID: ${esc(a.uid)}${a.donorId?" · Donor ID: "+esc(a.donorId):""} · ${esc(a.status||"active")}</small></span>
-          <span class="tag ${isStaff(a.role)?"g":""}">${roleLabel(a.role)}</span>
-        </button>`).join("")}</div>`
-      : `<div class="card">${emptyBox("search","কেউ মেলেনি","অন্য নাম, ইউজারনেম, ইমেইল, UID বা Donor ID দিয়ে চেষ্টা করুন")}</div>`)
-    +`<div class="sec-t">নিরাপত্তা</div>
-      <div class="card"><ul class="wl">
-        <li>শুধু authorized Admin role/access বদলাতে ও account delete করতে পারবেন</li>
-        <li>নিজের Admin role বা permission নিজে বদলানো যায় না</li>
-        <li>Donor-এ conversion করলে staff record এবং তার access সরানো হয়</li>
-        <li>প্রতিটি সফল পরিবর্তন RTDB write শেষ হওয়ার পর audit log-এ থাকে</li>
-      </ul></div>`;
-    let timer;
-    $("#acq").oninput=e=>{acQuery=e.target.value;clearTimeout(timer);
-      timer=setTimeout(()=>{renderSub("access");const i=$("#acq");i.focus();i.setSelectionRange(i.value.length,i.value.length)},280)};
-    el.querySelectorAll("[data-f]").forEach(b=>b.onclick=()=>{acFilter=b.dataset.f;renderSub("access")});
-    el.querySelectorAll("[data-ac]").forEach(b=>b.onclick=()=>accessSheet(b.dataset.ac));
-  };
-
-  function rolePowers(role){
-    if(role==="user")return {can:["Doner Panel ব্যবহার","নিজের তথ্য বদলানো"],cant:["Admin/Moderator Panel ব্যবহার"]};
-    const perms=role==="admin"?PERMS:(ROLES.mod?.perms||[]),nice=p=>PERM_LABEL[p]||p;
-    return {can:perms.slice(0,8).map(nice),cant:PERMS.filter(p=>!perms.includes(p)).slice(0,5).map(nice)};
-  }
-
-  async function accessSheet(uid){
+  /* Role Management — শুধুই ভূমিকা পরিবর্তন (কোনো অ্যাকাউন্ট তথ্য বা
+     permission তালিকা নেই)। নিচে ৩টি বোতাম: বাতিল / সংরক্ষণ / ডিলিট। */
+  async function roleManageSheet(uid){
     const a=DB.accounts.find(x=>String(x.uid)===String(uid));if(!a)return;
     a.role=normRole(a.role);
     const isMe=String(uid)===String(ME.uid);
     let pick=a.role;
-    let chosen=new Set(accountPermissionList(a));
-    const adminRecord=accountAdmins.find(x=>String(x.uid||x.id)===String(uid))||{};
+    const roleHint=r=>r==="admin"?"অ্যাডমিন — সম্পূর্ণ ওয়েবসাইট ও অ্যাডমিন প্যানেলের পূর্ণ নিয়ন্ত্রণ":
+      r==="mod"?"মডারেটর — অপেক্ষমাণ আবেদন যাচাই ও অনুমোদন":"ডোনার — ডোনার প্যানেল ব্যবহার করেন";
     const body=()=>`<div class="per">
         ${a.photo?`<img src="${esc(a.photo)}" alt="" style="width:46px;height:46px;border-radius:12px;object-fit:cover">`
-          :`<span class="bg2" style="width:46px;height:46px;border-radius:12px;background:${isStaff(a.role)?"var(--grn-s);color:var(--grn)":"var(--red-s);color:var(--red-d)"};font-size:1.15rem">${roleIcon(a.role)}</span>`}
-        <div class="i"><b>${esc(a.name||"—")}</b><small>@${esc(a.username||"—")}</small><small>${esc(a.email||"—")}</small></div></div>
-      <div class="kv" style="margin-top:12px">
-        <div><span>বর্তমান ভূমিকা</span><b>${roleLabel(a.role)}</b></div>
-        <div><span>UID</span><b style="word-break:break-all">${esc(a.uid)}</b></div>
-        <div><span>মোবাইল</span><b>${esc(a.phone||"—")}</b></div>
-        <div><span>Donor ID</span><b>${esc(a.donorId||"—")}</b></div>
-      </div>
-      <div class="sec-t">অ্যাকাউন্ট তথ্য</div>
-      <div class="f"><label>নাম</label><input id="ac_name" value="${esc(a.name||"")}" ${isMe?"readonly":""}></div>
-      <div class="f"><label>Username</label><input id="ac_user" value="${esc(a.username||"")}" ${isMe?"readonly":""}></div>
-      <div class="f"><label>মোবাইল</label><input id="ac_phone" value="${esc(a.phone||"")}" ${isMe?"readonly":""}></div>
-      ${isMe?`<div class="note w">${SI.warn(17)}<span>নিজের Admin access, role বা permission নিজে remove/change করা যাবে না।</span></div>`:""}
+          :`<span class="bg2" style="width:46px;height:46px;border-radius:12px;background:var(--grn-s);color:var(--grn);font-size:1.15rem">${roleIcon(pick)}</span>`}
+        <div class="i"><b>${esc(a.name||"—")}</b><small>${esc(a.email||"—")}</small></div></div>
+      ${isMe?`<div class="note w">${SI.warn(17)}<span>নিরাপত্তার জন্য নিজের ভূমিকা বা অ্যাকাউন্ট নিজে পরিবর্তন/মুছে ফেলা যায় না।</span></div>`:""}
+      <div class="sec-t">বর্তমান ভূমিকা</div>
+      <div class="card" style="padding:11px 13px"><b>${roleLabel(a.role)}</b></div>
       <div class="sec-t">নতুন ভূমিকা</div>
       <div class="strip wrap chips" id="acr">${GRANTABLE.map(r=>`<button data-r="${r}" class="${pick===r?"on":""}" ${isMe?"disabled":""}>${ROLE_META[r].icon} ${ROLE_META[r].label}</button>`).join("")}</div>
-      <div class="sec-t">Existing permissions / access</div>
-      <div class="pms" id="acperms">${PERMS.map(p=>`<button type="button" data-p="${p}" class="${chosen.has(p)?"on":""}" ${isMe?"disabled":""}>${esc(PERM_LABEL[p]||p)}</button>`).join("")}</div>
-      <p class="hint2" style="margin-top:8px">Role বদলালে default access দেখা যাবে; চাইলে প্রতিটি permission আলাদা করে customize করুন।</p>
-      ${!isMe?`<div class="sec-t">কারণ <i style="color:var(--red)">*</i></div><textarea id="acwhy" rows="2"></textarea>`:""}`;
-    const s=sheet("অ্যাক্সেস ও ভূমিকা",body(),isMe?`<button class="btn gh w" data-close>বন্ধ</button>`:
-      `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="acok">${SI.key(15)} সংরক্ষণ</button>
-       <button class="btn red" id="acdelete">${SI.trash(15)} সম্পূর্ণ account delete</button>`);
-    const updatePermissionView=()=>{
-      s.querySelectorAll("#acperms [data-p]").forEach(x=>x.classList.toggle("on",chosen.has(x.dataset.p)));
-    };
+      <p class="hint2" style="margin-top:8px">${roleHint(pick)}</p>`;
+    const s=sheet("অ্যাক্সেস ও ভূমিকা",body(),
+      `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="acok" ${isMe?"disabled":""}>${SI.key(15)} সংরক্ষণ</button>
+       <button class="btn red" id="acdelete" ${isMe?"disabled":""}>${SI.trash(15)} ডিলিট</button>`);
     s.querySelectorAll("#acr button").forEach(b=>b.onclick=()=>{
       if(isMe)return;
-      pick=b.dataset.r;s.querySelectorAll("#acr button").forEach(x=>x.classList.toggle("on",x===b));
-      chosen=new Set(pick==="admin"?PERMS:pick==="mod"?ROLES.mod.perms:[]);updatePermissionView();
+      pick=b.dataset.r;
+      s.querySelectorAll("#acr button").forEach(x=>x.classList.toggle("on",x===b));
+      const hint=s.querySelector(".hint2");
+      if(hint)hint.textContent=roleHint(pick);
     });
-    s.querySelectorAll("#acperms [data-p]").forEach(b=>b.onclick=()=>{if(!isMe){chosen.has(b.dataset.p)?chosen.delete(b.dataset.p):chosen.add(b.dataset.p);updatePermissionView()}});
-    s.q("#acdelete")?.addEventListener("click",async()=>{await deleteManagedAccount(uid)});
+    s.q("#acdelete")?.addEventListener("click",async()=>{
+      const ok=await deleteManagedAccount(uid);
+      if(ok)s.close();
+    });
     s.q("#acok")?.addEventListener("click",async()=>{
-      const why=(s.q("#acwhy").value||"").trim();
-      if(why.length<4)return toast("কারণ লিখতে হবে","er");
-      if(!await confirmS({title:"অ্যাক্সেস/তথ্য বদলাবেন?",desc:`${a.name||a.email} এর role, permission বা account তথ্য RTDB-তে update হবে।`,ok:"সংরক্ষণ",danger:false}))return;
-      const name=s.q("#ac_name").value.trim(),username=s.q("#ac_user").value.trim(),phone=s.q("#ac_phone").value.trim();
-      if(name.length<2)return toast("সঠিক নাম লিখুন","er");
-      if(phone&&!phoneOK(phone))return toast("সঠিক মোবাইল নম্বর দিন","er");
+      if(pick===a.role){s.close();return}
       const roleValue=pick==="admin"?"admin":pick==="mod"?"moderator":"donor";
-      const permissionList=pick==="user"?[]:[...chosen];
-      const staff={uid:String(uid),email:a.email||"",name,username,role:roleValue,
-        permissions:permissionList,permissionMap:permissionKeyMap(permissionList),status:a.status||"active",updatedAt:nowIso()};
-      const paths={
-        [`users/${uid}/name`]:name,[`users/${uid}/username`]:username,[`users/${uid}/phone`]:phone,
-        [`users/${uid}/role`]:roleValue
-      };
+      /* প্যানেলের মেনু দেখানোর অভ্যন্তরীণ ডিফল্ট তালিকা — আলাদা করে
+         কারও জন্য permission কাস্টমাইজ করার সুযোগ আর নেই। */
+      const permissionList=pick==="user"?[]:(pick==="admin"?PERMS.slice():ROLES.mod.perms.slice());
+      const staff={uid:String(uid),email:a.email||"",name:a.name||"",username:a.username||"",role:roleValue,
+        permissions:permissionList,status:a.status||"active",updatedAt:nowIso()};
+      const paths={[`users/${uid}/role`]:roleValue};
       if(pick==="user")paths[`${NODES.admins}/${uid}`]=null;
       else paths[`${NODES.admins}/${uid}`]=staff;
       const btn=s.q("#acok");btn.disabled=true;
       try{
         await updatePaths(paths);
-        a.name=name;a.username=username;a.phone=phone;a.role=pick;a.permissions=permissionList;
+        a.role=pick;a.permissions=permissionList;
         const ti=DB.team.findIndex(t=>String(t.uid)===String(uid));
         if(pick==="user"){if(ti>=0)DB.team.splice(ti,1);}
-        else {const entry={uid:String(uid),name,username,email:a.email,photo:a.photo,role:pick,status:a.status||"active",permissions:permissionList,last:nowIso()};ti<0?DB.team.push(entry):Object.assign(DB.team[ti],entry);}
-        await logAudit("অ্যাক্সেস/অ্যাকাউন্ট হালনাগাদ",`${name} · ${roleLabel(pick)} · ${why.slice(0,80)}`,"access");
-        s.close();renderSub("access");paintNav();paintTop();toast("RTDB-তে সফলভাবে update হয়েছে","ok");
-      }catch(e){btn.disabled=false;console.warn("access update:",e&&e.message);toast("RTDB update ব্যর্থ — কোনো local success দেখানো হয়নি","er");}
+        else {const entry={uid:String(uid),name:a.name||"",username:a.username||"",email:a.email||"",photo:a.photo||"",role:pick,status:a.status||"active",permissions:permissionList,last:nowIso()};ti<0?DB.team.push(entry):Object.assign(DB.team[ti],entry);}
+        await logAudit("ভূমিকা পরিবর্তন",`${a.name||a.email||uid} · ${roleLabel(pick)}`,"access");
+        s.close();renderSub("access");paintNav();paintTop();toast("ভূমিকা হালনাগাদ হয়েছে","ok");
+      }catch(e){btn.disabled=false;console.warn("role update:",e&&e.message);toast("ভূমিকা হালনাগাদ করা যায়নি — আবার চেষ্টা করুন","er");}
     });
+  }
+
+  /* সম্পূর্ণ অ্যাকাউন্ট ডিলিট — Firebase Authentication account এবং তার সাথে
+     সম্পর্কিত Realtime Database-এর সকল তথ্য (Cloud Function দিয়ে; ব্রাউজার
+     থেকে অন্যের অ্যাকাউন্ট মুছা সম্ভব নয়)। */
+  async function deleteManagedAccount(uid){
+    if(!can("access.manage")||String(uid)===String(ME.uid)){toast("নিজের অ্যাকাউন্ট মুছতে পারবেন না","er");return false}
+    const a=DB.accounts.find(x=>String(x.uid)===String(uid));
+    if(!a)return false;
+    if(!await confirmS({title:"অ্যাকাউন্ট সম্পূর্ণ মুছবেন?",
+      desc:`${a.name||a.email||uid}-এর Firebase Authentication account, Donor ID এবং Realtime Database/Storage-এর সকল সম্পর্কিত তথ্য স্থায়ীভাবে মুছে যাবে। এটি ফেরানো যাবে না।`,
+      ok:"সম্পূর্ণ মুছুন",danger:true}))return false;
+    try{
+      await deleteAccountCompletely(uid);
+      DB.accounts=DB.accounts.filter(x=>String(x.uid)!==String(uid));
+      DB.team=DB.team.filter(x=>String(x.uid)!==String(uid));
+      DB.donors=DB.donors.filter(x=>String(x.ownerUid)!==String(uid));
+      await logAudit("অ্যাকাউন্ট সম্পূর্ণ মুছে ফেলা",`${a.name||a.email||uid}`,"access");
+      try{renderSub(SUB==="access"?"access":SUB);}catch(e){}
+      paintNav();paintTop();
+      toast("অ্যাকাউন্ট ও সংশ্লিষ্ট সব তথ্য মুছে গেছে","ok");
+      return true;
+    }catch(e){
+      console.warn("complete account deletion:",e&&e.message);
+      toast("অ্যাকাউন্ট সম্পূর্ণ মুছা যায়নি। সংযোগ/অনুমতি পরীক্ষা করে আবার চেষ্টা করুন।","er");
+      return false;
+    }
   }
   
   /* ---------- website editor + live preview ---------- */
@@ -5611,11 +5665,12 @@ function initPage() {
         /* ছবি ImgBB-তে upload → link + metadata Realtime Database-এ সেভ */
         const res=await imgbbUploadImage(file);
         pg.firstElementChild.style.width="100%";
-        DB.gallery.push({id:"IMG-"+Date.now().toString(36).toUpperCase(),title:t,url:res.url,imageUrl:res.url,thumbUrl:res.thumbUrl,status:"draft",order:DB.gallery.length+1});
+        /* সরাসরি "প্রকাশিত" — মূল ওয়েবসাইটের গ্যালারিতে সাথে সাথে দেখা যায় */
+        DB.gallery.push({id:"IMG-"+Date.now().toString(36).toUpperCase(),title:t,url:res.url,imageUrl:res.url,thumbUrl:res.thumbUrl,status:"published",order:DB.gallery.length+1});
         logAudit("গ্যালারিতে ছবি যোগ",t,"gallery");
         await persist();
         s.close();renderSub("gallery");
-        toast("ছবি আপলোড হয়েছে — খসড়া অবস্থায়","ok");
+        toast("ছবি যোগ হয়েছে — ওয়েবসাইটের গ্যালারিতে প্রকাশিত","ok");
       }catch(e){
         pg.classList.add("hide");okBtn.disabled=false;
         toast(e&&e.message?e.message:"ছবি আপলোড করা যায়নি","er");
@@ -5912,7 +5967,7 @@ function initPage() {
           await saveMe();
           /* live sync — নিজের অ্যাকাউন্ট (users/{uid}), টিম (admins),
              অডিট লগ ও বার্তা: সব RTDB থেকে, সব প্যানেলে একই তথ্য */
-          watchMe(user.uid);watchTeam();watchAudit();watchMessages();watchAccounts();
+          watchMe(user.uid);watchTeam();watchAudit();watchMessages();watchAccounts();watchReports();
           applyLogo(document);
           paintTop();paintNav();
           proceed();
@@ -5922,11 +5977,30 @@ function initPage() {
     window.DB=DB;window.ME=ME;window.go=go;window.toast=toast;window.persist=persist;
     window.setTab=v=>{wTab=v;go("work")};window.getTab=()=>wTab;
     window.getSub=()=>SUB;window.getCur=()=>CUR;window.saveMe=saveMe;window.isEN=isEN;window.applyLang=applyLang;window.setME=o=>{Object.assign(ME,o);saveMe()};
+    /* ── Live update, re-load নয় ──
+       ডেটা একবারই লোড হয়; এরপর প্রতিটি পরিবর্তনে পুরো স্ক্রিন আবার
+       render না করে শুধু সেই স্ক্রিন render হয় যেটি বদলানো ডেটা দেখায়।
+       (প্রথম বুট / লগইন-লগআউটে কোনো `meta.node` থাকে না — তখন পূর্ণ
+       স্ক্রিন refresh প্রয়োজন।) */
+    const NODE_SCREENS={
+      donors:["home","people","donors","donor","stats","search","team","set","live","users"],
+      requests:["home","work","live","search"],
+      queue:["home","work","search"],
+      gallery:["gallery","site","set","home"],
+      notices:["notice","set","home"],
+      accounts:["access","team","set"]
+    };
     if(window.CBDCShared)CBDCShared.subscribe((st,meta)=>{
       if(meta&&meta.source==="panel:"+PANEL.id)return;
       pullSharedState();
-      if(!document.querySelector(".sheet"))go(CUR,SUB,false,ARG);
       paintNav();paintTop();
+      const node=meta&&meta.node;
+      if(node){
+        const affected=NODE_SCREENS[node];
+        const key=(CUR==="set"&&SUB)?SUB:CUR;
+        if(affected&&!affected.includes(key)&&!(CUR==="home"&&!SUB))return;
+      }
+      if(!document.querySelector(".sheet"))go(CUR,SUB,false,ARG);
     });
   })();
   

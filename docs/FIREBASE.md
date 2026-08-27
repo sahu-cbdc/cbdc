@@ -43,22 +43,55 @@ Project: **`chokbazarbloodclub-69d5f`** (`.firebaserc`-এও সেট কর�
 - **Email/Password + Google** — দুটোই Firebase Console → Authentication →
   Sign-in method-এ চালু করে Save করতে হবে। না করলে `auth/configuration-not-found`
   বা `auth/operation-not-allowed` error আসবে।
-- **Google login popup প্রথম পছন্দ; মোবাইল/WebView/পপ-আপ ব্লকে redirect fallback**
-  — বাস্তবায়ন `src/lib/authx.ts`-এ (`googleSignInWithFallback` +
-  `consumeGoogleRedirect`)। redirect-ফলাফল boot-এ resume হয়।
-- **Authorized domains**: Custom/Cloudflare ডোমেইন (যেমন `cbdc.pages.dev`,
-  `cbdc.workers.dev` বা নিজস্ব ডোমেইন) থেকে Google লগইন চালাতে সেই ডোমেইন Platform
-  console-এর Auth Settings-এ যোগ করতে হয় — না হলে `auth/unauthorized-domain` আসে।
-  Console-এর নতুন UI-তে Settings ট্যাব না দেখালে এই সেটিং এখন Google Cloud
-  Console → APIs & Services ➜ OAuth consent screen / Identity Toolkit config-এও
-  ম্যানেজ করা যায়।
+- **লগইন ও অ্যাকাউন্ট তৈরি — দুটোর জন্যই একই Google flow** (`src/lib/authx.ts`
+  → `googleSignInWithFallback`, আর সমাপ্তি Home.tsx → `continueGoogleAuth`)।
+  ডেস্কটপে `signInWithPopup`, মোবাইল/WebView/পপ-আপ ব্লকে স্বয়ংক্রিয়
+  `signInWithRedirect` fallback; redirect-ফলাফল ফিরে এসে `consumeGoogleRedirect`
+  দিয়ে resume হয়।
+- **একই অ্যাকাউন্ট, ডুপ্লিকেট নয়:** আগে থেকে একই Google account (বা একই ইমেইলে
+  তৈরি অ্যাকাউন্ট) থাকলে নতুন অ্যাকাউন্ট তৈরি হয় না — RTDB `users`-এ
+  UID/email দিয়ে খুঁজে **বিদ্যমান অ্যাকাউন্টেই** লগইন হয় এবং সরাসরি নিজের
+  নির্ধারিত dashboard-এ যায়।
+- **সেশন স্থায়ীত্ব:** `src/lib/firebase.ts`-এ `browserLocalPersistence` সেট করা —
+  রিলোড/ব্রাউজার বন্ধ করলেও Firebase Auth session থাকে; সফল সাইন-ইনের পর
+  `auth.currentUser` বসার বিষয়টিও কোডে যাচাই করা হয়।
+- **সমস্যা: "অ্যাকাউন্ট বেছে নেওয়ার পর সাইটে ফিরে আসে, লগইন হয় না"** — প্রায়
+  সবসময় নিচের কনফিগারেশনের একটির অভাবে হয়:
+  1. Firebase Console → Authentication → Sign-in method → **Google: Enabled**
+     (এবং সেখানে "Project public-facing name" = **চকবাজার ব্লাড ডোনার্স ক্লাব** দিন)।
+  2. Firebase Console → Authentication → Settings → **Authorized domains**-এ
+     সাইট যে ডোমেইনে চলে (যেমন `cbdc-a9418.web.app`, `chokbazarbloodclub-69d5f.firebaseapp.com`,
+     কাস্টম ডোমেইন, প্রয়োজনে `localhost`) যোগ করা। অনুমোদিত ডোমেইন ছাড়া
+     `auth/unauthorized-domain` আসে এবং সাইন-ইন শেষ হয় না।
+  3. সাইটটি যদি ভিন্ন হোস্টিং/প্রেভিউ ডোমেইনে চলে, সেটিও যোগ করতে হবে।
+  **দ্রষ্টব্য:** `chokbazarbloodclub-69d5f.firebaseapp.com/__/auth/handler`
+  হলো বাধ্যতামূলক প্রযুক্তিগত redirect — এটি বদলানো যাবে না; ব্র্যান্ডিং
+  নিয়ন্ত্রিত হয় "Project public-facing name" ও Google OAuth consent screen দিয়ে
+  (নিচের ২.২ দেখুন)।
 - **API key restriction** দিলে `Identity Toolkit API` ও `Token Service API`
   allowed রাখুন এবং deploy করা ডোমেইনকে HTTP referrer allowlist-এ যোগ করুন।
 - ঐচ্ছিক env override (`VITE_FIREBASE_API_KEY` ইত্যাদি) সেট করলে সবগুলোই দিতে হয়;
   আংশিক সেট intentional error-এ ফেলা হয় (ভুল config silent অনুমোদন এড়াতে)।
   RTDB `users/{uid}` প্রোফাইল login/signup-এর পর স্বয়ংক্রিয়ভাবে merge-আপডেট হয়।
-- **Google consent screen branding** (App name + logo) — দেখুন
-  `docs/GOOGLE_LOGIN_BRANDING.md`।
+- **একই ইমেইলে আগে অন্য পদ্ধতির অ্যাকাউন্ট থাকলে** (`auth/account-exists-with-different-credential`)
+  নতুন অ্যাকাউন্ট না তৈরি করে ব্যবহারকারীকে ইমেইল/পাসওয়ার্ড লগইনে পাঠানো হয়
+  (বাংলা বার্তাসহ)।
+- **ত্রুটি বার্তা:** সব Firebase error কোড `authErrorMessage()`-এ বাংলা
+  বার্তায় ম্যাপ করা — ব্যর্থ হলে ইউজার পরিষ্কার কারণ ও করণীয় দেখে।
+
+### ২.২ Google Consent Screen / Branding (চকবাজার ব্লাড ডোনার্স ক্লাব)
+
+Google লগইনের "Choose an account" স্ক্রিনে যেন `chokbazarbloodclub-69d5f`
+নামটি **না দেখে** সাইটের আসল নাম দেখায় — সেজন্য একবারের কনফিগারেশন:
+
+| কোথায় | কী বসাবেন |
+| --- | --- |
+| Firebase Console → Authentication → Sign-in method → Google → **Project public-facing name** | **চকবাজার ব্লাড ডোনার্স ক্লাব** |
+| Google Cloud Console → OAuth consent screen → **App name** | **চকবাজার ব্লাড ডোনার্স ক্লাব** |
+| OAuth consent screen → Authorized domains | সাইটের ডোমেইন + `firebaseapp.com` |
+| Google Cloud → Credentials → OAuth client (Web) → Authorized redirect URIs | `https://chokbazarbloodclub-69d5f.firebaseapp.com/__/auth/handler` (এটিই থাকবে — বদলাবেন না) |
+
+বিস্তারিত ধাপ: `docs/GOOGLE_LOGIN_BRANDING.md`।
 
 ## ৩. Data Layer আর্কিটেকচার
 
@@ -129,6 +162,7 @@ metadata** সেভ হয়।
 | `accounts` | account id | panel/team account records | staff only |
 | `audit` | entry id | প্যানেলের অডিট লগ — at, who, role, act, target, mod | staff read; staff শুধু নতুন entry append করতে পারে (edit নেই), delete শুধু admin |
 | `messages` | message id | ওয়েবসাইটের যোগাযোগ বার্তা — name, phone, text, read, at | staff read; authenticated create, staff manage (read-flag) |
+| `reports` | report id | ডোনার প্যানেলের "সমস্যা জানান" রিপোর্ট — ownerUid, uid, name, username, email, type, text, screenshot (ImgBB URL), status (`open`/`resolved`), createdAt | staff read/manage; ব্যবহারকারী শুধু **নিজের** রিপোর্ট তৈরি/পড়া/মুছতে পারে |
 | `settings` | `imgbb`, `app` | `imgbb:{key,updatedAt}`, `app:{autoApproveEmergency}` | public read; staff write |
 
 > **গুরুত্বপূর্ণ:**
@@ -143,10 +177,10 @@ metadata** সেভ হয়।
 | কাজ | Implementation |
 | --- | --- |
 | Register (email/password) | `createUserWithEmailAndPassword` + RTDB `users/{uid}`; donor application আলাদা ভাবে Doner Panel থেকে pending queue-এ যায় |
-| Register (Google) | `signInWithPopup` + GoogleAuthProvider |
-| Login | `signInWithEmailAndPassword` (username/phone দিলে RTDB `users` থেকে email resolve) |
+| Register (Google) | লগইনের সাথে **একই** ফ্লো — `signInWithPopup` (ডেস্কটপ) / `signInWithRedirect` fallback; নতুন হলে বিদ্যমান নিবন্ধন ফর্মে যায়, আগে থেকে অ্যাকাউন্ট থাকলে ডুপ্লিকেট ছাড়াই সরাসরি লগইন |
+| Login | `signInWithEmailAndPassword` (username/phone দিলে RTDB `users` থেকে email resolve); Google — একই ফ্লো |
 | Logout | `signOut` (Home-এর লগইন গেট + Doner `doLogout`) |
-| Session | `onAuthStateChanged` (Home, Doner, Admin, Moderator — সব পেজে) |
+| Session | `onAuthStateChanged` (Home, Doner, Admin, Moderator — সব পেজে) + `browserLocalPersistence` — রিলোডের পরেও সেশন থাকে |
 | Password reset | Firebase built-in reset link + সাইটের নিজস্ব `/forgot-password` ও `/reset-password` full-page UI (দেখুন `docs/PASSWORD_RESET_EMAIL.md`) |
 | Change password | `reauthenticateWithCredential` + `updatePassword` |
 

@@ -30,6 +30,7 @@ import {
 } from "../lib/authx";
 import { addRow, setRow, updateRow, findBy, getRow, listOnce, nowIso, incrementField, watchRow } from "../lib/rtdb";
 import { NODES } from "../lib/firebase";
+import { DISTRICTS, DEFAULT_DISTRICT, areasForDistrict, districtOfArea, searchAreas, fillAreaSelect } from "../lib/locations";
 import { noticeVisibleTo, noticeTarget } from "../lib/notice";
 import { submitEmergencyRequest } from "../lib/cloud";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, clearFieldError } from "../lib/forms";
@@ -1638,22 +1639,40 @@ function StaticShell() {
                         {"চান্দগাঁও"}
                       </option>
                       <option>
-                        {"বান্দরবান সদর"}
+                        {"পটিয়া"}
                       </option>
                       <option>
                         {"চন্দনাইশ"}
                       </option>
                       <option>
-                        {"পটিয়া"}
+                        {"কেরানিহাট"}
                       </option>
                       <option>
-                        {"কেরানী হাট"}
+                        {"সাতকানিয়া"}
                       </option>
                       <option>
                         {"লোহাগাড়া"}
                       </option>
                       <option>
-                        {"বাজালিয়া"}
+                        {"বান্দরবান সদর"}
+                      </option>
+                      <option>
+                        {"রোয়াংছড়ি"}
+                      </option>
+                      <option>
+                        {"রুমা"}
+                      </option>
+                      <option>
+                        {"থানচি"}
+                      </option>
+                      <option>
+                        {"লামা"}
+                      </option>
+                      <option>
+                        {"আলীকদম"}
+                      </option>
+                      <option>
+                        {"নাইক্ষ্যংছড়ি"}
                       </option>
                     </select>
                   </div>
@@ -2000,7 +2019,13 @@ function StaticShell() {
                       <label className="required" htmlFor="district">
                         {"জেলা"}
                       </label>
-                      <input id="district" value="চট্টগ্রাম" readOnly={true} />
+                      <select id="district" name="district" required={true} defaultValue={DEFAULT_DISTRICT}>
+                        {DISTRICTS.map((d) => (
+                          <option key={d} value={d}>
+                            {d}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     <div className="field">
                       <label className="required" htmlFor="donorArea">
@@ -2010,72 +2035,11 @@ function StaticShell() {
                         <option value="">
                           {"থানা / এলাকা নির্বাচন করুন"}
                         </option>
-                        <option>
-                          {"কোতোয়ালি"}
-                        </option>
-                        <option>
-                          {"চকবাজার"}
-                        </option>
-                        <option>
-                          {"পাঁচলাইশ"}
-                        </option>
-                        <option>
-                          {"খুলশী"}
-                        </option>
-                        <option>
-                          {"বায়েজিদ বোস্তামী"}
-                        </option>
-                        <option>
-                          {"পাহাড়তলী"}
-                        </option>
-                        <option>
-                          {"আকবরশাহ"}
-                        </option>
-                        <option>
-                          {"হালিশহর"}
-                        </option>
-                        <option>
-                          {"ডবলমুরিং"}
-                        </option>
-                        <option>
-                          {"পতেঙ্গা"}
-                        </option>
-                        <option>
-                          {"ইপিজেড"}
-                        </option>
-                        <option>
-                          {"বন্দর"}
-                        </option>
-                        <option>
-                          {"কর্ণফুলী"}
-                        </option>
-                        <option>
-                          {"বাকলিয়া"}
-                        </option>
-                        <option>
-                          {"সদরঘাট"}
-                        </option>
-                        <option>
-                          {"চান্দগাঁও"}
-                        </option>
-                        <option>
-                          {"বান্দরবান সদর"}
-                        </option>
-                        <option>
-                          {"চন্দনাইশ"}
-                        </option>
-                        <option>
-                          {"পটিয়া"}
-                        </option>
-                        <option>
-                          {"কেরানী হাট"}
-                        </option>
-                        <option>
-                          {"লোহাগাড়া"}
-                        </option>
-                        <option>
-                          {"বাজালিয়া"}
-                        </option>
+                        {areasForDistrict(DEFAULT_DISTRICT).map((a) => (
+                          <option key={a} value={a}>
+                            {a}
+                          </option>
+                        ))}
                       </select>
                     </div>
                     <div className="field full">
@@ -3021,79 +2985,31 @@ function StaticShell() {
                     </div>
                     {" "}
                     <div className="field">
+                      <label className="required" htmlFor="suDistrict">
+                        {"জেলা"}
+                      </label>
+                      <select id="suDistrict" name="district" required={true} defaultValue={DEFAULT_DISTRICT}>
+                        {DISTRICTS.map((d) => (
+                          <option key={d} value={d}>
+                            {d}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {" "}
+                    <div className="field">
                       <label className="required" htmlFor="suArea">
-                        {"এলাকা"}
+                        {"থানা / এলাকা"}
                       </label>
                       <select id="suArea" name="area" required={true}>
                         <option value="">
                           {"থানা / এলাকা নির্বাচন করুন"}
                         </option>
-                        <option>
-                          {"কোতোয়ালি"}
-                        </option>
-                        <option>
-                          {"চকবাজার"}
-                        </option>
-                        <option>
-                          {"পাঁচলাইশ"}
-                        </option>
-                        <option>
-                          {"খুলশী"}
-                        </option>
-                        <option>
-                          {"বায়েজিদ বোস্তামী"}
-                        </option>
-                        <option>
-                          {"পাহাড়তলী"}
-                        </option>
-                        <option>
-                          {"আকবরশাহ"}
-                        </option>
-                        <option>
-                          {"হালিশহর"}
-                        </option>
-                        <option>
-                          {"ডবলমুরিং"}
-                        </option>
-                        <option>
-                          {"পতেঙ্গা"}
-                        </option>
-                        <option>
-                          {"ইপিজেড"}
-                        </option>
-                        <option>
-                          {"বন্দর"}
-                        </option>
-                        <option>
-                          {"কর্ণফুলী"}
-                        </option>
-                        <option>
-                          {"বাকলিয়া"}
-                        </option>
-                        <option>
-                          {"সদরঘাট"}
-                        </option>
-                        <option>
-                          {"চান্দগাঁও"}
-                        </option>
-                        <option>
-                          {"বান্দরবান সদর"}
-                        </option>
-                        <option>
-                          {"চন্দনাইশ"}
-                        </option>
-                        <option>
-                          {"পটিয়া"}
-                        </option>
-                        <option>
-                          {"কেরানী হাট"}
-                        </option>
-                        <option>
-                          {"লোহাগাড়া"}
-                        </option>
-                        <option>
-                          {"বাজালিয়া"}
-                        </option>
+                        {areasForDistrict(DEFAULT_DISTRICT).map((a) => (
+                          <option key={a} value={a}>
+                            {a}
+                          </option>
+                        ))}
                       </select>
                     </div>
                     {" "}
@@ -3957,6 +3873,7 @@ function initPage() {
       function renderPublic(){ renderStats();renderSearch();renderBoard();renderWebsiteNotices();
         /* keep the profile-page hand-off in sync with whatever is on screen (RTDB live data) */
         try{ publishDonors(); }catch(e){}
+        try{ syncSearchAreaOptions(); }catch(e){}
         /* খোলা ডোনার প্রোফাইল পেজটিও live update হয় — RTDB listener-এর কল্যাণে
            ডোনার/অ্যাডমিন তথ্য বদলালে রিলোড ছাড়াই নতুন তথ্য দেখায় */
         if(currentProfId&&document.getElementById("profileBody")){
@@ -4238,7 +4155,8 @@ function initPage() {
             ...o,
             ...(registrationUid ? {uid:registrationUid, ownerUid:registrationUid} : {}),
             dob: o.dob || "",
-            district: "চট্টগ্রাম",
+            /* জেলা → থানা/এলাকা নির্ভরশীল নির্বাচন (src/lib/locations.ts) */
+            district: String($("#district").value || o.district || DEFAULT_DISTRICT).trim(),
             status: "pending",
             createdAt: nowIso()
           };
@@ -4256,7 +4174,8 @@ function initPage() {
           });
           form.reset();
           clearFormErrors(form);
-          $("#district").value = "চট্টগ্রাম";
+          $("#district").value = DEFAULT_DISTRICT;
+          fillAreaSelect($("#donorArea"), DEFAULT_DISTRICT, "");
           $("#donorAgree").checked = false;
           message.className = "hidden"; message.textContent = "";
           showAppMessage("আপনার নিবন্ধন সফলভাবে গ্রহণ করা হয়েছে। বর্তমানে আপনার আবেদনটি অ্যাডমিনের অনুমোদনের অপেক্ষায় (Pending) রয়েছে। তথ্য যাচাই শেষে অনুমোদিত হলে আপনার প্রোফাইল রক্তদাতার তালিকায় প্রকাশিত হবে।", false, "নিবন্ধন সফল!");
@@ -4269,6 +4188,38 @@ function initPage() {
         }
       });
       attachLiveClear($("#registerForm"));
+
+      /* ── জেলা → থানা/এলাকা dependent selection (নিবন্ধন + অ্যাকাউন্ট তৈরি) ──
+         একটি জেলা নির্বাচন করলে শুধু সেই জেলার এলাকাগুলোই দেখায়
+         (চট্টগ্রাম → ২১টি, বান্দরবান → ৭টি)। কেন্দ্রীয় তালিকা: src/lib/locations.ts */
+      function wireDistrictArea(districtSel, areaSel){
+        if(!districtSel || !areaSel) return;
+        districtSel.addEventListener("change", ()=>{
+          fillAreaSelect(areaSel, districtSel.value, "");
+        });
+      }
+      wireDistrictArea($("#district"), $("#donorArea"));
+      wireDistrictArea($("#suDistrict"), $("#suArea"));
+
+      /* Donor Search-এ দুই জেলার সব এলাকা থাকে; লাইভ ডোনার ডেটায় পুরোনো
+         এলাকার মান (যেমন "কেরানী হাট") থাকলে সেগুলোও ফিল্টারে যুক্ত থাকে —
+         বিদ্যমান ডোনার কখনো ফিল্টারের বাইরে যায় না। */
+      function syncSearchAreaOptions(){
+        const sel=$("#searchArea");
+        if(!sel) return;
+        const current=sel.value;
+        const have=new Set([...sel.options].map(o=>String(o.value)).filter(Boolean));
+        let changed=false;
+        for(const a of searchAreas(publicDonors().map(d=>d.area))){
+          if(!have.has(a)){
+            const op=document.createElement("option");
+            op.textContent=a;
+            sel.appendChild(op);
+            changed=true;
+          }
+        }
+        if(changed && current) sel.value=current;
+      }
 
       /* যোগ্যতা যাচাই — বয়স জন্ম তারিখ থেকে হিসাব হয়; কোনো popup নয়, ইনলাইন এরর */
       $("#eligibilityForm").addEventListener("submit",e=>{
@@ -4604,6 +4555,21 @@ function initPage() {
          স্বয়ংক্রিয় redirect fallback (src/lib/authx.ts)।
          null ফেরত মানে redirect শুরু হয়েছে (পেজ Google-এ চলে যাচ্ছে) —
          ফিরে এলে consumeGoogleRedirect() ফলাফল resume করে। */
+      /* Authentication সফল হওয়ার পরেও কিছু ব্রাউজারে (বিশেষত storage
+         partitioning / redirect ফেরার মুহূর্তে) `auth.currentUser` একটু দেরিতে
+         বসে। তাই ফ্লো এগনোর আগে ছোট একটি অপেক্ষা — এতে "সাইন-ইন হলো কিন্তু
+         সেশন তৈরি হলো না" সমস্যাটি থাকে না। */
+      function awaitAuthUser(timeoutMs=4000){
+        return new Promise(resolve=>{
+          let done=false, un=null;
+          const finish=u=>{ if(done)return; done=true; try{ un&&un(); }catch(e){} resolve(u||null); };
+          if(!auth) return finish(null);
+          if(auth.currentUser) return finish(auth.currentUser);
+          try{ un=onAuthUserChanged(auth,u=>{ if(u)finish(u); }); }catch(e){ /* ignore */ }
+          setTimeout(()=>finish(auth && auth.currentUser), timeoutMs);
+        });
+      }
+
       async function googleSignIn(intent){
         if(!fbReady || !auth){
           uiAlert("Google লগইনের জন্য Firebase সংযোগ প্রয়োজন। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।", {type:"error", title:"সংযোগ নেই"});
@@ -4611,7 +4577,12 @@ function initPage() {
         }
         const res = await googleSignInWithFallback(auth, intent === "signup" ? "signup" : "login");
         if(!res) return null;
-        const u = res.user;
+        /* Firebase Auth session যাচাই — সফল সাইন-ইনের পরে currentUser বসতে হবে */
+        const sessionUser = await awaitAuthUser();
+        const u = sessionUser || res.user;
+        if(!u || !u.uid){
+          throw Object.assign(new Error("session"),{code:"auth/internal-error"});
+        }
         const profile = {uid:u.uid, email:u.email || "", name:u.displayName || "", photo:u.photoURL || ""};
         setPendingGoogleProfile(profile);
         return profile;
@@ -4711,71 +4682,92 @@ function initPage() {
         if(member.phone) $("#suPhone").value = member.phone;
         if(member.dob) $("#suDob").value = member.dob;
         if(member.gender) $("#suGender").value = member.gender;
-        if(member.area) $("#suArea").value = member.area;
+        /* জেলা → এলাকা: আগের এলাকা কোন জেলার সেটি ধরে সঠিক তালিকা বসাই */
+        if(member.district || member.area){
+          const dist = String(member.district || "").trim() || districtOfArea(member.area);
+          if($("#suDistrict")) $("#suDistrict").value = dist;
+          fillAreaSelect($("#suArea"), dist, member.area || "");
+        }
         if(member.address) $("#suAddress").value = member.address;
         if(member.whatsapp) $("#suWhatsapp").value = member.whatsapp;
       }
-      /* --- Google flow সম্পন্ন করা (popup এবং redirect-resume — দুই পথেই একই যুক্তি) --- */
-      async function continueGoogleLogin(p){
-        // দ্রুত Google login — কোনো popup নয়
-        const {role, name, permissions} = await resolveRole({uid:p.uid, email:p.email, name:p.name});
-        if(role === "admin" || role === "moderator"){
-          if(p.uid){
-            try{ await ensureUserProfile({uid:p.uid, email:p.email, name:name || p.name, photo:p.photo}, {provider:"google"}); }
-            catch(e){ console.warn("profile upsert:", e&&e.message); }
+      /* --- Google flow সম্পন্ন করা (popup এবং redirect-resume — দুই পথেই একই যুক্তি) ---
+         লগইন ও অ্যাকাউন্ট তৈরি — দুটোর জন্যই হুবহু একই ফ্লো:
+           ১. সফল authentication-এর পরেই ব্যবহারকারীর Firebase Auth session তৈরি হয়,
+           ২. আগে থেকে একই Google account / email-এ অ্যাকাউন্ট থাকলে নতুন
+              duplicate অ্যাকাউন্ট তৈরি হয় না — existing অ্যাকাউন্টেই লগইন হয়
+              এবং সরাসরি নির্ধারিত dashboard-এ যায়,
+           ৩. একদম নতুন Google হলে বিদ্যমান registration flow-এর ফর্মে যায়। */
+      async function continueGoogleAuth(p, intent){
+        showAppLoading(); /* সফল/ব্যর্থ — দুই ক্ষেত্রেই পরিষ্কার অবস্থা দেখানো হয় */
+        try{
+          const {role, name, permissions} = await resolveRole({uid:p.uid, email:p.email, name:p.name});
+          if(role === "admin" || role === "moderator"){
+            if(p.uid){
+              try{ await ensureUserProfile({uid:p.uid, email:p.email, name:name || p.name, photo:p.photo}, {provider:"google"}); }
+              catch(e){ console.warn("profile upsert:", e&&e.message); }
+            }
+            hideAppModal();
+            finishLogin({email:p.email, name: name || p.name, role, permissions, photo:p.photo, uid:p.uid});
+            return;
           }
-          finishLogin({email:p.email, name: name || p.name, role, permissions, photo:p.photo, uid:p.uid});
-          return;
+          /* একই অ্যাকাউন্ট, ডুপ্লিকেট নয় — আগে UID দিয়ে, তারপর email দিয়ে খোঁজা হয় */
+          const member = (await findUserByUid(p.uid)) || (await findUserByEmail(p.email));
+          if(member && isProfileComplete(member)){
+            const photo = photoForUid(member, p.photo);
+            try{
+              await ensureUserProfile({
+                uid:p.uid, email:p.email, name:member.name, photo,
+                phone:member.phone, dob:member.dob, gender:member.gender, area:member.area,
+                district:member.district, username:member.username
+              }, {provider:"google"});
+            }catch(e){ console.warn("profile upsert:", e&&e.message); }
+            hideAppModal();
+            finishFromRtdb(p, member, {role: DEFAULT_ROLE, name: member.name, permissions:{}});
+            return;
+          }
+          /* নতুন Google অ্যাকাউন্ট (বা অসম্পূর্ণ প্রোফাইল) → বিদ্যমান নিবন্ধন flow */
+          hideAppModal();
+          setSignupGoogleMode(p);
+          prefillSignupFromProfile(member);
+          showView("signup");
+          const _formCard = document.querySelector("#view-signup .form-card");
+          if(_formCard){ _formCard.classList.add("auth-card"); _formCard.style.margin = "0 auto"; }
+          showMessage($("#signupMessage"),
+            member
+              ? "আপনার প্রোফাইল অসম্পূর্ণ। বাকি তথ্য পূরণ করে সংরক্ষণ করুন।"
+              : "এই Google অ্যাকাউন্টে কোনো CBDC অ্যাকাউন্ট নেই। নিচের তথ্যগুলো নিশ্চিত করে অ্যাকাউন্ট তৈরি সম্পন্ন করুন।",
+            "error");
+          setTimeout(()=>{ const _f=document.getElementById("suName"); if(_f) _f.focus(); }, 200);
+        }catch(err){
+          hideAppModal();
+          throw err;
         }
-        const member = (await findUserByUid(p.uid)) || (await findUserByEmail(p.email));
-        if(member && isProfileComplete(member)){
-          const photo = photoForUid(member, p.photo);
-          try{
-            await ensureUserProfile({
-              uid:p.uid, email:p.email, name:member.name, photo,
-              phone:member.phone, dob:member.dob, gender:member.gender, area:member.area, username:member.username
-            }, {provider:"google"});
-          }catch(e){ console.warn("profile upsert:", e&&e.message); }
-          finishFromRtdb(p, member, {role: DEFAULT_ROLE, name: member.name, permissions:{}});
-          return;
-        }
-        /* নতুন বা অসম্পূর্ণ প্রোফাইল → Google email+photo সহ clean form; বাকি তথ্য ইউজার দেবে */
-        setSignupGoogleMode(p);
-        prefillSignupFromProfile(member);
-        // Google onboarding form এখন login-এর মতো clean card — signup view কে compact করে দেখানো
-        showView("signup");
-        // form কে login-এর মতো clean করতে: narrow card already, Google chip উপরে
-        const _formCard = document.querySelector("#view-signup .form-card");
-        if(_formCard) _formCard.classList.add("auth-card");
-        if(_formCard) _formCard.style.margin = "0 auto";
-        showMessage($("#signupMessage"),
-          member
-            ? "আপনার প্রোফাইল অসম্পূর্ণ। বাকি তথ্য পূরণ করে সংরক্ষণ করুন।"
-            : "এই Google অ্যাকাউন্টে কোনো CBDC অ্যাকাউন্ট নেই। নিচের তথ্যগুলো নিশ্চিত করে অ্যাকাউন্ট তৈরি সম্পন্ন করুন।",
-          "error");
-        setTimeout(()=>{ const _f=document.getElementById("suName"); if(_f) _f.focus(); }, 200);
       }
-      async function continueGoogleSignup(p){
-        const member = (await findUserByUid(p.uid)) || (await findUserByEmail(p.email));
-        if(member && isProfileComplete(member)){
-          const rr = await resolveRole({uid:p.uid, email:p.email, name: member.name || p.name});
-          const photo = photoForUid(member, p.photo);
-          try{
-            await ensureUserProfile({
-              uid:p.uid, email:p.email, name: rr.name || member.name, photo,
-              phone:member.phone, dob:member.dob, gender:member.gender, area:member.area, username:member.username
-            }, {provider:"google"});
-          }catch(e){ console.warn("profile upsert:", e&&e.message); }
-          finishFromRtdb(p, member, rr);
+
+
+      /* --- Google flow ব্যর্থ হলে পরিষ্কার বাংলা এরর + সঠিক পদক্ষেপ --- */
+      function handleGoogleAuthError(err, flowLabel){
+        console.warn("Google " + flowLabel + ":", err);
+        setGoogleIntent(null);
+        hideAppModal();
+        const code = (err && err.code) || "";
+        if(code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request"){
+          toast("Google " + flowLabel + " বাতিল করা হয়েছে", true);
           return;
         }
-        setSignupGoogleMode(p);
-        prefillSignupFromProfile(member);
-        showView("signup");
-        const _fc2 = document.querySelector("#view-signup .form-card");
-        if(_fc2){ _fc2.classList.add("auth-card"); _fc2.style.margin="0 auto"; }
-        toast("Google ইমেইল ও প্রোফাইল ছবি নেওয়া হয়েছে — বাকি তথ্য পূরণ করুন");
-        setTimeout(()=>$("#suName")?.focus(), 300);
+        if(code === "auth/account-exists-with-different-credential"){
+          /* একই ইমেইলে আগেই অ্যাকাউন্ট আছে — ডুপ্লিকেট তৈরি না করে লগইনে পাঠাই */
+          const exEmail = String((err && err.customData && err.customData.email) || "").toLowerCase();
+          if(exEmail){
+            const _u = $("#username");
+            if(_u) _u.value = exEmail;
+          }
+          showView("login");
+          showMessage($("#loginMessage"), authErrorMessage(err), "error");
+          return;
+        }
+        uiAlert(authErrorMessage(err), {type:"error", title:"ব্যর্থ হয়েছে"});
       }
 
       /* --- Google দিয়ে লগইন --- */
@@ -4786,20 +4778,13 @@ function initPage() {
           if(btn){ btn.disabled = true; btn.innerHTML = "অপেক্ষা..."; }
           const p = await googleSignIn("login");
           if(!p) return; // redirect শুরু হয়েছে — ফিরে এলে boot-এ flow resume হবে
-          await continueGoogleLogin(p);
+          await continueGoogleAuth(p, "login");
         }catch(err){
-          console.warn("Google login:", err);
-          setGoogleIntent(null);
-          const code = err && err.code || "";
-          if(code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request"){
-            toast("Google লগইন বাতিল করা হয়েছে", true);
-          } else {
-            uiAlert(authErrorMessage(err), {type:"error", title:"লগইন ব্যর্থ"});
-          }
+          handleGoogleAuthError(err, "লগইন");
         }finally{ if(btn){ btn.disabled = false; btn.innerHTML = _orig; } }
       });
 
-      /* --- Google দিয়ে অ্যাকাউন্ট তৈরি --- */
+      /* --- Google দিয়ে অ্যাকাউন্ট তৈরি (একই flow) --- */
       $("#btnGoogleSignup")?.addEventListener("click", async () => {
         const btn = $("#btnGoogleSignup");
         const _orig2 = btn ? btn.innerHTML : "";
@@ -4807,16 +4792,9 @@ function initPage() {
           if(btn){ btn.disabled = true; btn.innerHTML = "অপেক্ষা..."; }
           const p = await googleSignIn("signup");
           if(!p) return; // redirect শুরু হয়েছে — ফিরে এলে boot-এ flow resume হবে
-          await continueGoogleSignup(p);
+          await continueGoogleAuth(p, "signup");
         }catch(err){
-          console.warn("Google signup:", err);
-          setGoogleIntent(null);
-          const code = err && err.code || "";
-          if(code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request"){
-            toast("Google সাইন-আপ বাতিল করা হয়েছে", true);
-          } else {
-            uiAlert(authErrorMessage(err), {type:"error", title:"ব্যর্থ হয়েছে"});
-          }
+          handleGoogleAuthError(err, "সাইন-আপ");
         }finally{ if(btn){ btn.disabled = false; btn.innerHTML = _orig2; } }
       });
   
@@ -4956,7 +4934,8 @@ function initPage() {
           email:      {required:true, email:true, label:"ইমেইল"},
           gender:     {required:true, label:"লিঙ্গ"},
           dob:        {required:true, dob:{min:SITE.rules.minAge, max:SITE.rules.maxAge}, label:"জন্ম তারিখ"},
-          area:       {required:true, label:"এলাকা"},
+          district:   {required:true, label:"জেলা"},
+          area:       {required:true, label:"থানা / এলাকা"},
           phone:      {required:true, phone:true, label:"মোবাইল নম্বর"},
           whatsapp:   {phone:true, label:"WhatsApp নম্বর"},
           suAgree:    {checked:true}
@@ -5022,6 +5001,7 @@ function initPage() {
             phone: o.phone || "",
             dob: o.dob || "",
             gender: o.gender || "",
+            district: String(o.district || "").trim() || districtOfArea(o.area),
             area: o.area || "",
             address: o.address || "",
             photoURL,
@@ -5033,7 +5013,8 @@ function initPage() {
                (donorStatus/donorId/bloodGroup) অক্ষত থাকে — pending-এ ঠেলে দেওয়া হয় না। */
             await ensureUserProfile({
               uid, email:o.email, name:o.name, photo:photoURL,
-              phone:o.phone, dob:o.dob, gender:o.gender, area:o.area, username:o.username, address:o.address
+              phone:o.phone, dob:o.dob, gender:o.gender, area:o.area,
+              district:o.district, username:o.username, address:o.address
             }, {provider: isGoogle ? "google" : "password"});
           } else {
             /* নতুন Account-এ Donor UID তৈরি হয় না — শুধু account record।
@@ -5222,16 +5203,24 @@ function initPage() {
           showMessage($("#loginMessage"), msg, "error");
           return;
         }
-        if(!red) return;
+        if(!red){
+          /* redirect শুরু হয়েছিল কিন্তু ফলাফল নেই — বাতিল/বিঘ্ন। চুপচাপ না
+             থেকে পরিষ্কার বার্তা দেখাই, যাতে সমস্যাটি ধরা পড়ে। */
+          if(pending){
+            showView("login");
+            showMessage($("#loginMessage"),
+              "Google লগইন সম্পন্ন হয়নি — নির্বাচনটি বাতিল হয়েছে অথবা সংযোগে সমস্যা হয়েছে। আবার চেষ্টা করুন।",
+              "error");
+          }
+          return;
+        }
         setGoogleIntent(null);
         try{
-          if(red.intent === "signup") await continueGoogleSignup(red.profile);
-          else await continueGoogleLogin(red.profile);
+          /* login/signup দুটোর জন্যই একই ফ্লো (intent শুধু প্রেক্ষাপটের জন্য) */
+          await continueGoogleAuth(red.profile, red.intent === "signup" ? "signup" : "login");
         }catch(err){
-          hideAppModal();
           console.warn("Google redirect flow:", err);
-          showView("login");
-          showMessage($("#loginMessage"), authErrorMessage(err), "error");
+          handleGoogleAuthError(err, red.intent === "signup" ? "সাইন-আপ" : "লগইন");
         }
       }
       /* Firebase auth state-এর প্রতিবিম্ব — অন্য ট্যাবে বা সেশন শেষে লগআউট হলে

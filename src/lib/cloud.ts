@@ -11,6 +11,7 @@ import { initFirebase } from "./firebase";
 export type DonorApplicationInput = {
   name: string; gender: string; dob: string; area: string; phone: string;
   bloodGroup: string; lastDonation?: string; health?: string; whatsapp?: string;
+  district?: string;
 };
 
 export type EmergencyRequestInput = {
