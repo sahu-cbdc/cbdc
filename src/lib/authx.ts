@@ -130,6 +130,10 @@ export function authErrorMessage(err: unknown, opts: MessageOptions = {}): strin
     case "auth/operation-not-supported-in-this-environment":
     case "auth/web-storage-unsupported":
       return "এই ব্রাউজার/মোডে (যেমন প্রাইভেট ব্রাউজিং) লগইন সমর্থিত নয়। অন্য ব্রাউজার ব্যবহার করুন।";
+    case "auth/account-exists-with-different-credential":
+      return "এই Google ইমেইল দিয়ে আগেই একটি অ্যাকাউন্ট তৈরি করা হয়েছে (ভিন্ন পদ্ধতিতে)। " +
+        "নতুন অ্যাকাউন্ট না তৈরি করে অনুগ্রহ করে ইমেইল/পাসওয়ার্ড দিয়ে লগইন করুন — " +
+        "চাইলে লগইন করার পর সেটিংস থেকে এই Google অ্যাকাউন্টটিও যুক্ত করে নিতে পারবেন।";
 
     /* ── কনফিগারেশন (root-cause diagnostic) ── */
     case "auth/configuration-not-found":
@@ -395,6 +399,7 @@ export async function ensureUserProfile(
     phone?: string;
     gender?: string;
     area?: string;
+    district?: string;
     username?: string;
     address?: string;
     bloodGroup?: string;
@@ -430,12 +435,14 @@ export async function ensureUserProfile(
   const phone = keep(user.phone, existing?.phone);
   const gender = keep(user.gender, existing?.gender);
   const area = keep(user.area, existing?.area);
+  const district = keep(user.district, existing?.district);
   const username = keep(user.username, existing?.username);
   const address = keep(user.address, existing?.address);
   if (dob) base.dob = dob;
   if (phone) base.phone = phone;
   if (gender) base.gender = gender;
   if (area) base.area = area;
+  if (district) base.district = district;
   if (username) base.username = username;
   if (address) base.address = address;
   // donor-related fields — একই UID তে donor তথ্য একীভূত (duplicate profile নয়)

@@ -171,6 +171,19 @@
       "$id": {
         ".write": "auth != null && (root.child('admins').child(auth.uid).exists() || !data.exists())"
       }
+    },
+    "reports": {
+      ".read": "auth != null && root.child('admins').child(auth.uid).exists()",
+      ".indexOn": [
+        "ownerUid",
+        "status",
+        "createdAt"
+      ],
+      "$id": {
+        ".read": "auth != null && (root.child('admins').child(auth.uid).exists() || data.child('ownerUid').val() === auth.uid)",
+        ".write": "auth != null && ((root.child('admins').child(auth.uid).exists()) || (!data.exists() && newData.child('ownerUid').val() === auth.uid) || (data.exists() && data.child('ownerUid').val() === auth.uid))",
+        ".validate": "!newData.exists() || root.child('admins').child(auth.uid).exists() || newData.child('ownerUid').val() === auth.uid"
+      }
     }
   }
 }

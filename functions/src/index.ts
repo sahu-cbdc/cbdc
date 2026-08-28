@@ -7,7 +7,7 @@ initializeApp();
 const auth = getAuth();
 const database: Database = getDatabase();
 
-const STAFF_NODES = ["admins", "users", "donors", "members", "queue", "requests", "accounts"] as const;
+const STAFF_NODES = ["admins", "users", "donors", "members", "queue", "requests", "accounts", "reports"] as const;
 const BLOOD_GROUPS = new Set(["O+", "O-", "A+", "A-", "B+", "B-", "AB+", "AB-"]);
 
 async function isAuthorisedAdmin(uid: string): Promise<boolean> {
@@ -109,12 +109,14 @@ export const submitDonorApplication = onCall(async (request: CallableRequest<Rec
   const existingStatus = String(user.donorStatus || "");
   if (existingStatus === "pending") throw new HttpsError("already-exists", "A donor application is already pending.");
   const at = new Date().toISOString();
+  const district = String(request.data?.district || "").trim().slice(0, 60);
   const common: Record<string, any> = {
     name, gender, dob, area, phone, bloodGroup,
     lastDonation: String(request.data?.lastDonation || "").trim(),
     health: String(request.data?.health || "").trim(),
     whatsapp: String(request.data?.whatsapp || "").trim(),
     available: true, appliedAt: at, uid, ownerUid: uid,
+    ...(district ? { district } : {}),
   };
 
   if (approvalRequired) {
@@ -122,6 +124,7 @@ export const submitDonorApplication = onCall(async (request: CallableRequest<Rec
     await database.ref().update({
       [`users/${uid}/name`]: name, [`users/${uid}/gender`]: gender, [`users/${uid}/dob`]: dob,
       [`users/${uid}/area`]: area, [`users/${uid}/phone`]: phone, [`users/${uid}/bloodGroup`]: bloodGroup,
+      ...(district ? { [`users/${uid}/district`]: district } : {}),
       [`users/${uid}/donorStatus`]: "pending", [`users/${uid}/donorId`]: null,
       [`users/${uid}/lastDonation`]: common.lastDonation, [`users/${uid}/health`]: common.health,
       [`users/${uid}/whatsapp`]: common.whatsapp, [`users/${uid}/available`]: true, [`users/${uid}/appliedAt`]: at,
@@ -134,6 +137,7 @@ export const submitDonorApplication = onCall(async (request: CallableRequest<Rec
   await database.ref().update({
     [`users/${uid}/name`]: name, [`users/${uid}/gender`]: gender, [`users/${uid}/dob`]: dob,
     [`users/${uid}/area`]: area, [`users/${uid}/phone`]: phone, [`users/${uid}/bloodGroup`]: bloodGroup,
+      ...(district ? { [`users/${uid}/district`]: district } : {}),
     [`users/${uid}/donorStatus`]: "approved", [`users/${uid}/donorId`]: donorId,
     [`users/${uid}/lastDonation`]: common.lastDonation, [`users/${uid}/health`]: common.health,
     [`users/${uid}/whatsapp`]: common.whatsapp, [`users/${uid}/available`]: true, [`users/${uid}/appliedAt`]: at,

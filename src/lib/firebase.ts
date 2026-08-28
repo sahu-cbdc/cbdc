@@ -17,7 +17,7 @@
 
 import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
 import { getDatabase, type Database } from "firebase/database";
-import { getAuth, type Auth } from "firebase/auth";
+import { getAuth, browserLocalPersistence, setPersistence, type Auth } from "firebase/auth";
 
 /**
  * Firebase project configuration — project: chokbazarbloodclub-69d5f
@@ -122,6 +122,7 @@ export const NODES = {
   settings: "settings", // app settings (e.g. settings/imgbb — ImgBB API key)
   audit: "audit",       // panel audit log entries (append-only; staff write)
   messages: "messages", // website contact-form messages → panel inbox
+  reports: "reports",   // donor-panel problem reports / complaints (সমস্যা জানান)
   _meta: "_meta",       // internal counters (e.g. _meta/donorCounter/<year>)
 } as const;
 
@@ -154,6 +155,17 @@ export function initFirebase(): { app: FirebaseApp; db: Database; auth: Auth } {
     app = getApps().length ? getApp() : initializeApp(firebaseConfig);
     rtdb = getDatabase(app);
     auth = getAuth(app);
+    /* Session persistence — লগইন/সাইন-আপের পর রিলোড বা ব্রাউজার বন্ধ করলেও
+       Firebase Auth-এর session ঠিক থাকে। `browserLocalPersistence` web storage
+       (localStorage) ব্যবহার করে, যা popup/redirect-based Google sign-in-এর
+       পরেও session হারিয়ে যাওয়ার সমস্যা ঠিক রাখে। */
+    try {
+      void setPersistence(auth, browserLocalPersistence).catch((e) => {
+        console.warn("auth persistence:", (e as Error)?.message);
+      });
+    } catch {
+      /* অসমর্থিত পরিবেশ — ডিফল্ট persistence-ই কাজ করবে */
+    }
     initError = null;
   } catch (e) {
     initError = e as Error;

@@ -25,6 +25,7 @@ import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERR
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage } from "../lib/imgbb";
+import { DISTRICTS, DEFAULT_DISTRICT, areasForDistrict, districtOfArea, ALL_AREAS, fillAreaSelect } from "../lib/locations";
 import { noticeVisibleTo, noticeReadKey, markNoticeRead, markAllNoticesRead, watchNoticeReads } from "../lib/notice";
 import { submitDonorApplication, changeBloodGroup } from "../lib/cloud";
 /* প্রোফাইল কার্ড ডাউনলোড — shared system (src/lib/donorCard.ts)।
@@ -3359,10 +3360,14 @@ function initPage() {
         <div class="f"><label>জন্ম তারিখ <i>*</i></label>
           <input id="bc_dob" name="bc_dob" type="date" min="${dobBounds_.min}" max="${dobBounds_.max}" value="${esc(a.dob||"")}">
           <span class="hint">বয়স ${SITE.rules.minAge}–${SITE.rules.maxAge} বছর হতে হবে।</span></div>
-        <div class="f"><label>এলাকা <i>*</i></label>
+        <div class="f"><label>জেলা <i>*</i></label>
+          <select id="bc_district" name="bc_district">
+            ${DISTRICTS.map(ds=>`<option value="${esc(ds)}" ${(String(a.district||"").trim()||districtOfArea(a.area))===ds?"selected":""}>${esc(ds)}</option>`).join("")}
+          </select></div>
+        <div class="f"><label>থানা / এলাকা <i>*</i></label>
           <select id="bc_area" name="bc_area">
             <option value="">থানা / এলাকা নির্বাচন করুন</option>
-            ${SITE.homeAreas.map(g=>`<option ${a.area===g?"selected":""}>${esc(g)}</option>`).join("")}
+            ${areasForDistrict(String(a.district||"").trim()||districtOfArea(a.area)).map(g=>`<option ${a.area===g?"selected":""}>${esc(g)}</option>`).join("")}
           </select></div>
         <div class="f"><label>মোবাইল নম্বর <i>*</i></label>
           <input id="bc_phone" name="bc_phone" value="${esc(a.phone||"")}" inputmode="numeric" maxlength="11"></div>
@@ -3385,6 +3390,9 @@ function initPage() {
         </form>
       </div>`;
     attachLiveClear($("#becomeForm"));
+    /* জেলা → থানা/এলাকা নির্ভরশীল নির্বাচন — নির্বাচিত জেলার এলাকাই শুধু দেখায় */
+    const bcDist=$("#bc_district");
+    if(bcDist)bcDist.addEventListener("change",()=>fillAreaSelect($("#bc_area"),bcDist.value,""));
     $("#becomeForm").addEventListener("submit",async e=>{
       e.preventDefault();
       const form=$("#becomeForm");
@@ -3432,6 +3440,7 @@ function initPage() {
       a.name=$("#bc_name").value.trim();
       a.gender=$("#bc_gender").value;
       a.dob=$("#bc_dob").value;
+      a.district=$("#bc_district")?$("#bc_district").value:"";
       a.area=$("#bc_area").value;
       a.phone=$("#bc_phone").value.trim();
       d.is=true; d.status="pending";
@@ -3464,7 +3473,8 @@ function initPage() {
         if(APPROVAL_SETTINGS.donorApproval===false){
           const result=await submitDonorApplication({
             name:a.name,gender:a.gender,dob:a.dob,area:a.area,phone:a.phone,
-            bloodGroup:d.bloodGroup,lastDonation:d.lastDonation,health:d.health,whatsapp:d.whatsapp
+            bloodGroup:d.bloodGroup,lastDonation:d.lastDonation,health:d.health,whatsapp:d.whatsapp,
+            district:a.district||districtOfArea(a.area)
           });
           d.status=result.status;d.is=result.status==="approved";d.donorId=result.donorId||"";
           await save();
@@ -3479,6 +3489,7 @@ function initPage() {
         paths[`users/${uid}/name`]=a.name;
         paths[`users/${uid}/gender`]=a.gender;
         paths[`users/${uid}/dob`]=a.dob;
+        paths[`users/${uid}/district`]=a.district||districtOfArea(a.area);
         paths[`users/${uid}/area`]=a.area;
         paths[`users/${uid}/phone`]=a.phone;
         paths[`users/${uid}/bloodGroup`]=d.bloodGroup;
@@ -4657,18 +4668,107 @@ function initPage() {
     draw();
   }
   
-  /* ---------- report ---------- */
+  /* ---------- report (সমস্যা জানান / অভিযোগ) ----------
+     রিপোর্ট Firebase Realtime Database-এর `reports` নোডে সংরক্ষণ হয় —
+     ইউজার নিজের রিপোর্ট ছাড়া অন্য কারও রিপোর্ট দেখতে/বদলাতে/মুছতে পারে না
+     (নিয়মটি RTDB Security Rules-এও কার্যকর)। অ্যাডমিন প্যানেলে রিপোর্টগুলো
+     সাথে সাথে (realtime) দেখা ও ব্যবস্থাপনা করা যায়। */
+  let reportSubmitBusy=false;
   function sheetReport(){
     const s=sheet("সমস্যা জানান",`
-      <div class="f"><label>ধরন</label><select><option>বাগ বা ত্রুটি</option><option>ভুল তথ্য</option>
+      <div class="f"><label>ধরন</label><select id="rtype"><option>বাগ বা ত্রুটি</option><option>ভুল তথ্য</option>
         <option>অন্য ব্যবহারকারীর অভিযোগ</option><option>পরামর্শ</option></select></div>
       <div class="f"><label>বিস্তারিত <i>*</i></label><textarea id="rd"></textarea></div>
-      <div class="f"><label>স্ক্রিনশট</label><input type="file" accept="image/*"></div>`,
+      <div class="f"><label>স্ক্রিনশট</label><input type="file" id="rfile" accept="image/*"></div>
+      <div id="myReportsBox"></div>`,
       `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="ok">পাঠান</button>`);
-    s.q("#ok").onclick=()=>{
-      if(!s.q("#rd").value.trim()){toast("বিস্তারিত লিখুন","er");return}
-      s.close();toast("রিপোর্ট পাঠানো হয়েছে — ধন্যবাদ!","ok");
+    renderMyReports(s);
+
+    s.q("#ok").onclick=async()=>{
+      if(reportSubmitBusy)return;                       /* ডুপ্লিকেট সাবমিট প্রতিরোধ */
+      const text=s.q("#rd").value.trim();
+      if(!text){toast("বিস্তারিত লিখুন","er");return}
+      const type=s.q("#rtype").value;
+      const file=s.q("#rfile").files&&s.q("#rfile").files[0];
+      const uid=String(firebaseCurrentUid()||STORE.account.uid||"").trim();
+      const btn=s.q("#ok");
+      reportSubmitBusy=true;btn.disabled=true;btn.textContent="পাঠানো হচ্ছে…";
+      try{
+        if(!uid)throw new Error("লগইন সেশন পাওয়া যায়নি। আবার লগইন করে চেষ্টা করুন।");
+        /* স্ক্রিনশট থাকলে বিদ্যমান আপলোড সিস্টেম (ImgBB) ব্যবহার হয় */
+        let screenshot="";
+        if(file){
+          btn.textContent="স্ক্রিনশট আপলোড হচ্ছে…";
+          const up=await imgbbUploadImage(file);
+          screenshot=up.url||"";
+        }
+        btn.textContent="সংরক্ষণ হচ্ছে…";
+        const at=nowIso();
+        const id=await addRow(NODES.reports,{
+          ownerUid:uid,
+          uid,
+          name:String(STORE.account.name||"").trim(),
+          username:String(STORE.account.username||"").trim(),
+          email:String(STORE.account.email||"").trim(),
+          type,
+          text,
+          screenshot,
+          status:"open",
+          createdAt:at
+        });
+        /* নিজের রিপোর্টের id নিজের প্রোফাইল নোডে রাখি — যাতে ব্যবহারকারী
+           পরে নিজের রিপোর্ট দেখতে/মুছতে পারে (শুধুই নিজেরটি) */
+        try{await updatePaths({[`users/${uid}/data/reportIds/${id}`]:true});}
+        catch(e){console.warn("report index:",e&&e.message)}
+        try{addNotif({title:"রিপোর্ট পাঠানো হয়েছে",body:"আপনার রিপোর্টটি অ্যাডমিনের কাছে পৌঁছেছে।",type:"info",ref:id});}catch(e){}
+        reportSubmitBusy=false;
+        s.close();
+        toast("রিপোর্ট পাঠানো হয়েছে — ধন্যবাদ!","ok");
+      }catch(err){
+        /* ব্যর্থ হলে লেখা হারাবে না — ফর্ম খোলা থাকে, পরিষ্কার এরর দেখায় */
+        reportSubmitBusy=false;btn.disabled=false;btn.textContent="পাঠান";
+        console.warn("report submit:",err&&err.message);
+        toast(err&&err.message?err.message:"রিপোর্ট পাঠানো যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।","er");
+      }
     };
+  }
+
+  /* ব্যবহারকারীর নিজের রিপোর্টের তালিকা + ডিলিট (শুধুই নিজেরটি) */
+  async function renderMyReports(s){
+    const box=s.q("#myReportsBox");
+    if(!box)return;
+    const uid=String(firebaseCurrentUid()||STORE.account.uid||"").trim();
+    if(!uid)return;
+    let ids=[];
+    try{
+      const me=await getRow(NODES.users,uid);
+      ids=Object.keys((me&&me.data&&me.data.reportIds)||{});
+    }catch(e){return}
+    if(!ids.length)return;
+    const rows=[];
+    for(const rid of ids.slice(-8).reverse()){
+      try{const r=await getRow(NODES.reports,rid);if(r)rows.push(r);}catch(e){}
+    }
+    if(!rows.length)return;
+    box.innerHTML=`<div class="sec-t" style="margin-top:14px">আমার আগের রিপোর্ট</div>
+      <div class="card pad0">${rows.map(r=>`<div class="row">
+        <span class="ic">${ICON.help(18)}</span>
+        <span class="tx"><b>${esc(r.type||"রিপোর্ট")}</b><small>${esc(String(r.text||"").slice(0,70))}</small>
+        <small>${r.status==="resolved"?"✓ সমাধান হয়েছে":"অপেক্ষমাণ"} · ${dL(r.createdAt)}</small></span>
+        <button class="btn gh sm" data-rdel="${esc(r.id)}" style="color:var(--red)">মুছুন</button></div>`).join("")}</div>`;
+    box.querySelectorAll("[data-rdel]").forEach(b=>b.onclick=async()=>{
+      const rid=b.dataset.rdel;
+      b.disabled=true;
+      try{
+        await removeRow(NODES.reports,rid);
+        await updatePaths({[`users/${uid}/data/reportIds/${rid}`]:null});
+        toast("আপনার রিপোর্টটি মুছে ফেলা হয়েছে","ok");
+        renderMyReports(s);
+      }catch(e){
+        b.disabled=false;
+        toast("রিপোর্ট মুছে ফেলা যায়নি। আবার চেষ্টা করুন।","er");
+      }
+    });
   }
   
   /* ══════════ PREFS ══════════ */
@@ -4704,13 +4804,20 @@ function initPage() {
       <div class="f"><label>জন্ম তারিখ <i>*</i></label>
         <input id="su_dob" name="su_dob" type="date" min="${b.min}" max="${b.max}" value="${esc(STORE.account.dob||"")}">
         <span class="hint" id="su_age_hint">জন্ম তারিখ থেকে বয়স স্বয়ংক্রিয়ভাবে হিসাব হবে।</span></div>
-      <div class="f"><label>এলাকা</label>
+      <div class="f"><label>জেলা</label>
+        <select id="su_district" name="su_district">
+          ${DISTRICTS.map(ds=>`<option value="${esc(ds)}" ${(String(STORE.account.district||"").trim()||districtOfArea(STORE.account.area))===ds?"selected":""}>${esc(ds)}</option>`).join("")}
+        </select></div>
+      <div class="f"><label>থানা / এলাকা</label>
         <select id="su_area" name="su_area"><option value="">নির্বাচন করুন</option>
-          ${AREAS.map(a=>`<option ${a===STORE.account.area?"selected":""}>${esc(a)}</option>`).join("")}</select></div>
+          ${areasForDistrict(String(STORE.account.district||"").trim()||districtOfArea(STORE.account.area)).map(a=>`<option ${a===STORE.account.area?"selected":""}>${esc(a)}</option>`).join("")}</select></div>
       </form>`,
       `<button class="btn w" id="ok">শুরু করুন</button>`,{lock:true});
     const form=s.q("#setupForm");
     attachLiveClear(form);
+    /* জেলা → থানা/এলাকা নির্ভরশীল নির্বাচন */
+    const suDist=s.q("#su_district");
+    if(suDist)suDist.addEventListener("change",()=>fillAreaSelect(s.q("#su_area"),suDist.value,""));
     const dobInp=s.q("#su_dob"), hint=s.q("#su_age_hint");
     const paintAge=()=>{ hint.textContent = dobInp.value && isValidDob(dobInp.value)
       ? "হিসাবকৃত বয়স: "+ageText(dobInp.value)
@@ -4728,6 +4835,7 @@ function initPage() {
       a.name=s.q("#su_name").value.trim();
       a.phone=s.q("#su_phone").value.trim();
       a.dob=dobInp.value;
+      a.district=s.q("#su_district")?s.q("#su_district").value:"";
       a.area=s.q("#su_area").value||"";
       a.username=a.username||("user"+String(Date.now()).slice(-6));
       a.joined=a.joined||iso(now());
@@ -4753,6 +4861,7 @@ function initPage() {
       const payload = {
         uid, name:a.name||"", username:a.username||"", email:(a.email||"").toLowerCase(),
         phone:a.phone||"", dob:a.dob||"", gender:a.gender||"", area:a.area||"",
+        district:String(a.district||"").trim()||districtOfArea(a.area),
         address:a.address||"", photoURL:a.photo||"", joined:a.joined||""
       };
       // donor fields — user can only create/update pending application metadata.
