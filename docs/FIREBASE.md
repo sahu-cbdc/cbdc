@@ -163,7 +163,7 @@ metadata** সেভ হয়।
 | `audit` | entry id | প্যানেলের অডিট লগ — at, who, role, act, target, mod | staff read; staff শুধু নতুন entry append করতে পারে (edit নেই), delete শুধু admin |
 | `messages` | message id | ওয়েবসাইটের যোগাযোগ বার্তা — name, phone, text, read, at | staff read; authenticated create, staff manage (read-flag) |
 | `reports` | report id | ডোনার প্যানেলের "সমস্যা জানান" রিপোর্ট — ownerUid, uid, name, username, email, type, text, screenshot (ImgBB URL), status (`open`/`resolved`), createdAt | staff read/manage; ব্যবহারকারী শুধু **নিজের** রিপোর্ট তৈরি/পড়া/মুছতে পারে |
-| `settings` | `imgbb`, `app` | `imgbb:{key,updatedAt}`, `app:{autoApproveEmergency}` | public read; staff write |
+| `settings` | `app` (public read), `$other` (staff read / admin write) | `app:{rules:{donorApproval,donationApproval,emergencyApproval,bloodGroupApproval,reqApproval},autoApproveEmergency}` — অন্য child (যেমন legacy `imgbb`) শুধু staff পড়তে পারে | `app`: public read; বাকি সব: staff read / admin write |
 
 > **গুরুত্বপূর্ণ:**
 > - `users/{uid}` ও `admins/{uid}`-এর key **Firebase Auth uid** — Security Rules
@@ -171,6 +171,94 @@ metadata** সেভ হয়।
 > - **বয়স কোথাও সংরক্ষিত হয় না।** শুধু `dob` (জন্ম তারিখ, `YYYY-MM-DD`) রাখা হয়,
 >   আর বয়স প্রতিবার `src/lib/age.ts` → `ageFromDob()` দিয়ে হিসাব করা হয় —
 >   ফলে বয়স কখনো পুরোনো হয় না।
+
+### অনুমোদন ও সেটিংস (Admin Panel → নিয়ন্ত্রণ → অনুমোদন ও সেটিংস)
+
+চারটি সুইচ — প্রতিটি বদলালেই সাথে সাথে RTDB `settings/app/rules`-এ সেভ হয় ও live
+listener-এর মাধ্যমে সব প্যানেল/ওয়েবসাইটে কার্যকর হয় (কোনো reload লাগে না):
+
+| সুইচ | RTDB key | ON | OFF |
+| --- | --- | --- | --- |
+| ডোনার আবেদন | `donorApproval` | নতুন Donor Application approval queue-এ যায় | আবেদন সরাসরি অনুমোদিত (staff হলে সরাসরি RTDB-তে; নইলে pending queue) |
+| রক্তদান যাচাই | `donationApproval` | রক্তদান ভেরিফিকেশন queue-এ যায় | রক্তদান সরাসরি যাচাইকৃত (`ok:true`) — queue-তে যায় না |
+| জরুরি আবেদন | `emergencyApproval` | জরুরি আবেদন approval queue-এ যায় | আবেদন সরাসরি প্রকাশিত |
+| গ্রুপ বদল | `bloodGroupApproval` | গ্রুপ পরিবর্তন queue-এ যায় | গ্রুপ সরাসরি বদলে যায় (staff হলে সরাসরি RTDB-তে; নইলে pending queue) |
+
+### ডোনার সম্পূর্ণ মুছে ফেলা (Donor Management / অ্যাক্সেস ও ভূমিকা)
+
+> ওয়েবসাইটে শুধুই **Firebase Realtime Database** ও **Firebase Authentication**
+> ব্যবহৃত হয়। **Firebase Storage ব্যবহার করা হয় না** — ছবি ImgBB-এ থাকে,
+> তাই ডিলিট সিস্টেমে কোনো Storage dependency নেই।
+
+Flow: **Donor Select → Delete → Confirmation → identity verify → RTDB delete →
+Authentication delete → Success → Realtime UI Update**
+
+**১. Identity chain (কখনো blindly delete নয়)**
+`Donor ID → UID → existing account/profile` — `donors/{donorId}.ownerUid`,
+`users` node (UID ও `donorId` দিয়ে), `admins`, `accounts`, `members` মিলিয়ে
+যাচাই করা হয়। কোনো সূত্র না মিললে **কোনো deletion শুরুই হয় না**।
+একাধিক donor হলে প্রত্যেকের identity আলাদাভাবে resolve/verify করা হয়।
+
+**২. Realtime Database** — কোনো path অনুমান করা হয় না; প্রতিটি node পড়ে, সত্যিই
+মেলে এমন রেকর্ড মোছা হয়: `donors`, `users` (+`data`: donations, mine, notifs,
+activity, panel, groupChange), `admins`, `accounts`, `members`, `queue`
+(approval/রক্তদান যাচাই/গ্রুপ বদল), `requests`, `reports`, `messages`।
+`audit` লগ append-only — মোছা হয় না। গ্লোবাল node (`gallery`, `notices`) শুধু
+রিপোর্ট করা হয় (সাংগঠনিক কনটেন্ট নষ্ট করা যাবে না)।
+
+**৩. Firebase Authentication** — RTDB সফল হবার **পরেই**।
+Firebase-এর নিরাপত্তা নিয়ম অনুযায়ী ব্রাউজার থেকে অন্য কারও Auth account মোছা
+সম্ভব নয় (Admin SDK/সার্ভার প্রয়োজন), আর এই প্রকল্পে কোনো Cloud Function নেই:
+- **নিজের অ্যাকাউন্ট** → client SDK (`deleteUser`) দিয়ে মোছা যায়,
+- **অন্য কারও** → RTDB ডেটা মোছার পর `auth: skipped` + স্পষ্ট warning
+  (Firebase Console → Authentication থেকে মুছতে হবে)। কোনো মিথ্যে সাফল্য নয়।
+
+**৪. ফলাফল**
+- RTDB সম্পূর্ণ মোছা হলেই সফল → "ডোনার সফলভাবে সম্পূর্ণ মুছে ফেলা হয়েছে" /
+  "নির্বাচিত ডোনারদের সম্পূর্ণভাবে মুছে ফেলা হয়েছে"
+- নিজের Auth delete ব্যর্থ → success নয়:
+  "ডোনারের RTDB তথ্য মুছে ফেলা হয়েছে, কিন্তু Authentication account মুছে ফেলা যায়নি।"
+- RTDB ব্যর্থ → Auth-এ যাওয়াই হয় না, কোনো success নয়
+- রেকর্ড আগে থেকেই না থাকলে failure নয়; bulk-এ প্রতিটি donor-এর ফল আলাদা করে জানানো হয়
+
+**৫. Realtime** — existing listener-ই donor list, donor count, dashboard
+পরিসংখ্যান ও আবেদন count সাথে সাথে আপডেট করে; **page reload বা পুরো ডেটাবেস
+রিলোড লাগে না**।
+
+Deploy: কোনো Cloud Function নেই — শুধু `firebase deploy --only database` (rules)।
+Authentication account মুছতে হলে: Firebase Console → Authentication (Admin SDK ছাড়া সম্ভব নয়)।
+পরীক্ষা: `npm run verify-admin` (single/bulk, missing record, missing Auth,
+UID/Donor ID mismatch, partial failure, realtime update—সব পরিস্থিতি)।
+
+### নিরাপত্তা স্থাপত্য (কোনো secret frontend-এ নেই)
+
+| বিষয় | কীভাবে |
+| --- | --- |
+| Firebase service | শুধু Realtime Database + Authentication (Firestore/Storage নয়) |
+| Admin SDK / service account | কোথাও নেই — কোনো Cloud Function/সার্ভার কোড নেই |
+| অন্য user-এর Auth delete | ব্রাউজার থেকে সম্ভব নয় (Firebase নিরাপত্তা) → RTDB মোছা হয় + স্পষ্ট warning; Firebase Console থেকে Auth account মুছতে হয় |
+| ছবি আপলোড (ImgBB) | সরাসরি ImgBB API — key মূলত RTDB `settings/imgbb`-এ (admin লেখে), source/bundle-এ কোনো literal নেই |
+| `VITE_*` env | bundle-এ inline হয় → কোনো third-party secret এখানে রাখা যাবে না |
+| `import.meta.env` | পুরো অবজেক্ট না পড়ে শুধু নির্দিষ্ট public key (`src/lib/firebase.ts` → `publicEnv()`) |
+| localStorage | production data-এর উৎস নয় — RTDB-ই single source of truth (cache শুধু `vite dev`-এ) |
+| RTDB rules | private node-এ auth + staff/owner check; public read শুধু ওয়েবসাইটের node-এ |
+
+### Image flow (ImgBB — অপরিবর্তিত)
+
+```
+Image Upload → ImgBB → Image URL → Firebase Realtime Database
+```
+
+Profile / donor / gallery / notice / donation proof / report screenshot — সব ছবি ImgBB-তে
+upload হয়; ImgBB থেকে পাওয়া URL + metadata RTDB-এ সেভ হয়। Website · Donor · Admin ·
+Moderator Panel সব জায়গায় RTDB-এর সংরক্ষিত ImgBB URL ব্যবহার করে ছবি দেখানো হয়।
+Firebase Storage ব্যবহার করা হয় না, এবং এই flow-এ কোনো Cloud Function নেই।
+
+### Host-independent deploy
+
+কোডে কোনো host-নির্দিষ্ট path নেই। Root deploy → ডিফল্ট `base: "/"`; sub-directory হোস্টিং →
+`VITE_BASE=/cbdc/` env। Firebase Hosting · Cloudflare Pages (`wrangler.jsonc`, SPA rewrite) ·
+Netlify · Vercel — যেকোনো static host-এ `dist/` serve করলেই চলে।
 
 ## ৬. Firebase Authentication
 

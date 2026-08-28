@@ -30,6 +30,25 @@ const CHANNEL = "cbdc-sync";
 const CACHE_KEY = "cbdc.shared.rtdb.public-cache.v2";
 const CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 24; // 24 hours — just a fast first-paint cache
 
+/**
+ * Production-এ **Realtime Database-ই একমাত্র source of truth**।
+ *
+ * localStorage cache শুধু local development-এ (fast HMR/first paint) চালু থাকে;
+ * production build-এ কোনো browser storage production data-এর উৎস হয় না —
+ * সব তথ্য সরাসরি RTDB listener থেকে আসে। ফলে dev/demo cache ভুল বা পুরোনো
+ * ডেটা দেখাতে পারে না, আর কোনো host-এ deploy করেই আচরণ একই থাকে।
+ */
+/* শুধু DEV/MODE পড়া হয় (পুরো `import.meta.env` নয়) — তাই অন্য কোনো env মান
+   bundle-এ ঢোকে না। */
+const CACHE_ENABLED = (() => {
+  try {
+    const meta = (import.meta as any).env || {};
+    return meta.DEV === true || meta.MODE === "development";
+  } catch {
+    return false;
+  }
+})();
+
 /** The six collections that make up the shared aggregate state. */
 const COLLECTION_NAMES = ["donors", "requests", "queue", "gallery", "notices", "accounts"] as const;
 type CollectionName = (typeof COLLECTION_NAMES)[number];
@@ -76,6 +95,7 @@ function clean(s: any): any {
 
 function restorePublicCache(): any {
   const s = fresh();
+  if (!CACHE_ENABLED) return s;
   try {
     // The cache is only for public website first paint. Admin/Moderator/Doner
     // panels call persist() during boot, so they must never treat browser cache
@@ -99,6 +119,7 @@ function restorePublicCache(): any {
 }
 
 function persistPublicCache() {
+  if (!CACHE_ENABLED) return;
   try {
     const payload: Record<string, any> = {
       version: 1,
@@ -156,6 +177,37 @@ let rtdbStarted = false;
 let authUnsub: AuthUnsubscribe | null = null;
 let currentAuthUid: string | null = null;
 
+/* ── node readiness (loading/skeleton state) ─────────────────────────────────
+   কোন node-এর **প্রথম** RTDB snapshot এসেছে কি না তার হিসাব। ডেটা না আসা
+   পর্যন্ত UI skeleton দেখাতে পারে — ভুল "০" বা খালি placeholder দেখায় না।
+   এটি শুধু readiness-এর সংকেত; পুরোনো `notify()`-এর মতো কোনো re-render
+   ট্রিগার করে না, তাই অপ্রয়োজনীয় render হয় না। */
+const loadedNodes = new Set<CollectionName>();
+const nodeLoadedSubs = new Set<(name: string) => void>();
+
+/** একটি node-এর প্রথম লোড শেষ হলে (একবার) callback চলে; unsubscribe ফেরত দেয়। */
+export function onNodeLoaded(cb: (name: string) => void): () => void {
+  nodeLoadedSubs.add(cb);
+  return () => {
+    nodeLoadedSubs.delete(cb);
+  };
+}
+
+/** এই node-এর ডেটা অন্তত একবার এসেছে কি না। */
+export function isNodeLoaded(name: string): boolean {
+  return loadedNodes.has(name as CollectionName);
+}
+
+function notifyNodeLoaded(name: CollectionName): void {
+  nodeLoadedSubs.forEach((fn) => {
+    try {
+      fn(name);
+    } catch (e) {
+      console.warn("store node-loaded subscriber:", (e as Error)?.message);
+    }
+  });
+}
+
 /* কোন node-এ কী filter হবে — পাবলিক তালিকায় শুধু অনুমোদিত ডেটা যায়। */
 const filters: Record<CollectionName, (rows: any[]) => any[]> = {
   donors: (rows) => rows.filter((r) => (r.status || "approved") === "approved"),
@@ -197,6 +249,12 @@ function startRealtimeSync() {
     try {
       const un = watchList((NODES as any)[name] || name, (rows) => {
         const items = (filters[name] || ((x: any[]) => x))(rows.map((r) => normalizeDoc(r)));
+        /* প্রথম snapshot = এই node-এর ডেটা লোড শেষ (ডেটা খালি হলেও সত্য) —
+           তাই UI "লোড হচ্ছে…" থেকে বেরিয়ে আসতে পারে। */
+        if (!loadedNodes.has(name)) {
+          loadedNodes.add(name);
+          notifyNodeLoaded(name);
+        }
         // Skip no-op echoes (e.g. our own write coming back unchanged).
         if (JSON.stringify(items) === JSON.stringify(cache[name])) return;
         cache[name] = clone(items);
@@ -474,6 +532,8 @@ const store = {
   commit,
   updateAsync,
   subscribe,
+  onNodeLoaded,
+  isNodeLoaded,
   clone,
   toAdminDonor,
   fromAdminDonor,

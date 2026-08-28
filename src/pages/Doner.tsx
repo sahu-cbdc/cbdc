@@ -19,7 +19,7 @@ import {
   isProfileComplete,
   requestPasswordReset,
 } from "../lib/authx";
-import { getRow, setRow, updateRow, watchRow, watchList, addRow, findBy, listOnce, nowIso, updatePaths, removeRow, incrementField, ensureFieldAtLeast, serverTime } from "../lib/rtdb";
+import { getRow, setRow, updateRow, watchRow, watchList, addRow, findBy, listOnce, nowIso, updatePaths, removeRow, incrementField, ensureFieldAtLeast, serverTime, nextDonorId } from "../lib/rtdb";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
@@ -27,7 +27,6 @@ import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage } from "../lib/imgbb";
 import { DISTRICTS, DEFAULT_DISTRICT, areasForDistrict, districtOfArea, ALL_AREAS, fillAreaSelect } from "../lib/locations";
 import { noticeVisibleTo, noticeReadKey, markNoticeRead, markAllNoticesRead, watchNoticeReads } from "../lib/notice";
-import { submitDonorApplication, changeBloodGroup } from "../lib/cloud";
 /* প্রোফাইল কার্ড ডাউনলোড — shared system (src/lib/donorCard.ts)।
    এই প্যানেলের working implementation-ই সেখানে সরানো হয়েছে (single source of
    truth) — মেইন ওয়েবসাইটও হুবহু একই logic ব্যবহার করে। */
@@ -1718,8 +1717,24 @@ function initPage() {
   */
   let MY_APPLICATION_UID="";
   let AUTH_SESSION_READY=false;
-  let APPROVAL_SETTINGS={donorApproval:true,emergencyApproval:true,bloodGroupApproval:true};
+  let APPROVAL_SETTINGS={donorApproval:true,donationApproval:true,emergencyApproval:true,bloodGroupApproval:true};
   let stopApprovalSettings=()=>{};
+  /**
+   * এই UID কি staff (admin/moderator)?
+   *
+   * Cloud Function ছাড়াই "approval OFF" পথগুলো সামলাতে দরকার: RTDB Security
+   * Rules-এ `donors`, donor counter ও `bloodGroup`-এ লেখার অনুমতি শুধু staff-এর।
+   * staff না হলে কোনো ভুল অনুমতির চেষ্টা না করে আগের মতো pending queue পথেই
+   * যাওয়া হয় — তাই কোনো feature বন্ধ হয় না, কোনো rules error-ও আসে না।
+   */
+  async function isStaffUser(uid){
+    if(!uid)return false;
+    try{
+      const row=await getRow(NODES.admins,uid);
+      const role=String(row&&row.role||"").toLowerCase();
+      return (role==="admin"||role==="moderator"||role==="mod")&&String(row?.status||"active")!=="disabled";
+    }catch(e){return false}
+  }
   let MY_APPLICATION_COUNT_READY=false;
   let MY_APPLICATION_CLEANUP=false;
   let MY_APPLICATION_USER_READY=false;
@@ -1782,6 +1797,7 @@ function initPage() {
       const rules=row&&row.rules&&typeof row.rules==="object"?row.rules:{};
       APPROVAL_SETTINGS={
         donorApproval:rules.donorApproval!==false,
+        donationApproval:rules.donationApproval!==false,
         emergencyApproval:rules.emergencyApproval!==false && row?.autoApproveEmergency!==true,
         bloodGroupApproval:rules.bloodGroupApproval!==false
       };
@@ -3467,20 +3483,32 @@ function initPage() {
       }
       try{
         if(!uid)throw new Error("লগইন সেশন পাওয়া যায়নি");
-        /* When approval is OFF the callable performs the validated RTDB
-           transaction and allocates the public Donor ID server-side. This is
-           deliberately awaited before showing success. */
-        if(APPROVAL_SETTINGS.donorApproval===false){
-          const result=await submitDonorApplication({
-            name:a.name,gender:a.gender,dob:a.dob,area:a.area,phone:a.phone,
-            bloodGroup:d.bloodGroup,lastDonation:d.lastDonation,health:d.health,whatsapp:d.whatsapp,
-            district:a.district||districtOfArea(a.area)
+        /* Approval OFF — Cloud Function ছাড়াই সরাসরি approve।
+           RTDB Security Rules অনুযায়ী `donors` ও donor counter-এ লেখার
+           অনুমতি শুধু staff (admin/moderator)-এর; তাই staff হলে সরাসরি
+           অনুমোদিত করা হয়, নইলে পুরোনো মতো pending queue-তেই যায়
+           (কোনো feature বন্ধ হয় না, ভুল অনুমতির চেষ্টাও হয় না)। */
+        if(APPROVAL_SETTINGS.donorApproval===false && await isStaffUser(uid)){
+          const district=a.district||districtOfArea(a.area);
+          const donorId=await nextDonorId();
+          const at=nowIso();
+          await updatePaths({
+            [`users/${uid}/name`]:a.name,[`users/${uid}/gender`]:a.gender,[`users/${uid}/dob`]:a.dob,
+            [`users/${uid}/area`]:a.area,[`users/${uid}/district`]:district,[`users/${uid}/phone`]:a.phone,
+            [`users/${uid}/bloodGroup`]:d.bloodGroup,[`users/${uid}/lastDonation`]:d.lastDonation,
+            [`users/${uid}/health`]:d.health,[`users/${uid}/whatsapp`]:d.whatsapp,
+            [`users/${uid}/donorStatus`]:"approved",[`users/${uid}/donorId`]:donorId,
+            [`users/${uid}/available`]:true,[`users/${uid}/appliedAt`]:at,
+            [`donors/${donorId}`]:{id:donorId,donorId,uid,ownerUid:uid,name:a.name,gender:a.gender,
+              dob:a.dob,area:a.area,district,phone:a.phone,whatsapp:d.whatsapp,bloodGroup:d.bloodGroup,
+              lastDonationDate:d.lastDonation,donations:0,totalDonations:0,status:"approved",
+              available:true,verified:true,suspended:false,joined:at,createdAt:at,updatedAt:at}
           });
-          d.status=result.status;d.is=result.status==="approved";d.donorId=result.donorId||"";
+          d.status="approved";d.is=true;d.donorId=donorId;
           await save();
-          await logAct("রক্তদাতা হিসেবে যুক্ত হন",d.bloodGroup+" · "+(result.status==="approved"?"অনুমোদিত":"যাচাইয়ের অপেক্ষায়"),"donor");
+          await logAct("রক্তদাতা হিসেবে যুক্ত হন",d.bloodGroup+" · অনুমোদিত","donor");
           reqTab="become";go("req");
-          toast(result.status==="approved"?"আপনি সরাসরি অনুমোদিত রক্তদাতা হয়েছেন":"আপনার তথ্য যাচাইয়ের জন্য পাঠানো হয়েছে","ok");
+          toast("আপনি সরাসরি অনুমোদিত রক্তদাতা হয়েছেন","ok");
           return;
         }
         const qid="PD-"+uid.replace(/[^A-Za-z0-9]/g,"").slice(-40);
@@ -3643,12 +3671,15 @@ function initPage() {
         try{ const up=await imgbbUploadImage(f); proof=up.url; }
         catch(e){ return er(e&&e.message?e.message:"ছবি আপলোড করা যায়নি"); }
       }
+      /* রক্তদান যাচাইয়ের অনুমোদন OFF থাকলে রেকর্ডটি সরাসরি যাচাইকৃত (ok)
+         হয় — approval queue-তে কোনো এন্ট্রি যায় না (Admin সেটিং realtime)। */
+      const autoVerify=APPROVAL_SETTINGS.donationApproval===false;
       RAW.donations.unshift({date,place,bags:Number($("#ad_bags").value)||1,
-        pat:$("#ad_pat").value.trim()||"",note:$("#ad_note").value.trim()||"",proof,ok:false});
+        pat:$("#ad_pat").value.trim()||"",note:$("#ad_note").value.trim()||"",proof,ok:autoVerify});
       await saveData();
       await logAct("রক্তদান যোগ",date+" · "+place,"donor");
       renderSub("adddonation");
-      toast("যোগ হয়েছে — যাচাইয়ের অপেক্ষায়","ok");
+      toast(autoVerify?"যোগ হয়েছে — সরাসরি যাচাইকৃত হয়েছে":"যোগ হয়েছে — যাচাইয়ের অপেক্ষায়","ok");
     };
     $$("[data-delrec]").forEach(b=>b.onclick=async()=>{
       const i=Number(b.dataset.delrec);
@@ -4099,13 +4130,18 @@ function initPage() {
           return fail("একটি অনুরোধ ইতিমধ্যে অপেক্ষমাণ আছে — অ্যাডমিনের সিদ্ধান্তের অপেক্ষা করুন");
         }
         const up=await imgbbUploadImage(f);
-        /* With approval disabled the server validates the setting, donor
-           ownership and proof, then updates users + donors atomically. */
-        if(APPROVAL_SETTINGS.bloodGroupApproval===false){
-          const from=d.bloodGroup;
-          await changeBloodGroup({to,reason,proof:up.url});
+        /* Approval OFF — Cloud Function ছাড়াই সরাসরি আপডেট।
+           `users/{uid}/bloodGroup` ও `donors/{id}`-এ লেখার অনুমতি শুধু
+           staff-এর (Security Rules); staff হলে সরাসরি বদলানো হয়, নইলে
+           আগের মতো approval queue-তে যায়। */
+        if(APPROVAL_SETTINGS.bloodGroupApproval===false && await isStaffUser(uid)){
+          const from=d.bloodGroup,at=nowIso(),paths={};
+          paths[`users/${uid}/bloodGroup`]=to;
+          paths[`users/${uid}/groupChange`]={from,to,reason,proof:up.url,status:"approved",at,decidedAt:at};
+          if(d.donorId){paths[`donors/${d.donorId}/bloodGroup`]=to;paths[`donors/${d.donorId}/group`]=to;}
+          await updatePaths(paths);
           d.bloodGroup=to;
-          d.groupChange={from,to,reason,proof:up.url,status:"approved",at:nowIso(),decidedAt:nowIso()};
+          d.groupChange={from,to,reason,proof:up.url,status:"approved",at,decidedAt:at};
           await save();
           s.close();renderSub(SUB);
           toast("রক্তের গ্রুপ আপডেট হয়েছে","ok");
