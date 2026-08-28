@@ -16,7 +16,7 @@ import { ageText, ageFromDob, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
-import { uploadImage as imgbbUploadImage, isImgbbConfigured } from "../lib/imgbb";
+import { uploadImage as imgbbUploadImage, getImgbbKey, saveImgbbKey } from "../lib/imgbb";
 import { deleteDonorCompletely, deletionMessage, describeDeletionFailure, isAuthUid, type DeletionStep } from "../lib/accountDelete";
 import { noticeIsActive, noticeTarget } from "../lib/notice";
 
@@ -4591,6 +4591,8 @@ function initPage() {
     if(result.ok){
       await logAudit("ডোনার সম্পূর্ণ মুছে ফেলা",
         `${result.name||result.donorId} · ${result.donorId}${result.uid?" · "+result.uid:""}`,"donor");
+      /* Auth account রয়ে গেলে (server-side প্রিভিলেজ প্রয়োজন) সেটি লুকানো হয় না */
+      (result.warnings||[]).forEach(w=>toast(w,""));
       return result;
     }
     /* কোন অংশ মুছেছে আর কোনটি মুছেনি — তা-ই দেখানো হয় (কোনো সাফল্য নয়) */
@@ -4992,7 +4994,7 @@ function initPage() {
      • নিচে শুধু ৩টি বোতাম: বাতিল / সংরক্ষণ / ডিলিট। ডিলিট করলে
        নিশ্চিতকরণের পরে ওই সদস্যের Firebase Authentication account এবং
        সংশ্লিষ্ট সকল Realtime Database তথ্য মুছে যায়
-       (Cloud Function `deleteAccountCompletely`)।
+       (নিজের হলে client SDK; অন্যের হলে Firebase Console)।
      ══════════════════════════════════════════════════════════════ */
   const ROLE_SORT={admin:0,mod:1,user:2};
   SUBP.access=el=>{
@@ -5125,11 +5127,11 @@ function initPage() {
     });
   }
 
-  /* সম্পূর্ণ অ্যাকাউন্ট ডিলিট — Firebase Authentication account এবং তার সাথে
-     সম্পর্কিত Realtime Database-এর সকল তথ্য (Cloud Function দিয়ে; ব্রাউজার
-     থেকে অন্যের অ্যাকাউন্ট মুছা সম্ভব নয়)। Donor Management-এর ডিলিটের সাথে
-     একই routine (src/lib/accountDelete.ts) — Donor ID, UID, প্রোফাইল,
-     অ্যাকাউন্ট, আবেদন ও Auth account সব মুছে যায়; orphan data থাকে না। */
+  /* সম্পূর্ণ অ্যাকাউন্ট ডিলিট — Realtime Database-এর সকল সংশ্লিষ্ট তথ্য
+     (Donor ID, UID, প্রোফাইল, অ্যাকাউন্ট, আবেদন) একই routine দিয়ে মোছা হয়
+     (src/lib/accountDelete.ts)। Firebase Authentication account শুধু নিজের
+     ক্ষেত্রে client SDK দিয়ে মোছা যায়; অন্য কারও হলে warning সহ জানানো হয়
+     (Cloud Function/Admin SDK ছাড়া ব্রাউজার থেকে তা সম্ভব নয়)। */
   async function deleteManagedAccount(uid){
     if(!can("access.manage")||String(uid)===String(ME.uid)){toast("নিজের অ্যাকাউন্ট মুছতে পারবেন না","er");return false}
     const a=DB.accounts.find(x=>String(x.uid)===String(uid));
@@ -5149,6 +5151,7 @@ function initPage() {
         return false;
       }
       await logAudit("অ্যাকাউন্ট সম্পূর্ণ মুছে ফেলা",`${a.name||a.email||uid}`,"access");
+      (result.warnings||[]).forEach(w=>toast(w,""));
       toast("ডোনার সফলভাবে সম্পূর্ণ মুছে ফেলা হয়েছে","ok");
       return true;
     }catch(e){
@@ -5788,13 +5791,8 @@ function initPage() {
       <div class="card"><div class="kv">
         <div><span>অবস্থা</span><b id="gKeyState">${DB.integr.imgbbKey?"কী সংরক্ষিত":"কী দেওয়া হয়নি"}</b></div>
         <div><span>সর্বোচ্চ আকার</span><b>৩২ MB</b></div></div>
-        <p class="hint2" style="margin-top:9px">ImgBB API কী শুধু সার্ভার env
-          (<code>IMGBB_API_KEY</code>)-এ থাকে — আপলোড নিরাপদ Cloud Function দিয়ে হয়,
-          কী কখনো ব্রাউজারে আসে না।</p></div>`;
-    /* ImgBB অবস্থা — নিরাপদ server-side চেক (key-এর মান কখনো client-এ আসে না) */
-    isImgbbConfigured().then(okCfg=>{DB.integr.imgbbKey=okCfg?"configured":"";
-      const box=$("#gKeyState");if(box)box.textContent=okCfg?"কী সংরক্ষিত":"কী দেওয়া হয়নি";})
-      .catch(()=>{});
+        <p class="hint2" style="margin-top:9px">নিয়ন্ত্রণ → অনুমোদন ও সেটিংস থেকে API কী দিলে সরাসরি আপলোড চালু হবে।</p></div>`;
+    getImgbbKey().then(k=>{if(k){DB.integr.imgbbKey=k;const inp=$("#gKeyState");if(inp)inp.textContent="কী সংরক্ষিত";}});
     el.querySelectorAll("[data-gt]").forEach(b=>b.onclick=async()=>{
       const g=DB.gallery.find(x=>x.id===b.dataset.gt);if(!g)return;
       g.status=g.status==="published"?"draft":"published";

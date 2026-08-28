@@ -32,5 +32,3 @@ yarn-error.log*
 .env.local
 .env.production
 *.env
-functions/.env
-functions/.env.*

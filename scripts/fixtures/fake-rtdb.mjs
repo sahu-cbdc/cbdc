@@ -107,6 +107,7 @@ export function getDatabase() {
 
 export async function get(target) {
   const path = pathOf(target);
+  readCount += 1;
   return new Snap(path, getAt(path));
 }
 
@@ -220,6 +221,10 @@ export function __flush() {
 }
 export function __dump() {
   return clone(tree);
+}
+let readCount = 0;
+export function __readCount() {
+  return readCount;
 }
 export function __at(path) {
   return getAt(segs(path));

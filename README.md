@@ -174,32 +174,49 @@ npm run verify-security   # architecture/security audit (bundle-এ secret আ�
 
 ## স্থাপত্য ও নিরাপত্তা (Architecture & Security)
 
-- **Firebase service: শুধুই Realtime Database + Authentication** — Firestore/Storage ব্যবহৃত হয় না।
-- **কোনো secret frontend-এ নেই**: `firebase-admin`/service-account key/private key/client secret কখনো `src/`-এ
-  বা bundle-এ থাকে না। Client-এ শুধু Firebase-এর publicly-safe web config (Rules-ই আসল নিরাপত্তা)।
-- **সংবেদনশীল সব কাজ server-side**: অন্য user-এর Authentication delete (`deleteAccountCompletely`) এবং
-  ImgBB-তে ছবি আপলোড (`uploadImage`) — দুটোই authenticated Cloud Function দিয়ে। ImgBB key শুধু
-  `functions/.env`-এ (`IMGBB_API_KEY`) — কখনো `VITE_*`-এ নয় (VITE_ মান bundle-এ inline হয়ে যায়)।
-  `import.meta.env` পুরো অবজেক্ট রেফারেন্স না করে শুধু নির্দিষ্ট public key পড়া হয়, তাই অন্য কোনো env
-  মান bundle-এ ঢোকে না।
-- **RTDB Security Rules**: `users`/`admins`/`accounts`/`queue`/`audit`/`messages`/`reports`/`members`
-  — সব private node-এ auth + staff/owner check; শুধু `donors`/`requests`/`gallery`/`notices`/`settings/app`
-  public read (পাবলিক ওয়েবসাইটের জন্য)। `settings/$other` (যেমন ImgBB key) শুধু staff।
-- **Production data-এর single source of truth = RTDB**: localStorage public cache শুধু `vite dev`-এ;
-  production build-এ কোনো browser storage production data-এর উৎস নয়। কোনো seed/demo data নেই।
-- **Host-independent**: কোনো host-নির্দিষ্ট path/URL নেই। Root deploy-এ ডিফল্ট `base: "/"`; sub-directory
-  হোস্টিং-এ শুধু `VITE_BASE=/cbdc/` env (Firebase Hosting · Cloudflare Pages (wrangler.jsonc) ·
-  Netlify · Vercel · যেকোনো static host + SPA rewrite)।
-- `vite dev`-এর `__admin/site-config` middleware শুধু dev-এ (`apply: "serve"` + same-origin যাচাই) —
-  build/preview/production-এ endpoint-ই থাকে না।
+**ব্যবহৃত service — শুধু তিনটি:**
+
+| Service | কাজ |
+| --- | --- |
+| **Firebase Authentication** | Login, Signup, Google Login, Password Reset, account identity |
+| **Firebase Realtime Database** | ওয়েবসাইটের সব data ও configuration (single source of truth) |
+| **ImgBB** | ওয়েবসাইটের সব image hosting |
+
+**কোনো Cloud Functions নেই · Firestore নেই · Firebase Storage নেই।**
+
+**Image flow (অপরিবর্তিত):**
+```
+Image Upload → ImgBB → Image URL → Firebase Realtime Database
+```
+Profile / donor / gallery / notice / donation proof / report screenshot — সব ছবি ImgBB-তে
+upload হয়; ImgBB থেকে পাওয়া URL ও metadata RTDB-তে সেভ হয়। Website · Donor · Admin ·
+Moderator Panel সব জায়গায় RTDB-এর সংরক্ষিত ImgBB URL-ই ব্যবহার করা হয়। ছবি বদল/মুছলে
+RTDB-এর পুরোনো URL/reference-ও update/remove হয়।
+
+**নিরাপত্তা**
+- frontend source / HTML / bundled JS-এ কোনো private key, secret বা sensitive credential নেই
+- client-এ শুধু Firebase-এর publicly-safe web config (Rules-ই আসল নিরাপত্তা)
+- `VITE_*` env bundle-এ inline হয় — তাই কোনো secret সেখানে রাখা হয় না; `import.meta.env`
+  পুরো অবজেক্ট না পড়ে শুধু নির্দিষ্ট public key পড়া হয়
+- ImgBB key মূলত RTDB `settings/imgbb`-এ (admin লেখে); source/bundle-এ কোনো literal নেই
+- RTDB Security Rules: `users`/`admins`/`accounts`/`queue`/`audit`/`messages`/`reports`/`members`
+  — সব private node-এ auth + staff/owner check; public read শুধু `donors`/`requests`/`gallery`/
+  `notices`/`settings` (পাবলিক ওয়েবসাইটের জন্য)
+- ডোনার ডিলিট: RTDB-এর সব সংশ্লিষ্ট তথ্য সম্পূর্ণ মোছা হয়; Firebase Authentication account
+  নিজের হলে client SDK দিয়ে মোছা যায়, অন্য কারও হলে Firebase নিরাপত্তা নিয়মে তা ব্রাউজার থেকে
+  সম্ভব নয় — সেক্ষেত্রে স্পষ্ট warning দেখানো হয় (কোনো মিথ্যে সাফল্য নয়)
+- localStorage production data-এর উৎস নয় — RTDB-ই single source of truth (cache শুধু `vite dev`-এ)
+
+**Host-independent:** কোনো host-নির্দিষ্ট path/URL নেই। Root deploy-এ ডিফল্ট `base: "/"`;
+sub-directory হোস্টিং-এ শুধু `VITE_BASE=/cbdc/` env (Firebase Hosting · Cloudflare Pages
+(wrangler.jsonc) · Netlify · Vercel · যেকোনো static host + SPA rewrite)।
 
 ### Deploy checklist
 
 ```bash
 npm ci && npm run build            # dist/ — যেকোনো host-এ serve করা যায়
 firebase deploy --only database    # RTDB Security Rules
-firebase deploy --only functions   # Auth delete + image upload endpoint
-# functions env (server-side secret — কখনো VITE_* নয়):
-#   functions/.env  →  IMGBB_API_KEY=...
+firebase deploy --only hosting     # (ঐচ্ছিক) Firebase Hosting ব্যবহার করলে
 ```
+কোনো Cloud Function deploy করতে হয় না — পুরো সিস্টেম Auth + RTDB + ImgBB দিয়েই চলে।
 

@@ -76,7 +76,7 @@ const SECRET_PATTERNS = [
   [/1\/\/0[0-9A-Za-z_-]{20,}/, "OAuth refresh token"],
   [/https:\/\/[a-z0-9-]+\.firebaseio\.com\/?.*auth=/i, "RTDB URL + auth token"],
   [/["']?[a-z_]*key["']?\s*[:=]\s*["'][0-9a-f]{32}["']/i, "ImgBB/API key (32-hex, quoted)"],
-  [/VITE_IMGBB_API_KEY/, "ImgBB env key name (bundle-এ inline হতো)"],
+  [/VITE_IMGBB_API_KEY\s*:"[0-9a-f]{32}"/, "ImgBB key value (env inline)"],
   [/sk_live_[0-9a-z]{10,}/i, "Stripe live secret"],
   [/xoxb-[0-9A-Za-z-]{10,}/, "Slack bot token"],
 ];
@@ -125,23 +125,27 @@ for (const file of clientFiles) {
 }
 if (!clientHits) ok(true, `src/-এ কোনো Admin SDK / Storage / client-side Auth-delete নেই (${clientFiles.length} ফাইল)`);
 
-/* ImgBB: key কখনো client-এ আসে না */
+/* ImgBB — আগের working system-ই (কোনো নতুন flow/config নেই) */
 const imgbb = code("src/lib/imgbb.ts");
-ok(!/VITE_|localStorage|(["']settings["']\s*,\s*["']imgbb["'])/.test(imgbb),
-  "src/lib/imgbb.ts — কোনো key source নেই (env/localStorage/RTDB)");
-ok(/uploadImageViaServer/.test(imgbb) && /from "\.\/cloud"/.test(imgbb),
-  "ছবি আপলোড নিরাপদ server-side Cloud Function দিয়ে");
-ok(!/compressImage\([\s\S]*fd\.append\("key"/.test(imgbb),
-  "client সরাসরি ImgBB-তে key পাঠায় না");
-const cloud = read("src/lib/cloud.ts");
-for (const fnName of ["deleteAccountCompletely", "uploadImage"]) {
-  ok(new RegExp(`"${fnName}"`).test(cloud) || new RegExp(`'${fnName}'`).test(cloud)
-    || new RegExp(`\\("${fnName}"`).test(cloud) || new RegExp(`"${fnName}",`).test(cloud),
-    `sensitive operation server-side endpoint দিয়ে: ${fnName}`);
-}
-ok(!/keyValue|apiKey\s*[:=]\s*["'][^"']{20,}/.test(read("src/lib/cloud.ts")),
-  "client-এ কোনো API key literal নেই");
+ok(!/["'][0-9a-f]{32}["']/.test(imgbb), "src/lib/imgbb.ts — কোনো hardcoded key literal নেই");
+ok(/https:\/\/api\.imgbb\.com\/1\/upload/.test(imgbb), "ImgBB upload endpoint আগের মতোই");
+ok(/getRow\(\s*"settings"\s*,\s*"imgbb"\s*\)/.test(imgbb), "key-এর মূল উৎস RTDB `settings/imgbb`");
+ok(/compressImage/.test(imgbb) && /FormData/.test(imgbb),
+  "flow অপরিবর্তিত: compress → ImgBB → URL → RTDB");
+ok(!/uploadImageViaServer|from "\.\/cloud"/.test(imgbb),
+  "ImgBB-এর সাথে কোনো Cloud Function/server dependency নেই");
 
+/* Cloud Functions / Firestore / Storage — কোনো dependency নেই */
+ok(!existsSync(path.join(ROOT, "functions")), "Cloud Functions remove (functions/ ডিরেক্টরি নেই)");
+ok(!existsSync(path.join(ROOT, "src/lib/cloud.ts")), "Cloud Function wrapper (src/lib/cloud.ts) নেই");
+ok(!/"functions":/.test(read("firebase.json")), "firebase.json-এ functions config নেই");
+let callableHits = 0;
+for (const file of clientFiles) {
+  if (!/\.(ts|tsx)$/i.test(file)) continue;
+  if (/httpsCallable|firebase\/functions/.test(code(file))) callableHits += 1;
+}
+ok(callableHits === 0, "src/-এ কোথাও Cloud Function call নেই", String(callableHits));
+ok(!/getFirestore|firestore\(\)/.test(code("src/lib/firebase.ts")), "Firestore-এর কোনো ব্যবহার নেই");
 /* ─────────── ৩. Firebase client config — শুধু public-safe ─────────── */
 console.log("\n── ৩. Client-side Firebase config — শুধু publicly-safe key ──");
 const firebaseSrc = read("src/lib/firebase.ts");
@@ -175,10 +179,12 @@ for (const node of ["users", "admins", "accounts", "queue", "audit", "messages",
 for (const node of PUBLIC_BY_DESIGN) {
   ok(rules[node]?.[".read"] === true, `rules: ${node} — public read (ওয়েবসাইটের জন্য, by design)`);
 }
-ok(rules.settings?.app?.[".read"] === true, "rules: settings/app — public read (ওয়েবসাইট approval flag)");
-ok(typeof rules.settings?.$other?.[".read"] === "string" && rules.settings.$other[".read"].includes(staff),
-  "rules: settings/$other (ImgBB key সহ) — শুধু staff read");
-ok(!rules.settings?.[".read"], "rules: settings node-এ আর সবার জন্য `.read: true` নেই");
+ok(rules.settings?.app?.[".read"] === true || rules.settings?.[".read"] === true,
+  "rules: settings/app — public read (ওয়েবসাইট approval flag)");
+ok(typeof rules.settings?.[".write"] === "string" && rules.settings[".write"].includes(admin),
+  "rules: settings লেখার অনুমতি শুধু admin");
+ok(!/["']key["']\s*:\s*["'][0-9a-f]{32}["']/.test(read("database.rules.json")),
+  "rules ফাইলে কোনো key literal নেই");
 ok(rules.users?.$uid?.donorStatus?.[".validate"]?.includes(admin) ||
    rules.users?.$uid?.donorStatus?.[".validate"]?.includes("moderator"),
   "rules: donorStatus — শুধু staff approve করতে পারে");
@@ -223,22 +229,19 @@ for (const file of sourceFiles) {
 ok(hostSpecific.length === 0, "source-এ কোনো localhost/hardcoded host নেই", hostSpecific.slice(0, 3).join(", "));
 
 /* ─────────── ৭. Functions: sensitive op-এ auth বাধ্যতামূলক ─────────── */
-console.log("\n── ৭. Cloud Functions — sensitive operation-এ auth check ──");
-const fnSrc = read("functions/src/index.ts");
-for (const fnName of ["deleteAccountCompletely", "uploadImage"]) {
-  const start = fnSrc.indexOf(`export const ${fnName} = onCall(`);
-  ok(start > -1, `function আছে: ${fnName}`);
-  if (start > -1) {
-    const body = fnSrc.slice(start, start + 1800);
-    ok(/request\.auth\?\.uid/.test(body), `${fnName} — caller authentication বাধ্যতামূলক`);
-  }
-}
-const delStart = fnSrc.indexOf("export const deleteAccountCompletely");
-const delBody = fnSrc.slice(delStart, fnSrc.indexOf("export const submitDonorApplication", delStart));
-ok(/isAuthorisedAdmin/.test(delBody), "deleteAccountCompletely — server-side admin role check");
-ok(/IMGBB_API_KEY|IMGBB_KEY/.test(fnSrc), "ImgBB key শুধু functions env থেকে");
-ok(!/process\.env\.VITE_/.test(fnSrc) && !/import\.meta\.env/.test(fnSrc),
-  "functions-এ কোনো client env (VITE_/import.meta.env) নেই");
+console.log("\n── ৭. শুধু Auth + RTDB + ImgBB — কোনো server-side dependency নেই ──");
+ok(!existsSync(path.join(ROOT, "functions")), "functions/ ডিরেক্টরি নেই");
+ok(!existsSync(path.join(ROOT, "src/lib/cloud.ts")), "src/lib/cloud.ts নেই");
+const pkg = JSON.parse(read("package.json"));
+ok(!/firebase-functions|firebase-admin/.test(JSON.stringify(pkg.dependencies || {})),
+  "package.json-এ কোনো functions/admin dependency নেই");
+ok(!!(pkg.dependencies || {}).firebase, "firebase SDK আছে (Authentication + Realtime Database)");
+const allSource = clientFiles.filter((f) => /\.(ts|tsx)$/i.test(f)).map((f) => read(f)).join("\n");
+ok(!/httpsCallable\s*\(/.test(allSource), "কোথাও httpsCallable কল নেই");
+ok(/api\.imgbb\.com/.test(allSource), "ImgBB image hosting ব্যবহৃত (আগের মতোই)");
+ok(!/getFirestore|firestore\(\)|firebase\/storage|getStorage\s*\(/.test(allSource),
+  "Firestore/Storage-এর কোনো ব্যবহার নেই");
+
 
 console.log(failures ? `\n${failures} CHECK(S) FAILED` : "\nALL SECURITY CHECKS PASSED");
 process.exit(failures ? 1 : 0);

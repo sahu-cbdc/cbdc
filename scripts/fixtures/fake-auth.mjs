@@ -15,6 +15,10 @@ export function __user() {
   return { ...USER };
 }
 
+/* self-account deletion test — এই uid-এর deleteUser ইচ্ছে করে ব্যর্থ হবে */
+export const __failingDeleteUids = new Set();
+export const __deletedUids = [];
+
 export function getAuth() {
   return { currentUser: USER, __fake: true };
 }
@@ -45,4 +49,13 @@ export const signInWithEmailAndPassword = noop;
 export const createUserWithEmailAndPassword = noop;
 export const updatePassword = async () => undefined;
 export const reauthenticateWithCredential = noop;
-export const deleteUser = async () => undefined;
+export const deleteUser = async (user) => {
+  const uid = String(user?.uid || "");
+  if (__failingDeleteUids.has(uid)) {
+    const error = new Error("auth/requires-recent-login");
+    error.code = "auth/requires-recent-login";
+    throw error;
+  }
+  __deletedUids.push(uid);
+  return undefined;
+};

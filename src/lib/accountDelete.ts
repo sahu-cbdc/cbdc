@@ -7,7 +7,7 @@
  *    ২. **Firebase Authentication**
  *
  *  ⚠️ **Firebase Storage ব্যবহার করা হয় না** — ছবি ImgBB-এ থাকে (শুধু link
- *  ডাটাবেজে), তাই এই মডিউলে বা Cloud Function-এ কোনো Storage dependency নেই।
+ *  ডাটাবেজে), তাই এই মডিউলে কোনো Storage dependency নেই।
  *
  *  একটি ডোনার মুছতে হলে শুধু `donors/{id}` মুছলেই হয় না — একই মানুষের
  *  UID/Donor ID আরও কয়েকটি node-এ ছড়িয়ে থাকে:
@@ -26,13 +26,16 @@
  *
  *  ══ নিরাপত্তা মডেল ══
  *   • ব্রাউজারে কোনো **Firebase Admin SDK নেই**, কোনো service-account key/secret
- *     নেই — অন্য কারও Authentication অ্যাকাউন্ট ক্লায়েন্ট থেকে মোছার উপায় নেই।
- *   • Authentication delete হয় **নিরাপদ server-side endpoint** (Cloud Function
- *     `deleteAccountCompletely`) দিয়ে; Firebase ID token নিজেই যাচাই করে আর
- *     ফাংশন RTDB `admins` থেকে admin-রোল আবার চেক করে।
- *   • RTDB-এর ডেটা মোছাও ওই একই endpoint-এ (server-side), এবং প্রয়োজনে
- *     client RTDB security rules-এর মধ্যেই যাচাই/পরিষ্কার করে — কোনো Storage
- *     বা privileged operation ছাড়াই।
+ *     নেই — কোনো Cloud Function বা server endpoint ছাড়াই সব কাজ হয়
+ *     (Firebase Authentication + Realtime Database + ImgBB)।
+ *   • **RTDB data deletion সবসময় সম্পূর্ণ** — admin-এর RTDB access Security
+ *     Rules-এ অনুমোদিত; কোনো privileged operation ছাড়াই সব node মোছা যায়।
+ *   • **Authentication account**: Firebase-এর নিরাপত্তা নিয়মে ব্রাউজার থেকে
+ *     অন্য কারও Auth account মোছা সম্ভব নয় (Admin SDK প্রয়োজন)। তাই
+ *       – নিজের অ্যাকাউন্ট → client SDK (`deleteUser`) দিয়ে মোছা হয়,
+ *       – অন্য কারও → RTDB ডেটা মোছার পর `auth:"skipped"` + স্পষ্ট warning
+ *         (Firebase Console/Admin থেকে Auth account মুছতে হবে)।
+ *     কখনো চুপচাপ “সম্পূর্ণ মুছে গেছে” দাবি করা হয় না।
  *
  *  ══ ক্রম (order matters) ══
  *    identity resolve → identity verify → RTDB delete → Auth delete → report
@@ -41,9 +44,9 @@
  *  মোছা যায়নি" বার্তা দেখা যায়।
  */
 
-import { NODES } from "./firebase";
+import { deleteUser } from "firebase/auth";
+import { NODES, getAuthInstance } from "./firebase";
 import { listOnce, getRow, updatePaths, removePath, type Row } from "./rtdb";
-import { deleteAccountCompletely } from "./cloud";
 
 /** Firebase Auth-এর UID: ২০–৬৪টি URL-safe অক্ষর (Firebase সাধারণত ২৮টি দেয়)। */
 const AUTH_UID_RE = /^[A-Za-z0-9_-]{20,64}$/;
@@ -342,8 +345,8 @@ export type DonorDeletionResult = {
   failed: DeletionStep[];
   /** মোছা হয়েছে এমন RTDB path-এর সংখ্যা */
   removed: number;
-  /** নিরাপদ server-side endpoint */
-  server: "ok" | "failed" | "skipped";
+  /** Authentication deletion-এর উৎস (self-only — Firebase নিরাপত্তা সীমা) */
+  server: "self" | "not-possible" | "failed";
   /** গ্লোবাল node-এ পাওয়া orphan রেফারেন্স (মোছা হয়নি) */
   references: Record<string, string[]>;
   warnings: string[];
@@ -370,9 +373,9 @@ const STEP_LABELS: Record<string, string> = {
  * Authentication account (কোনো Storage dependency নেই)।
  *
  *   1. identity chain resolve + verify (মেলে না → কিছুই মোছা হবে না)
- *   2. **RTDB delete** — নিরাপদ server-side endpoint-এ; প্রয়োজনে client
- *      (RTDB security rules-এর মধ্যে) যাচাই ও পরিষ্কার করে
- *   3. **Auth delete** — সব RTDB কাজ সফল হবার পর, শুধু server-side endpoint-এ
+ *   2. **RTDB delete** — client RTDB security rules-এর মধ্যেই (admin অনুমোদিত)
+ *   3. **Auth delete** — সব RTDB কাজ সফল হবার পর; নিজের অ্যাকাউন্ট হলে
+ *      client SDK দিয়ে, অন্য কারও হলে সম্ভব নয় (warning সহ রিপোর্ট)
  *   4. report — কোন অংশ মুছেছে/মুছেনি তা স্পষ্টভাবে
  *
  * Listener-গুলোর জন্যই তালিকা/পরিসংখ্যান realtime-এ আপডেট হয় — কোনো reload বা
@@ -394,7 +397,7 @@ export async function deleteDonorCompletely(
     steps: [],
     failed: [],
     removed: 0,
-    server: "skipped",
+    server: "not-possible",
     references: {},
     warnings: identity.warnings || [],
     ...over,
@@ -416,48 +419,81 @@ export async function deleteDonorCompletely(
   let removed = 0;
   let rtdbState: DonorDeletionResult["rtdb"] = "skipped";
   let authState: DonorDeletionResult["auth"] = "skipped";
-  let serverState: DonorDeletionResult["server"] = "skipped";
+  let serverState: DonorDeletionResult["server"] = "not-possible";
 
-  /* ── ২. Realtime Database — server-side endpoint (RTDB + Auth একই কলেই) ── */
+  /* ── ২. Realtime Database — client security rules-এর মধ্যেই (admin অনুমোদিত) ── */
   const plan = await planDonorDeletion(identity, sources);
-  try {
-    const report = await deleteAccountCompletely(identity.uid, identity.donorId);
-    serverState = "ok";
-    rtdbState = report?.rtdb === "ok" ? "ok" : "failed";
-    authState =
-      report?.auth === "missing" ? "missing" : report?.auth === "failed" ? "failed" : "deleted";
-    removed = Number(report?.removedPaths || 0) || Object.keys(plan.paths).length;
-    steps.push({ id: "rtdb", label: STEP_LABELS.rtdb, ok: rtdbState === "ok" });
-    steps.push({
-      id: "auth",
-      label: STEP_LABELS.auth,
-      ok: authState === "deleted" || authState === "missing",
-      skipped: authState === "missing",
-      error: authState === "failed" ? (report?.authError || "Authentication অ্যাকাউন্ট মোছা যায়নি।") : undefined,
-    });
-    for (const node of Object.keys(plan.matched)) {
-      if (!plan.matched[node]?.length) continue;
-      steps.push({ id: node, label: STEP_LABELS[node] || node, ok: rtdbState === "ok" });
-    }
-  } catch (e) {
-    /* endpoint-এ পৌঁছানোই যায়নি — RTDB অংশ client (rules-এর মধ্যে) চেষ্টা করে,
-       Auth অংশ সম্ভব নয় (কোনো Admin SDK/secret ক্লায়েন্টে নেই)। */
+  const rtdbOk = await deletePaths(plan.paths, steps);
+  rtdbState = rtdbOk ? "ok" : "failed";
+  removed = rtdbOk ? Object.keys(plan.paths).length : 0;
+  steps.push({
+    id: "rtdb",
+    label: STEP_LABELS.rtdb,
+    ok: rtdbOk,
+    error: rtdbOk ? undefined : "Realtime Database-এর সব রেকর্ড মোছা যায়নি।",
+  });
+
+  /* ── ৩. Firebase Authentication — RTDB সফল হবার পরেই ──
+     Firebase নিরাপত্তা নিয়ম: ব্রাউজার থেকে অন্য কারও Auth account মোছা যায় না
+     (Admin SDK/Cloud Function প্রয়োজন)। তাই শুধু নিজের অ্যাকাউন্ট (যেমন
+     Doner panel-এর "অ্যাকাউন্ট মুছুন") client SDK দিয়ে মোছা হয়; অন্য ক্ষেত্রে
+     `skipped` + স্পষ্ট warning — কোনো মিথ্যে সাফল্য নয়। */
+  if (!rtdbOk) {
+    authState = "skipped";
     serverState = "failed";
-    const message = (e as Error)?.message || "সার্ভারে ডিলিট সম্পন্ন করা যায়নি।";
-    const clientOk = await deletePaths(plan.paths, steps);
-    rtdbState = clientOk ? "ok" : "failed";
-    authState = "failed";
-    removed = clientOk ? Object.keys(plan.paths).length : 0;
-    if (!clientOk) {
-      steps.push({ id: "rtdb", label: STEP_LABELS.rtdb, ok: false, error: message });
-    }
     steps.push({
       id: "auth",
       label: STEP_LABELS.auth,
       ok: false,
-      error: rtdbState === "ok" ? message : "RTDB তথ্য মোছা যায়নি, তাই Authentication অ্যাকাউন্ট মোছা হয়নি।",
+      error: "RTDB তথ্য মোছা যায়নি, তাই Authentication অ্যাকাউন্ট মোছা হয়নি।",
     });
+  } else {
+    const auth = getAuthInstance();
+    const currentUid = String(auth?.currentUser?.uid || "").trim();
+    if (identity.uid && currentUid && identity.uid === currentUid) {
+      const user = auth?.currentUser;
+      try {
+        if (user) await deleteUser(user);
+        authState = "deleted";
+        serverState = "self";
+        steps.push({ id: "auth", label: STEP_LABELS.auth, ok: true });
+      } catch (e) {
+        authState = "failed";
+        serverState = "failed";
+        steps.push({
+          id: "auth",
+          label: STEP_LABELS.auth,
+          ok: false,
+          error: (e as Error)?.message || "Authentication অ্যাকাউন্ট মোছা যায়নি।",
+        });
+      }
+    } else if (identity.uid) {
+      authState = "skipped";
+      serverState = "not-possible";
+      warnings.push(
+        "Firebase Authentication অ্যাকাউন্টটি রয়ে গেছে — অন্য ব্যবহারকারীর Auth account শুধু " +
+        "server-side (Admin SDK) দিয়ে মোছা যায়; Firebase Console → Authentication থেকে মুছুন।",
+      );
+      steps.push({
+        id: "auth",
+        label: STEP_LABELS.auth,
+        ok: false,
+        skipped: true,
+        error: "অন্য ব্যবহারকারীর Authentication অ্যাকাউন্ট ব্রাউজার থেকে মোছা যায় না।",
+      });
+    } else {
+      authState = "skipped";
+      serverState = "not-possible";
+      steps.push({
+        id: "auth",
+        label: STEP_LABELS.auth,
+        ok: false,
+        skipped: true,
+        error: "এই ডোনার রেকর্ডের সাথে কোনো Authentication UID যুক্ত ছিল না।",
+      });
+    }
   }
+
 
   /* ── ৩. যাচাই (read-only) — কোনো রেকর্ড থেকে গেলে rules-এর মধ্যেই মোছা ──
      সাধারণত কিছুই থাকে না; সার্ভার পুরোনো build-এ থাকলেও কাজ সম্পূর্ণ হয়। */
@@ -495,9 +531,12 @@ export async function deleteDonorCompletely(
     if (!step.ok && step.error) prev.error = prev.error ? `${prev.error}; ${step.error}` : step.error;
   }
 
-  const failed = merged.filter((s) => !s.ok);
+  /* অন্য ব্যবহারকারীর Auth account মোছা Firebase নিরাপত্তা নিয়মেই সম্ভব নয়
+     (`skipped`) — সেটিকে hard failure ধরা হয় না, কিন্তু warning-এ জানানো হয়।
+     RTDB বা নিজের Auth delete ব্যর্থ হলেই কেবল সত্যিকারের ব্যর্থতা। */
+  const failed = merged.filter((s) => !s.ok && !(s.id === "auth" && authState === "skipped"));
   return {
-    ok: failed.length === 0 && rtdbState === "ok" && (authState === "deleted" || authState === "missing"),
+    ok: rtdbState === "ok" && failed.length === 0,
     donorId: identity.donorId,
     uid: identity.uid,
     name: identity.name,
@@ -552,8 +591,13 @@ export function deletionMessage(result: DonorDeletionResult): string {
   if (result.rtdb === "ok" && result.auth === "failed") {
     return "ডোনারের RTDB তথ্য মুছে ফেলা হয়েছে, কিন্তু Authentication account মুছে ফেলা যায়নি।";
   }
+  if (result.rtdb === "ok" && result.auth === "skipped") {
+    /* অন্য ব্যবহারকারীর Auth account — server-side প্রিভিলেজ ছাড়া মোছা যায় না */
+    return "ডোনারের RTDB তথ্য মুছে ফেলা হয়েছে, কিন্তু Authentication account মুছা সম্ভব হয়নি " +
+      "(Firebase Console → Authentication থেকে মুছুন)।";
+  }
   if (result.rtdb === "failed") {
-    const detail = result.failed.find((f) => f.id === "rtdb" || f.id === "server");
+    const detail = result.failed.find((f) => f.id === "rtdb" || f.id === "server" || f.id === "auth");
     return "ডোনারের RTDB তথ্য মুছে ফেলা যায়নি" + (detail?.error ? ` — ${detail.error}` : "।");
   }
   return "ডোনার সম্পূর্ণ মুছে ফেলা যায়নি — " +

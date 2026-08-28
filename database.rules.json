@@ -148,14 +148,8 @@
       ]
     },
     "settings": {
-      ".write": "auth != null && root.child('admins').child(auth.uid).child('role').val() === 'admin'",
-      "app": {
-        ".read": true
-      },
-      "$other": {
-        ".read": "auth != null && root.child('admins').child(auth.uid).exists()",
-        ".write": "auth != null && root.child('admins').child(auth.uid).child('role').val() === 'admin'"
-      }
+      ".read": true,
+      ".write": "auth != null && root.child('admins').child(auth.uid).child('role').val() === 'admin'"
     },
     "audit": {
       ".read": "auth != null && root.child('admins').child(auth.uid).exists()",

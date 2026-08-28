@@ -1,33 +1,71 @@
 /**
- * CBDC — ImgBB image hosting helper (নিরাপদ, server-side)
+ * CBDC — ImgBB image hosting helper
  *
  * ছবি Firebase Storage-এ নয়, **ImgBB API**-তে সংরক্ষণ করা হয়:
- *   1. ব্রাউজারে ছবিটি compress করা হয় (আগের মতোই),
- *   2. এরপর এটি **নিরাপদ server-side Cloud Function** (`uploadImage`)-এ যায়,
- *   3. সেই ফাংশন—যার কাছেই শুধু ImgBB API key থাকে—ImgBB-এ upload করে,
- *   4. ফেরত আসা hosted URL + metadata RTDB-তে সেভ হয় (কোনো key নয়)।
+ *   1. ImgBB API key দিয়ে ছবি upload করা হয়,
+ *   2. ImgBB থেকে পাওয়া image URL (link) সংগ্রহ করা হয়,
+ *   3. সেই link + metadata শুধু ডাটাবেসে (Realtime Database) সেভ হয়,
+ *   4. UI-তে ওই link দিয়ে সরাসরি ছবি দেখানো হয়।
  *
- * ⚠️ নিরাপত্তা: ImgBB API key একটি third-party secret। এটি কখনো
- *    • frontend source / bundled JS (`VITE_IMGBB_API_KEY` inlined হয়),
- *    • localStorage cache, বা
- *    • public-readable RTDB node (`settings/imgbb`)
- *   — কোথাও থাকতে পারবে না। তাই key শুধু Cloud Function-এর server env-এ
- *   (`IMGBB_API_KEY`) থাকে এবং client কেবল authenticated proxy কল করে।
+ * API key-এর উৎস (priority ক্রমে):
+ *   - localStorage cache (`cbdc.imgbb.key`)
+ *   - Realtime Database `settings/imgbb` node (Admin Settings থেকে save হয়)
+ *   - build-time env `VITE_IMGBB_API_KEY` (fallback)
  */
 
-import { uploadImage as uploadImageViaServer, getImgbbStatus } from "./cloud";
+import { getRow, setRow } from "./rtdb";
 
-/**
- * ImgBB কনফিগার করা আছে কি না (UI-তে শুধু অবস্থা দেখানোর জন্য)।
- * **কখনো key-এর মান ফেরত দেয় না** — শুধু `true/false`।
- */
-export async function isImgbbConfigured(): Promise<boolean> {
+const UPLOAD_URL = "https://api.imgbb.com/1/upload";
+const KEY_CACHE = "cbdc.imgbb.key";
+
+/** Build-time ImgBB API key (VITE_IMGBB_API_KEY). */
+function getEnvImgbbKey(): string {
   try {
-    const status = await getImgbbStatus();
-    return !!status?.configured;
+    const env = (import.meta as any).env;
+    return String(env?.VITE_IMGBB_API_KEY || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+/** ImgBB API key পড়া (cache → RTDB settings → env)। */
+export async function getImgbbKey(): Promise<string> {
+  try {
+    const c = localStorage.getItem(KEY_CACHE);
+    if (c) return c;
+  } catch {
+    /* ignore */
+  }
+  try {
+    const row = await getRow("settings", "imgbb");
+    const k = String(row?.key || "").trim();
+    if (k) {
+      try {
+        localStorage.setItem(KEY_CACHE, k);
+      } catch {
+        /* ignore */
+      }
+      return k;
+    }
+  } catch {
+    /* ignore */
+  }
+  return getEnvImgbbKey();
+}
+
+/** ImgBB API key সংরক্ষণ (Admin Settings থেকে; RTDB `settings/imgbb`)। */
+export async function saveImgbbKey(key: string): Promise<void> {
+  const k = String(key || "").trim();
+  try {
+    if (k) localStorage.setItem(KEY_CACHE, k);
+    else localStorage.removeItem(KEY_CACHE);
+  } catch {
+    /* ignore */
+  }
+  try {
+    await setRow("settings", "imgbb", { key: k, updatedAt: new Date().toISOString() });
   } catch (e) {
-    console.warn("imgbb status:", (e as Error)?.message);
-    return false;
+    console.warn("imgbb key save:", (e as Error)?.message);
   }
 }
 
@@ -98,22 +136,32 @@ function compressImage(file: File, maxDim = 1600, quality = 0.85): Promise<Blob>
  * একটি image file ImgBB-তে upload করে hosted URL গুলো ফেরত দেয়।
  * এই URL গুলোই ডাটাবেসে (Realtime Database) সংরক্ষণ করা হয় — image file নয়।
  */
-export async function uploadImage(file: File): Promise<ImgbbResult> {
-  const image = await compressImage(file);
-  const dataUrl = await blobToDataUrl(image);
-  return uploadImageViaServer({ image: dataUrl, name: (file.name || "cbdc-image").slice(0, 120) });
-}
+export async function uploadImage(
+  file: File,
+  opts: { key?: string } = {}
+): Promise<ImgbbResult> {
+  const key = opts.key || (await getImgbbKey());
+  if (!key) {
+    throw new Error("ImgBB API কী নেই। অ্যাডমিন সেটিংসে কী দিন।");
+  }
 
-/** Blob/File → data URL (server proxy-এ পাঠানোর জন্য)। */
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    try {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.onerror = () => reject(new Error("ছবি পড়া যায়নি।"));
-      reader.readAsDataURL(blob);
-    } catch (e) {
-      reject(e as Error);
-    }
-  });
+  const image = await compressImage(file);
+  const fd = new FormData();
+  fd.append("key", key);
+  fd.append("image", image, file.name || "image.jpg");
+
+  const resp = await fetch(UPLOAD_URL, { method: "POST", body: fd });
+  const json = await resp.json().catch(() => ({}));
+  if (!resp.ok || !json?.success) {
+    throw new Error(String(json?.error?.message || "ImgBB আপলোড ব্যর্থ হয়েছে"));
+  }
+
+  const d = json.data || {};
+  return {
+    url: String(d.url || ""),
+    thumbUrl: String((d.thumb && d.thumb.url) || d.display_url || d.url || ""),
+    deleteUrl: String(d.delete_url || ""),
+    width: Number(d.width) || 0,
+    height: Number(d.height) || 0,
+  };
 }

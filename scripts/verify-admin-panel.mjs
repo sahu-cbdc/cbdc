@@ -14,7 +14,7 @@
  */
 import { JSDOM } from "jsdom";
 import { createServer } from "vite";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import React from "react";
@@ -112,7 +112,6 @@ const vite = await createServer({
   resolve: {
     alias: {
       "firebase/database": path.join(FIXTURES, "fake-rtdb.mjs"),
-      "firebase/functions": path.join(FIXTURES, "fake-functions.mjs"),
       "firebase/auth": path.join(FIXTURES, "fake-auth.mjs"),
     },
   },
@@ -122,13 +121,12 @@ const vite = await createServer({
 });
 
 const rtdb = await vite.ssrLoadModule("/scripts/fixtures/fake-rtdb.mjs");
-const fakeFns = await vite.ssrLoadModule("/scripts/fixtures/fake-functions.mjs");
+const fakeAuth = await vite.ssrLoadModule("/scripts/fixtures/fake-auth.mjs");
 const accountDelete = await vite.ssrLoadModule("/src/lib/accountDelete.ts");
 
 /* ───────────────────────── seeded database ───────────────────────── */
 function seedDb(live = false) {
   rtdb.__reset();
-  fakeFns.__calls.length = 0;
   const apply = live ? rtdb.__seedLive : rtdb.__seed;
   apply({
     [`admins/${ADMIN_UID}`]: {
@@ -232,13 +230,13 @@ console.log("\n── ১. Dashboard data loading (Skeleton → Data → Realtim
   ok(statNums3[0] === "৩", "নতুন ডোনার যোগ হলে realtime-এ count আপডেট (রিলোড/রি-ফেচ নয়)", JSON.stringify(statNums3));
 
   /* navigation-এ নতুন করে লোড না হওয়া — মেমোরি/state-এ থাকা ডেটাই ব্যবহার */
-  const readsBefore = fakeFns.__calls.length;
+  const readsBefore = rtdb.__readCount();
   w.go("set");
   await wait(60);
   w.go("home");
   await wait(120);
   const statNums4 = [...w.document.querySelectorAll("#s-home .astat button b")].map((b) => b.textContent.trim());
-  ok(statNums4[0] === "৩" && fakeFns.__calls.length === readsBefore,
+  ok(statNums4[0] === "৩" && rtdb.__readCount() === readsBefore,
     "page navigation-এ ডেটা মেমোরি/state থেকে আসে — নতুন করে লোড হয় না", JSON.stringify(statNums4));
   root.unmount();
 }
@@ -291,8 +289,12 @@ console.log("\n── ৩. Donor Management — সম্পূর্ণ ডি�
   const result = await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0001", uid: DONOR_A });
   ok(result.ok === true, "১. Single donor delete — সব ধাপ সফল", JSON.stringify(result.failed.map((f) => f.label)));
   ok(result.rtdb === "ok", "৩. RTDB data delete সফল", String(result.rtdb));
-  ok(result.auth === "deleted" && result.server === "ok",
-    "৪. Firebase Authentication account delete সফল (server-side)", `${result.auth}/${result.server}`);
+  ok(result.auth === "skipped" && result.server === "not-possible"
+    && (result.warnings || []).some((w) => /Authentication/.test(w)),
+    "৪. অন্য ব্যবহারকারীর Auth account: সম্ভব নয় → skipped + warning (মিথ্যে সাফল্য নয়)",
+    `${result.auth}/${result.server}`);
+  ok(!/httpsCallable|firebase\/functions/.test(readFileSync(path.join(ROOT, "src/lib/accountDelete.ts"), "utf8")),
+    "Auth delete-এর জন্য কোনো Cloud Function/callable নেই");
   for (const [node, label] of [
     ["donors/CBDC-2026-0001", "Donor profile"],
     [`users/${DONOR_A}`, "User profile (+ data/donations)"],
@@ -323,7 +325,7 @@ console.log("\n── ৩. Donor Management — সম্পূর্ণ ডি�
 {
   seedDb();
   const missing = await accountDelete.deleteDonorCompletely({ uid: "missinguid00000000000missing" });
-  ok(missing.ok === true && missing.auth === "missing",
+  ok(missing.ok === true && (missing.auth === "skipped" || missing.auth === "missing"),
     "৫-৬. Missing RTDB record ও missing Auth account safely handled", `${missing.ok}/${missing.auth}`);
   ok(has("donors/CBDC-2026-0001") && has("donors/CBDC-2026-0002"),
     "রেকর্ড না থাকলে অন্য কোনো ডোনারের তথ্য ছোঁয়া হয় না");
@@ -349,51 +351,70 @@ console.log("\n── ৩. Donor Management — সম্পূর্ণ ডি�
     "legacy রেকর্ড মোছার সময় অন্য অ্যাকাউন্ট অক্ষত");
 }
 
-/* ৮) Partial failure — RTDB মুছে গেছে, Auth যায়নি */
+/* ৮) Authentication — নিজের অ্যাকাউন্ট মোছা যায়, অন্যের সম্ভব নয় (warning) */
 {
   seedDb();
-  fakeFns.__failingAuthUids.add(DONOR_A);
-  const partial = await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0001", uid: DONOR_A });
-  fakeFns.__failingAuthUids.delete(DONOR_A);
-  ok(partial.ok === false && partial.rtdb === "ok" && partial.auth === "failed",
-    "৮. RTDB সফল কিন্তু Auth ব্যর্থ → success নয় (partial)", `${partial.rtdb}/${partial.auth}`);
-  const message = accountDelete.deletionMessage(partial);
-  ok(message === "ডোনারের RTDB তথ্য মুছে ফেলা হয়েছে, কিন্তু Authentication account মুছে ফেলা যায়নি।",
-    "partial বার্তা পরিষ্কার — কোন অংশ মুছেছে ও মুছেনি", message);
-  ok(!has("donors/CBDC-2026-0001") && !has(`users/${DONOR_A}`), "partial-এ RTDB অংশ আসলেই মুছে গেছে");
+  /* অন্য ব্যবহারকারী (admin নিজে নন) → RTDB মোছা যায়, Auth সম্ভব নয় */
+  const other = await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0001", uid: DONOR_A });
+  ok(other.ok === true && other.rtdb === "ok" && other.auth === "skipped",
+    "৮. অন্য ব্যবহারকারী: RTDB সম্পূর্ণ মোছা যায়, Auth skipped (কোনো মিথ্যে সাফল্য নয়)",
+    `${other.rtdb}/${other.auth}`);
+  ok((other.warnings || []).some((w) => /Authentication/.test(w)),
+    "Auth account রয়ে গেলে স্পষ্ট warning থাকে", (other.warnings || [])[0] || "");
+  ok((other.warnings || []).some((w) => /Authentication/.test(w) && /Console/.test(w)),
+    "Warning-এ পরিষ্কার নির্দেশ: Auth account Firebase Console থেকে মুছতে হবে",
+    (other.warnings || [])[0] || "(কোনো warning নেই)");
+  for (const node of ["donors/CBDC-2026-0001", `users/${DONOR_A}`, `admins/${DONOR_A}`,
+    `accounts/${DONOR_A}`, "members/MEMBER-A", "queue/PD-donorA", "requests/REQ-A", "reports/REP-A"])
+    ok(!has(node), `RTDB থেকে মুছে গেছে: ${node}`);
 
-  /* RTDB ব্যর্থ (endpoint পৌঁছায়নি) → Auth-এ যাওয়া হবে না */
+  /* নিজের অ্যাকাউন্ট (currentUser = ADMIN_UID) → client SDK দিয়ে Auth-ও মোছা যায় */
   seedDb();
-  fakeFns.__failingUids.add(DONOR_A);
-  rtdb.__lockClientWrites(true);   /* client-ও মুছতে পারবে না */
+  fakeAuth.__deletedUids.length = 0;
+  const self = await accountDelete.deleteDonorCompletely({ uid: ADMIN_UID });
+  ok(self.ok === true && self.auth === "deleted" && fakeAuth.__deletedUids.includes(ADMIN_UID),
+    "নিজের Authentication account client SDK দিয়ে মোছা যায়", `${self.auth}`);
+
+  /* নিজের হলেও Auth ব্যর্থ হলে success নয় */
+  seedDb();
+  fakeAuth.__failingDeleteUids.add(ADMIN_UID);
+  const selfFail = await accountDelete.deleteDonorCompletely({ uid: ADMIN_UID });
+  fakeAuth.__failingDeleteUids.delete(ADMIN_UID);
+  ok(selfFail.ok === false && selfFail.rtdb === "ok" && selfFail.auth === "failed",
+    "RTDB সফল কিন্তু Auth ব্যর্থ → success নয়", `${selfFail.rtdb}/${selfFail.auth}`);
+  ok(accountDelete.deletionMessage(selfFail)
+    === "ডোনারের RTDB তথ্য মুছে ফেলা হয়েছে, কিন্তু Authentication account মুছে ফেলা যায়নি।",
+    "partial বার্তা পরিষ্কার", accountDelete.deletionMessage(selfFail));
+
+  /* RTDB ব্যর্থ → Auth-এ যাওয়া হবে না */
+  seedDb();
+  rtdb.__lockClientWrites(true);
   const rtdbFailed = await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0001", uid: DONOR_A });
   rtdb.__lockClientWrites(false);
-  fakeFns.__failingUids.delete(DONOR_A);
-  ok(rtdbFailed.ok === false && rtdbFailed.rtdb === "failed" && rtdbFailed.auth === "failed",
+  ok(rtdbFailed.ok === false && rtdbFailed.rtdb === "failed" && rtdbFailed.auth === "skipped",
     "RTDB ব্যর্থ হলে Authentication-এ যাওয়া হয় না", `${rtdbFailed.rtdb}/${rtdbFailed.auth}`);
   ok(has("donors/CBDC-2026-0001") && has(`users/${DONOR_A}`), "RTDB ব্যর্থ হলে কোনো তথ্য মোছা হয় না");
 }
 
+
 /* ২) Multiple donor delete — প্রতিটি donor আলাদাভাবে resolve, mixed outcome */
 {
   seedDb();
-  /* DONOR_A-এর Auth ব্যর্থ হবে, DONOR_B ঠিকঠাক মুছে যাবে */
-  fakeFns.__failingAuthUids.add(DONOR_A);
+  /* দুজন-ই অন্য ব্যবহারকারী — RTDB মোছা যায়, Auth skipped (Firebase সীমা) */
   const first = await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0001", uid: DONOR_A });
   const second = await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0002", uid: DONOR_B });
-  fakeFns.__failingAuthUids.delete(DONOR_A);
-  ok(first.ok === false && first.rtdb === "ok" && first.auth === "failed",
-    "২. একাধিকের মধ্যে একজন ব্যর্থ হলে সে জনের ফল আলাদা রিপোর্ট হয়",
+  ok(first.ok === true && first.rtdb === "ok" && first.auth === "skipped",
+    "২. একাধিক donor — প্রত্যেকের identity আলাদাভাবে resolve হয়ে RTDB মোছা যায়",
     `${first.rtdb}/${first.auth}`);
-  ok(second.ok === true && second.auth === "deleted",
-    "একজন ব্যর্থ হলেও অন্য donor-এর deletion স্বাভাবিকভাবে সম্পন্ন হয়",
+  ok(second.ok === true && second.rtdb === "ok" && second.auth === "skipped",
+    "দ্বিতীয় donor-এরও নিজস্ব identity দিয়েই deletion সম্পন্ন হয়",
     `${second.rtdb}/${second.auth}`);
-  ok(accountDelete.deletionMessage(first)
-    === "ডোনারের RTDB তথ্য মুছে ফেলা হয়েছে, কিন্তু Authentication account মুছে ফেলা যায়নি।"
+  ok(accountDelete.deletionMessage(first) === "ডোনার সফলভাবে সম্পূর্ণ মুছে ফেলা হয়েছে"
     && accountDelete.deletionMessage(second) === "ডোনার সফলভাবে সম্পূর্ণ মুছে ফেলা হয়েছে",
-    "প্রতিটি donor-এর জন্য আলাদা ফলাফল বার্তা");
-  ok(!has(`users/${DONOR_B}`) && !has("donors/CBDC-2026-0002"),
-    "সফল donor-এর সব তথ্য মুছে গেছে");
+    "প্রতিটি donor-এর জন্য সাফল্য বার্তা", accountDelete.deletionMessage(first));
+  ok(!has(`users/${DONOR_A}`) && !has(`users/${DONOR_B}`)
+    && !has("donors/CBDC-2026-0001") && !has("donors/CBDC-2026-0002"),
+    "সব নির্বাচিত donor-এর সব তথ্য মুছে গেছে");
   /* ভুল identity যেন অন্য donor-এর ডেটা না মোছে */
   seedDb();
   const wrongForB = await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0001", uid: DONOR_B });
@@ -402,21 +423,19 @@ console.log("\n── ৩. Donor Management — সম্পূর্ণ ডি�
     "ভুল identity-তে কারও কোনো তথ্য মোছা হয় না");
 }
 
-/* Storage কোনোভাবেই ব্যবহৃত হবে না + database structure অপরিবর্তিত */
+/* Storage/Cloud Functions কোনোভাবেই ব্যবহৃত হবে না + database structure অপরিবর্তিত */
 {
   const readSrc = (rel) => readFileSync(path.join(ROOT, rel), "utf8");
   const storagePatterns = [/firebase-admin\/storage/, /getStorage\s*\(/, /\.bucket\s*\(/, /deleteFiles/];
-  for (const file of ["functions/src/index.ts", "src/lib/accountDelete.ts", "src/lib/cloud.ts", "src/pages/Admin.tsx"]) {
+  for (const file of ["src/lib/accountDelete.ts", "src/lib/imgbb.ts", "src/pages/Admin.tsx", "src/pages/Doner.tsx"]) {
     const hits = storagePatterns.filter((re) => re.test(readSrc(file)));
     ok(hits.length === 0, `${file} — কোনো Firebase Storage dependency নেই`, hits.map(String).join(","));
   }
-  const fnSrc = readSrc("functions/src/index.ts");
-  ok(/auth\.deleteUser/.test(fnSrc) && /database\.ref\(\)\.update\(updates\)/.test(fnSrc),
-    "server-side-এ RTDB update → এরপর auth.deleteUser (সঠিক ক্রম)");
-  const rtdbIndex = fnSrc.indexOf("database.ref().update(updates)");
-  const authIndex = fnSrc.indexOf("auth.deleteUser(targetUid)");
-  ok(rtdbIndex > 0 && authIndex > rtdbIndex, "RTDB deletion-এর পরেই Authentication deletion");
-
+  ok(!/httpsCallable|firebase\/functions/.test(readSrc("src/lib/accountDelete.ts"))
+    && !/httpsCallable|firebase\/functions/.test(readSrc("src/lib/imgbb.ts")),
+    "delete/upload flow-এ কোনো Cloud Function/callable নেই");
+  ok(!existsSync(path.join(ROOT, "functions")), "functions/ ডিরেক্টরি সম্পূর্ণ remove করা হয়েছে");
+  ok(!/"functions":/.test(readSrc("firebase.json")), "firebase.json-এ functions config নেই");
   /* নতুন কোনো path তৈরি হয় না — মুছার আগে/পরে top-level node একই থাকে */
   seedDb();
   const before = Object.keys(dump()).sort().join(",");
@@ -425,33 +444,24 @@ console.log("\n── ৩. Donor Management — সম্পূর্ণ ডি�
   ok(before === after, "কোনো নতুন database path/node তৈরি হয় না (structure অপরিবর্তিত)", after);
 }
 
-/* ── নিরাপদ server-side endpoint দিয়েই ডিলিট (client-এর লেখার অনুমতি বন্ধ) ── */
+/* ── কোনো Cloud Function ছাড়াই RTDB দিয়েই পুরো ডিলিট ── */
 {
   seedDb();
-  /* ব্রাউজার (client) থেকে কোনো RTDB লেখা সম্ভব নয় — তবুও ডিলিট সম্পূর্ণ হতে
-     হবে, কারণ সব কাজ সার্ভার endpoint-এর মাধ্যমে হয়। */
-  rtdb.__lockClientWrites(true);
   const result = await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0001", uid: DONOR_A });
-  rtdb.__lockClientWrites(false);
-  ok(result.ok === true, "client-এর লেখার অনুমতি বন্ধ থাকলেও ডিলিট সম্পূর্ণ হয় (সব সার্ভার-সাইড)",
+  ok(result.ok === true, "Cloud Function ছাড়াই ডিলিট সম্পন্ন (Realtime Database + rules)",
     JSON.stringify(result.failed.map((f) => f.label)));
-  ok(result.server === "ok" && result.auth === "deleted",
-    "নিরাপদ endpoint-এর মাধ্যমেই Authentication account মুছে গেছে", `${result.server}/${result.auth}`);
   for (const node of ["donors/CBDC-2026-0001", `users/${DONOR_A}`, `admins/${DONOR_A}`,
     `accounts/${DONOR_A}`, "members/MEMBER-A", "queue/PD-donorA", "requests/REQ-A", "reports/REP-A"])
-    ok(!has(node), `সার্ভার মুছেছে: ${node}`);
+    ok(!has(node), `সম্পূর্ণ মুছে গেছে: ${node}`);
   ok(has("donors/CBDC-2026-0002") && has(`users/${DONOR_B}`) && has("audit/A-1"),
     "অন্য ডোনারের তথ্য ও audit লগ অক্ষত");
-  const call = fakeFns.__calls.filter((c) => c.name === "deleteAccountCompletely").pop();
-  ok(!!call && call.data.uid === DONOR_A && call.data.donorId === "CBDC-2026-0001",
-    "endpoint-এ UID + Donor ID পাঠানো হয় (সার্ভার নিজেই যাচাই করে)", JSON.stringify(call?.data));
 }
 
 
 /* ── নিরাপত্তা: frontend-এ Admin SDK বা কোনো secret নেই ── */
 {
   const readSrc = (rel) => readFileSync(path.join(ROOT, rel), "utf8");
-  const clientFiles = ["src/lib/accountDelete.ts", "src/lib/cloud.ts", "src/pages/Admin.tsx", "src/lib/rtdb.ts"];
+  const clientFiles = ["src/lib/accountDelete.ts", "src/lib/imgbb.ts", "src/pages/Admin.tsx", "src/lib/rtdb.ts"];
   /* আসল credential/Admin SDK ব্যবহারের patterns — কমেন্টে শব্দ থাকলেই মেলে না। */
   const banned = [
     /from\s+["']firebase-admin/,
@@ -468,12 +478,17 @@ console.log("\n── ৩. Donor Management — সম্পূর্ণ ডি�
     ok(hits.length === 0, `${file} — কোনো Admin SDK/service-account secret নেই`,
       hits.map(String).join(","));
   }
-  const adminSdkOnly = readSrc("functions/src/index.ts");
-  ok(/initializeApp\(\)/.test(adminSdkOnly) && /getAuth\(\)/.test(adminSdkOnly),
-    "Admin SDK শুধু functions/ (server-side)-এ ব্যবহৃত");
-  const cloud = readSrc("src/lib/cloud.ts");
-  ok(/httpsCallable/.test(cloud) && !/deleteUser|getAuth\(\)\.deleteUser/.test(cloud),
-    "client শুধু callable endpoint ব্যবহার করে — সরাসরি Auth delete করার কোনো পথ নেই");
+  ok(!existsSync(path.join(ROOT, "functions")), "Cloud Functions সম্পূর্ণ remove (functions/ নেই)");
+  ok(!existsSync(path.join(ROOT, "src/lib/cloud.ts")), "Cloud Function wrapper (src/lib/cloud.ts) নেই");
+  ok(!/httpsCallable|firebase\/functions/.test(readSrc("src/lib/accountDelete.ts"))
+    && !/httpsCallable|firebase\/functions/.test(readSrc("src/lib/imgbb.ts")),
+    "client-এ কোনো Cloud Function/callable নেই (Auth delete শুধু নিজের, client SDK)");
+  const imgbbSrc = readSrc("src/lib/imgbb.ts");
+  const imgbbCode = imgbbSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  ok(!/["'][0-9a-f]{32}["']/.test(imgbbCode), "ImgBB key-এর কোনো literal মান source-এ নেই");
+  ok(/getRow\(\s*"settings"\s*,\s*"imgbb"\s*\)/.test(imgbbCode),
+    "ImgBB key-এর মূল উৎস RTDB `settings/imgbb` (আগের working flow)");
+  ok(/https:\/\/api\.imgbb\.com/.test(imgbbCode), "Upload সরাসরি ImgBB-তে (আগের মতোই)");
 }
 
 /* ── UI দিয়েই ডিলিট (Donor Management → নির্বাচন → ডিলিট করুন) ── */

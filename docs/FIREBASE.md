@@ -179,10 +179,10 @@ listener-এর মাধ্যমে সব প্যানেল/ওয়ে�
 
 | সুইচ | RTDB key | ON | OFF |
 | --- | --- | --- | --- |
-| ডোনার আবেদন | `donorApproval` | নতুন Donor Application approval queue-এ যায় | আবেদন সরাসরি অনুমোদিত (Cloud Function `submitDonorApplication`) |
+| ডোনার আবেদন | `donorApproval` | নতুন Donor Application approval queue-এ যায় | আবেদন সরাসরি অনুমোদিত (staff হলে সরাসরি RTDB-তে; নইলে pending queue) |
 | রক্তদান যাচাই | `donationApproval` | রক্তদান ভেরিফিকেশন queue-এ যায় | রক্তদান সরাসরি যাচাইকৃত (`ok:true`) — queue-তে যায় না |
 | জরুরি আবেদন | `emergencyApproval` | জরুরি আবেদন approval queue-এ যায় | আবেদন সরাসরি প্রকাশিত |
-| গ্রুপ বদল | `bloodGroupApproval` | গ্রুপ পরিবর্তন queue-এ যায় | গ্রুপ সরাসরি বদলে যায় (Cloud Function `changeBloodGroup`) |
+| গ্রুপ বদল | `bloodGroupApproval` | গ্রুপ পরিবর্তন queue-এ যায় | গ্রুপ সরাসরি বদলে যায় (staff হলে সরাসরি RTDB-তে; নইলে pending queue) |
 
 ### ডোনার সম্পূর্ণ মুছে ফেলা (Donor Management / অ্যাক্সেস ও ভূমিকা)
 
@@ -206,16 +206,17 @@ activity, panel, groupChange), `admins`, `accounts`, `members`, `queue`
 `audit` লগ append-only — মোছা হয় না। গ্লোবাল node (`gallery`, `notices`) শুধু
 রিপোর্ট করা হয় (সাংগঠনিক কনটেন্ট নষ্ট করা যাবে না)।
 
-**৩. Firebase Authentication** — RTDB সফল হবার **পরেই**, শুধু নিরাপদ
-server-side endpoint (Cloud Function `deleteAccountCompletely`) দিয়ে।
-Client-এ কোনো Admin SDK বা service-account key নেই; Firebase ID token নিজেই
-যাচাই করে আর ফাংশন RTDB `admins` থেকে admin-রোল আবার চেক করে।
-Auth-এ অ্যাকাউন্ট আগে থেকেই না থাকলে সেটি `missing` (failure নয়)।
+**৩. Firebase Authentication** — RTDB সফল হবার **পরেই**।
+Firebase-এর নিরাপত্তা নিয়ম অনুযায়ী ব্রাউজার থেকে অন্য কারও Auth account মোছা
+সম্ভব নয় (Admin SDK/সার্ভার প্রয়োজন), আর এই প্রকল্পে কোনো Cloud Function নেই:
+- **নিজের অ্যাকাউন্ট** → client SDK (`deleteUser`) দিয়ে মোছা যায়,
+- **অন্য কারও** → RTDB ডেটা মোছার পর `auth: skipped` + স্পষ্ট warning
+  (Firebase Console → Authentication থেকে মুছতে হবে)। কোনো মিথ্যে সাফল্য নয়।
 
 **৪. ফলাফল**
-- সব সফল → "ডোনার সফলভাবে সম্পূর্ণ মুছে ফেলা হয়েছে" /
+- RTDB সম্পূর্ণ মোছা হলেই সফল → "ডোনার সফলভাবে সম্পূর্ণ মুছে ফেলা হয়েছে" /
   "নির্বাচিত ডোনারদের সম্পূর্ণভাবে মুছে ফেলা হয়েছে"
-- RTDB মুছে কিন্তু Auth ব্যর্থ → success নয়:
+- নিজের Auth delete ব্যর্থ → success নয়:
   "ডোনারের RTDB তথ্য মুছে ফেলা হয়েছে, কিন্তু Authentication account মুছে ফেলা যায়নি।"
 - RTDB ব্যর্থ → Auth-এ যাওয়াই হয় না, কোনো success নয়
 - রেকর্ড আগে থেকেই না থাকলে failure নয়; bulk-এ প্রতিটি donor-এর ফল আলাদা করে জানানো হয়
@@ -224,7 +225,8 @@ Auth-এ অ্যাকাউন্ট আগে থেকেই না থা�
 পরিসংখ্যান ও আবেদন count সাথে সাথে আপডেট করে; **page reload বা পুরো ডেটাবেস
 রিলোড লাগে না**।
 
-Deploy: `firebase deploy --only functions` (ফাংশন বদলালে অবশ্যই deploy করতে হবে)।
+Deploy: কোনো Cloud Function নেই — শুধু `firebase deploy --only database` (rules)।
+Authentication account মুছতে হলে: Firebase Console → Authentication (Admin SDK ছাড়া সম্ভব নয়)।
 পরীক্ষা: `npm run verify-admin` (single/bulk, missing record, missing Auth,
 UID/Donor ID mismatch, partial failure, realtime update—সব পরিস্থিতি)।
 
@@ -233,13 +235,24 @@ UID/Donor ID mismatch, partial failure, realtime update—সব পরিস্
 | বিষয় | কীভাবে |
 | --- | --- |
 | Firebase service | শুধু Realtime Database + Authentication (Firestore/Storage নয়) |
-| Admin SDK / service account | শুধু `functions/`-এ; `src/`-এ কখনো নয় |
-| অন্য user-এর Auth delete | Cloud Function `deleteAccountCompletely` (ID token + RTDB `admins` admin check) |
-| ছবি আপলোড (ImgBB) | Cloud Function `uploadImage` — key শুধু `functions/.env`-এ (`IMGBB_API_KEY`) |
+| Admin SDK / service account | কোথাও নেই — কোনো Cloud Function/সার্ভার কোড নেই |
+| অন্য user-এর Auth delete | ব্রাউজার থেকে সম্ভব নয় (Firebase নিরাপত্তা) → RTDB মোছা হয় + স্পষ্ট warning; Firebase Console থেকে Auth account মুছতে হয় |
+| ছবি আপলোড (ImgBB) | সরাসরি ImgBB API — key মূলত RTDB `settings/imgbb`-এ (admin লেখে), source/bundle-এ কোনো literal নেই |
 | `VITE_*` env | bundle-এ inline হয় → কোনো third-party secret এখানে রাখা যাবে না |
 | `import.meta.env` | পুরো অবজেক্ট না পড়ে শুধু নির্দিষ্ট public key (`src/lib/firebase.ts` → `publicEnv()`) |
 | localStorage | production data-এর উৎস নয় — RTDB-ই single source of truth (cache শুধু `vite dev`-এ) |
 | RTDB rules | private node-এ auth + staff/owner check; public read শুধু ওয়েবসাইটের node-এ |
+
+### Image flow (ImgBB — অপরিবর্তিত)
+
+```
+Image Upload → ImgBB → Image URL → Firebase Realtime Database
+```
+
+Profile / donor / gallery / notice / donation proof / report screenshot — সব ছবি ImgBB-তে
+upload হয়; ImgBB থেকে পাওয়া URL + metadata RTDB-এ সেভ হয়। Website · Donor · Admin ·
+Moderator Panel সব জায়গায় RTDB-এর সংরক্ষিত ImgBB URL ব্যবহার করে ছবি দেখানো হয়।
+Firebase Storage ব্যবহার করা হয় না, এবং এই flow-এ কোনো Cloud Function নেই।
 
 ### Host-independent deploy
 

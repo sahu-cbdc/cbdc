@@ -32,7 +32,6 @@ import { addRow, setRow, updateRow, findBy, getRow, listOnce, nowIso, incrementF
 import { NODES } from "../lib/firebase";
 import { DISTRICTS, DEFAULT_DISTRICT, areasForDistrict, districtOfArea, searchAreas, fillAreaSelect } from "../lib/locations";
 import { noticeVisibleTo, noticeTarget } from "../lib/notice";
-import { submitEmergencyRequest } from "../lib/cloud";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, clearFieldError } from "../lib/forms";
 import { ageFromDob, ageText, dobBounds, isValidDob, toBanglaDigits } from "../lib/age";
 import { logoUrl, applyLogo } from "../config/logo";
