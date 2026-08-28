@@ -39,6 +39,84 @@ async function nextDonorId(): Promise<string> {
   return `CBDC-${year}-${String(Number(result.snapshot.val()) || 0).padStart(4, "0")}`;
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+   Image upload (ImgBB) — SECURE SERVER-SIDE PROXY
+   ═══════════════════════════════════════════════════════════════════
+   ImgBB API key একটি **third-party secret**। সেটি কখনোই browser bundle-এ
+   যাবে না (VITE_* env inlined হয়ে যায়, আর RTDB `settings/imgbb` public
+   read হলে সবাই পড়তে পারত)। তাই:
+     • key থাকে শুধু server env-এ (`IMGBB_API_KEY`),
+     • browser authenticated caller হয়ে `uploadImage` callable কল করে,
+     • ফাংশন নিজেই সাইজ/টাইপ যাচাই করে ImgBB-এ ফরওয়ার্ড করে,
+     • browser ফিরে পায় শুধু hosted URL (কোনো key নয়)।
+   ═══════════════════════════════════════════════════════════════════ */
+
+const IMGBB_UPLOAD_URL = "https://api.imgbb.com/1/upload";
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4 MB (client-side compress-এর পর)
+const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+
+/** ImgBB key — শুধু server env/config থেকে (কখনো client-এ যায় না)। */
+function imgbbApiKey(): string {
+  return String(process.env.IMGBB_API_KEY || process.env.IMGBB_KEY || "").trim();
+}
+
+function decodeIncomingImage(raw: unknown): { buffer: Buffer; mime: string } {
+  const value = String(raw ?? "").trim();
+  if (!value) throw new HttpsError("invalid-argument", "কোনো ছবি পাওয়া যায়নি।");
+  const match = /^data:([a-z]+\/[a-z0-9.+-]+);base64,([\s\S]+)$/i.exec(value);
+  const mime = (match ? match[1] : "image/jpeg").toLowerCase();
+  const base64 = match ? match[2] : value;
+  if (!ALLOWED_IMAGE_TYPES.has(mime)) {
+    throw new HttpsError("invalid-argument", "শুধু JPG / PNG / WEBP / GIF ছবি আপলোড করা যাবে।");
+  }
+  if (!/^[A-Za-z0-9+/=\s]+$/.test(base64)) {
+    throw new HttpsError("invalid-argument", "ছবির ডেটা সঠিক নয়।");
+  }
+  const buffer = Buffer.from(base64, "base64");
+  if (!buffer.length) throw new HttpsError("invalid-argument", "ছবির ডেটা পাওয়া যায়নি।");
+  if (buffer.length > MAX_IMAGE_BYTES) {
+    throw new HttpsError("invalid-argument", "ছবি ৪ MB-এর বেশি বড়।");
+  }
+  return { buffer, mime };
+}
+
+/** ব্রাউজার থেকে ImgBB-তে নিরাপদ upload — key শুধু সার্ভারেই থাকে। */
+export const uploadImage = onCall(async (request: CallableRequest<{ image?: string; name?: string }>) => {
+  if (!request.auth?.uid) throw new HttpsError("unauthenticated", "ছবি আপলোড করতে লগইন করতে হবে।");
+  const key = imgbbApiKey();
+  if (!key) {
+    throw new HttpsError("failed-precondition", "ছবি আপলোড সার্ভারে কনফিগার করা হয়নি (ImgBB key নেই)।");
+  }
+  const { buffer } = decodeIncomingImage(request.data?.image);
+  const name = String(request.data?.name || "cbdc-image").slice(0, 120);
+
+  const body = new URLSearchParams();
+  body.set("key", key);
+  body.set("image", buffer.toString("base64"));
+  body.set("name", name);
+
+  const response = await fetch(IMGBB_UPLOAD_URL, { method: "POST", body });
+  const json: any = await response.json().catch(() => ({}));
+  if (!response.ok || !json?.success) {
+    console.error("imgbb upload failed", response.status, json?.error?.message);
+    throw new HttpsError("internal", String(json?.error?.message || "ছবি আপলোড করা যায়নি।"));
+  }
+  const d = json.data || {};
+  return {
+    url: String(d.url || ""),
+    thumbUrl: String((d.thumb && d.thumb.url) || d.display_url || d.url || ""),
+    deleteUrl: String(d.delete_url || ""),
+    width: Number(d.width) || 0,
+    height: Number(d.height) || 0,
+  };
+});
+
+/** ImgBB key সার্ভারে কনফিগার করা আছে কি না — **key-এর মান কখনো ফেরত যায় না**। */
+export const imgbbStatus = onCall(async (request: CallableRequest<Record<string, never>>) => {
+  if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Login required.");
+  return { configured: !!imgbbApiKey() };
+});
+
 /** Nodes that may hold rows belonging to a UID (or referencing a Donor ID). */
 const OWNED_NODES = [
   "users", "admins", "accounts", "donors", "members", "queue", "requests", "reports",

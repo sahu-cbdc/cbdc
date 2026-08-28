@@ -163,7 +163,7 @@ metadata** সেভ হয়।
 | `audit` | entry id | প্যানেলের অডিট লগ — at, who, role, act, target, mod | staff read; staff শুধু নতুন entry append করতে পারে (edit নেই), delete শুধু admin |
 | `messages` | message id | ওয়েবসাইটের যোগাযোগ বার্তা — name, phone, text, read, at | staff read; authenticated create, staff manage (read-flag) |
 | `reports` | report id | ডোনার প্যানেলের "সমস্যা জানান" রিপোর্ট — ownerUid, uid, name, username, email, type, text, screenshot (ImgBB URL), status (`open`/`resolved`), createdAt | staff read/manage; ব্যবহারকারী শুধু **নিজের** রিপোর্ট তৈরি/পড়া/মুছতে পারে |
-| `settings` | `imgbb`, `app` | `imgbb:{key,updatedAt}`, `app:{rules:{donorApproval,donationApproval,emergencyApproval,bloodGroupApproval,reqApproval},autoApproveEmergency}` | public read; staff write |
+| `settings` | `app` (public read), `$other` (staff read / admin write) | `app:{rules:{donorApproval,donationApproval,emergencyApproval,bloodGroupApproval,reqApproval},autoApproveEmergency}` — অন্য child (যেমন legacy `imgbb`) শুধু staff পড়তে পারে | `app`: public read; বাকি সব: staff read / admin write |
 
 > **গুরুত্বপূর্ণ:**
 > - `users/{uid}` ও `admins/{uid}`-এর key **Firebase Auth uid** — Security Rules
@@ -227,6 +227,25 @@ Auth-এ অ্যাকাউন্ট আগে থেকেই না থা�
 Deploy: `firebase deploy --only functions` (ফাংশন বদলালে অবশ্যই deploy করতে হবে)।
 পরীক্ষা: `npm run verify-admin` (single/bulk, missing record, missing Auth,
 UID/Donor ID mismatch, partial failure, realtime update—সব পরিস্থিতি)।
+
+### নিরাপত্তা স্থাপত্য (কোনো secret frontend-এ নেই)
+
+| বিষয় | কীভাবে |
+| --- | --- |
+| Firebase service | শুধু Realtime Database + Authentication (Firestore/Storage নয়) |
+| Admin SDK / service account | শুধু `functions/`-এ; `src/`-এ কখনো নয় |
+| অন্য user-এর Auth delete | Cloud Function `deleteAccountCompletely` (ID token + RTDB `admins` admin check) |
+| ছবি আপলোড (ImgBB) | Cloud Function `uploadImage` — key শুধু `functions/.env`-এ (`IMGBB_API_KEY`) |
+| `VITE_*` env | bundle-এ inline হয় → কোনো third-party secret এখানে রাখা যাবে না |
+| `import.meta.env` | পুরো অবজেক্ট না পড়ে শুধু নির্দিষ্ট public key (`src/lib/firebase.ts` → `publicEnv()`) |
+| localStorage | production data-এর উৎস নয় — RTDB-ই single source of truth (cache শুধু `vite dev`-এ) |
+| RTDB rules | private node-এ auth + staff/owner check; public read শুধু ওয়েবসাইটের node-এ |
+
+### Host-independent deploy
+
+কোডে কোনো host-নির্দিষ্ট path নেই। Root deploy → ডিফল্ট `base: "/"`; sub-directory হোস্টিং →
+`VITE_BASE=/cbdc/` env। Firebase Hosting · Cloudflare Pages (`wrangler.jsonc`, SPA rewrite) ·
+Netlify · Vercel — যেকোনো static host-এ `dist/` serve করলেই চলে।
 
 ## ৬. Firebase Authentication
 

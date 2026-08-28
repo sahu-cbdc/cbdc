@@ -65,13 +65,31 @@ const OPTIONAL_ENV_KEYS = [
   ["measurementId", "VITE_FIREBASE_MEASUREMENT_ID"],
 ] as const;
 
-function resolveFirebaseConfig(): { config: typeof DEFAULT_FIREBASE_CONFIG; error: Error | null } {
-  let env: Record<string, string | undefined> = {};
+/**
+ * Vite env পড়ার নিরাপদ উপায়।
+ *
+ * ⚠️ গুরুত্বপূর্ণ: `import.meta.env` **পুরো অবজেক্ট** রেফারেন্স করলে Vite সেটিকে
+ * literal হিসেবে bundle-এ ঢেলে দেয় — তখন `VITE_*` নামের যেকোনো সংবেদনশীল
+ * ভ্যারিয়েবল (যেমন third-party API key) সবার চোখের সামনে চলে আসে। তাই এখানে
+ * শুধু **নির্দিষ্ট, public-safe key** গুলো এক একটি করে পড়া হয় — অন্য কোনো env
+ * মান bundle-এ প্রবেশ করতেই পারে না।
+ */
+function publicEnv(): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = {};
   try {
-    env = ((import.meta as any).env || {}) as Record<string, string | undefined>;
+    const meta = (import.meta as any).env || {};
+    for (const [, key] of [...REQUIRED_ENV_KEYS, ...OPTIONAL_ENV_KEYS]) {
+      const value = meta[key];
+      if (typeof value === "string" && value) env[key] = value;
+    }
   } catch {
-    env = {};
+    /* SSR / অসমর্থিত পরিবেশ — env ছাড়াই এগোবে */
   }
+  return env;
+}
+
+function resolveFirebaseConfig(): { config: typeof DEFAULT_FIREBASE_CONFIG; error: Error | null } {
+  const env = publicEnv();
   const anySet =
     REQUIRED_ENV_KEYS.some(([, k]) => env[k]) || OPTIONAL_ENV_KEYS.some(([, k]) => env[k]);
   if (!anySet) {

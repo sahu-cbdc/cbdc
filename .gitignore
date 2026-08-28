@@ -26,7 +26,11 @@ yarn-error.log*
 .wrangler/
 
 # Environment variables (never commit these!)
+# Firebase web config-এর মতো public-safe মান ছাড়া কোনো secret এখানে নেই;
+# server secret (যেমন ImgBB API key) শুধু functions/.env-এ — সেটিও ignore করা.
 .env
 .env.local
 .env.production
 *.env
+functions/.env
+functions/.env.*

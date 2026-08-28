@@ -21,6 +21,29 @@ export type EmergencyRequestInput = {
   instructions?: string;
 };
 
+export type ImgbbUploadResult = {
+  url: string;
+  thumbUrl: string;
+  deleteUrl: string;
+  width: number;
+  height: number;
+};
+
+/**
+ * ImgBB-এ ছবি আপলোড — **নিরাপদ server-side proxy** দিয়ে।
+ * ImgBB API key কখনো browser-এ আসে না (VITE_* env inlined হয়, RTDB public
+ * read হয়—দুটোই ঝুঁকি)। ব্রাউজার শুধু authenticated হয়ে ছবির ডেটা পাঠায় এবং
+ * hosted URL ফেরত পায়।
+ */
+export function uploadImage(input: { image: string; name?: string }): Promise<ImgbbUploadResult> {
+  return call<{ image: string; name?: string }, ImgbbUploadResult>("uploadImage", input);
+}
+
+/** ImgBB key সার্ভারে কনফিগার করা আছে কি না — key-এর মান ফেরত আসে না। */
+export function getImgbbStatus(): Promise<{ configured: boolean }> {
+  return call<Record<string, never>, { configured: boolean }>("imgbbStatus", {});
+}
+
 export function submitEmergencyRequest(input: EmergencyRequestInput) {
   return call<EmergencyRequestInput, { ok: boolean; status: "pending" | "approved"; id: string }>(
     "submitEmergencyRequest", input

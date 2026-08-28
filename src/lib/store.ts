@@ -30,6 +30,25 @@ const CHANNEL = "cbdc-sync";
 const CACHE_KEY = "cbdc.shared.rtdb.public-cache.v2";
 const CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 24; // 24 hours — just a fast first-paint cache
 
+/**
+ * Production-এ **Realtime Database-ই একমাত্র source of truth**।
+ *
+ * localStorage cache শুধু local development-এ (fast HMR/first paint) চালু থাকে;
+ * production build-এ কোনো browser storage production data-এর উৎস হয় না —
+ * সব তথ্য সরাসরি RTDB listener থেকে আসে। ফলে dev/demo cache ভুল বা পুরোনো
+ * ডেটা দেখাতে পারে না, আর কোনো host-এ deploy করেই আচরণ একই থাকে।
+ */
+/* শুধু DEV/MODE পড়া হয় (পুরো `import.meta.env` নয়) — তাই অন্য কোনো env মান
+   bundle-এ ঢোকে না। */
+const CACHE_ENABLED = (() => {
+  try {
+    const meta = (import.meta as any).env || {};
+    return meta.DEV === true || meta.MODE === "development";
+  } catch {
+    return false;
+  }
+})();
+
 /** The six collections that make up the shared aggregate state. */
 const COLLECTION_NAMES = ["donors", "requests", "queue", "gallery", "notices", "accounts"] as const;
 type CollectionName = (typeof COLLECTION_NAMES)[number];
@@ -76,6 +95,7 @@ function clean(s: any): any {
 
 function restorePublicCache(): any {
   const s = fresh();
+  if (!CACHE_ENABLED) return s;
   try {
     // The cache is only for public website first paint. Admin/Moderator/Doner
     // panels call persist() during boot, so they must never treat browser cache
@@ -99,6 +119,7 @@ function restorePublicCache(): any {
 }
 
 function persistPublicCache() {
+  if (!CACHE_ENABLED) return;
   try {
     const payload: Record<string, any> = {
       version: 1,

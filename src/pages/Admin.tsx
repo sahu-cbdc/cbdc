@@ -16,7 +16,7 @@ import { ageText, ageFromDob, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
-import { uploadImage as imgbbUploadImage, getImgbbKey, saveImgbbKey } from "../lib/imgbb";
+import { uploadImage as imgbbUploadImage, isImgbbConfigured } from "../lib/imgbb";
 import { deleteDonorCompletely, deletionMessage, describeDeletionFailure, isAuthUid, type DeletionStep } from "../lib/accountDelete";
 import { noticeIsActive, noticeTarget } from "../lib/notice";
 
@@ -5788,11 +5788,12 @@ function initPage() {
       <div class="card"><div class="kv">
         <div><span>অবস্থা</span><b id="gKeyState">${DB.integr.imgbbKey?"কী সংরক্ষিত":"কী দেওয়া হয়নি"}</b></div>
         <div><span>সর্বোচ্চ আকার</span><b>৩২ MB</b></div></div>
-        <p class="hint2" style="margin-top:9px">ImgBB API কী RTDB <code>settings/imgbb</code> বা build-env
-          (<code>VITE_IMGBB_API_KEY</code>) থেকে আসে — কী থাকলে সরাসরি আপলোড চালু থাকে।</p></div>`;
-    /* ImgBB key status — সরাসরি lib থেকে (সেটিংস পেজের উপর নির্ভরতা নেই) */
-    getImgbbKey().then(k=>{DB.integr.imgbbKey=String(k||"");
-      const box=$("#gKeyState");if(box)box.textContent=DB.integr.imgbbKey?"কী সংরক্ষিত":"কী দেওয়া হয়নি";})
+        <p class="hint2" style="margin-top:9px">ImgBB API কী শুধু সার্ভার env
+          (<code>IMGBB_API_KEY</code>)-এ থাকে — আপলোড নিরাপদ Cloud Function দিয়ে হয়,
+          কী কখনো ব্রাউজারে আসে না।</p></div>`;
+    /* ImgBB অবস্থা — নিরাপদ server-side চেক (key-এর মান কখনো client-এ আসে না) */
+    isImgbbConfigured().then(okCfg=>{DB.integr.imgbbKey=okCfg?"configured":"";
+      const box=$("#gKeyState");if(box)box.textContent=okCfg?"কী সংরক্ষিত":"কী দেওয়া হয়নি";})
       .catch(()=>{});
     el.querySelectorAll("[data-gt]").forEach(b=>b.onclick=async()=>{
       const g=DB.gallery.find(x=>x.id===b.dataset.gt);if(!g)return;
