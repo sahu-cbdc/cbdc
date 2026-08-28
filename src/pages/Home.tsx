@@ -1630,22 +1630,10 @@ function StaticShell() {
                         {"কর্ণফুলী"}
                       </option>
                       <option>
-                        {"বাকলিয়া"}
-                      </option>
-                      <option>
                         {"সদরঘাট"}
                       </option>
                       <option>
                         {"চান্দগাঁও"}
-                      </option>
-                      <option>
-                        {"পটিয়া"}
-                      </option>
-                      <option>
-                        {"চন্দনাইশ"}
-                      </option>
-                      <option>
-                        {"কেরানিহাট"}
                       </option>
                       <option>
                         {"সাতকানিয়া"}
@@ -4191,7 +4179,7 @@ function initPage() {
 
       /* ── জেলা → থানা/এলাকা dependent selection (নিবন্ধন + অ্যাকাউন্ট তৈরি) ──
          একটি জেলা নির্বাচন করলে শুধু সেই জেলার এলাকাগুলোই দেখায়
-         (চট্টগ্রাম → ২১টি, বান্দরবান → ৭টি)। কেন্দ্রীয় তালিকা: src/lib/locations.ts */
+         (চট্টগ্রাম → ১৭টি, বান্দরবান → ৭টি)। কেন্দ্রীয় তালিকা: src/lib/locations.ts */
       function wireDistrictArea(districtSel, areaSel){
         if(!districtSel || !areaSel) return;
         districtSel.addEventListener("change", ()=>{
