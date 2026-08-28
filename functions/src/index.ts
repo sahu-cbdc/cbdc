@@ -7,7 +7,6 @@ initializeApp();
 const auth = getAuth();
 const database: Database = getDatabase();
 
-const STAFF_NODES = ["admins", "users", "donors", "members", "queue", "requests", "accounts", "reports"] as const;
 const BLOOD_GROUPS = new Set(["O+", "O-", "A+", "A-", "B+", "B-", "AB+", "AB-"]);
 
 async function isAuthorisedAdmin(uid: string): Promise<boolean> {
@@ -40,49 +39,133 @@ async function nextDonorId(): Promise<string> {
   return `CBDC-${year}-${String(Number(result.snapshot.val()) || 0).padStart(4, "0")}`;
 }
 
+/** Nodes that may hold rows belonging to a UID (or referencing a Donor ID). */
+const OWNED_NODES = [
+  "users", "admins", "accounts", "donors", "members", "queue", "requests", "reports",
+] as const;
+
+/** Fields that can carry the owning auth UID on an older/newer record. */
+const OWNER_FIELDS = ["ownerUid", "uid", "userId", "ownerId"];
+
 /**
- * Delete a user from Firebase Auth and every known UID-owned RTDB collection.
- * Shared notices and the append-only audit log are intentionally retained.
+ * Best-effort removal of Storage objects that belong to this account.
+ * This project keeps images on ImgBB, so normally there is nothing here;
+ * if a Storage bucket is configured the objects are removed silently and a
+ * failure never blocks the rest of the deletion.
  */
-export const deleteAccountCompletely = onCall(async (request: CallableRequest<{ uid?: string }>) => {
-  if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Login required.");
-  if (!(await isAuthorisedAdmin(request.auth.uid))) {
-    throw new HttpsError("permission-denied", "Only an authorised admin may delete accounts.");
-  }
-
-  const targetUid = String(request.data?.uid || "").trim();
-  if (!targetUid) throw new HttpsError("invalid-argument", "A target UID is required.");
-  if (targetUid === request.auth.uid) {
-    throw new HttpsError("failed-precondition", "An admin cannot delete their own account.");
-  }
-
-  const root = await database.ref().once("value");
-  const updates: Record<string, null> = {
-    [`users/${targetUid}`]: null,
-    [`admins/${targetUid}`]: null,
-    [`accounts/${targetUid}`]: null,
-  };
-
-  for (const node of STAFF_NODES) {
-    const value = root.child(node).val();
-    if (!value || typeof value !== "object") continue;
-    for (const [id, row] of Object.entries(value as Record<string, any>)) {
-      if (!row || typeof row !== "object") continue;
-      const owner = String(row.ownerUid || row.uid || row.userId || "");
-      if (owner === targetUid) updates[`${node}/${id}`] = null;
-    }
-  }
-
+async function deleteStorageArtifacts(uid: string, donorId: string): Promise<number> {
+  let removed = 0;
   try {
-    await auth.deleteUser(targetUid);
-    await database.ref().update(updates);
-  } catch (error) {
-    console.error("deleteAccountCompletely failed", targetUid, error);
-    throw new HttpsError("internal", "The account and its related data could not be deleted completely.");
+    const { getStorage } = await import("firebase-admin/storage");
+    const bucket = getStorage().bucket();
+    const prefixes = [`users/${uid}/`, `donors/${donorId}/`, `profilePhotos/${uid}/`].filter(
+      (p) => p.split("/")[1],
+    );
+    for (const prefix of prefixes) {
+      try {
+        const [files] = await bucket.getFiles({ prefix });
+        removed += files.length;
+        await Promise.all(files.map((file) => file.delete().catch(() => undefined)));
+      } catch (e) {
+        console.warn("deleteAccountCompletely storage prefix:", prefix, (e as Error)?.message);
+      }
+    }
+  } catch (e) {
+    /* Storage is not part of this project's architecture — nothing to delete. */
+    console.warn("deleteAccountCompletely storage:", (e as Error)?.message);
   }
+  return removed;
+}
 
-  return { ok: true, uid: targetUid };
-});
+/**
+ * Delete a user from Firebase Auth and every known UID/Donor-ID owned record.
+ *
+ * Deliberate behaviour (Donor Management / Access & Role deletion flow):
+ *   • an **already deleted** Auth account is reported as `missing`, not an error
+ *     (a missing record is never a failure),
+ *   • each node is scanned on its own (never the whole database at once) and
+ *     only rows that really reference the UID/Donor ID are removed,
+ *   • the append-only `audit` log and shared notices are intentionally kept,
+ *   • the response reports exactly what happened, so the panel can show a
+ *     precise failure instead of a generic one.
+ */
+export const deleteAccountCompletely = onCall(
+  async (request: CallableRequest<{ uid?: string; donorId?: string }>) => {
+    if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Login required.");
+    if (!(await isAuthorisedAdmin(request.auth.uid))) {
+      throw new HttpsError("permission-denied", "Only an authorised admin may delete accounts.");
+    }
+
+    const targetUid = String(request.data?.uid || "").trim();
+    const donorId = String(request.data?.donorId || "").trim();
+    if (!targetUid) throw new HttpsError("invalid-argument", "A target UID is required.");
+    if (targetUid === request.auth.uid) {
+      throw new HttpsError("failed-precondition", "An admin cannot delete their own account.");
+    }
+
+    /* ── 1. Firebase Authentication — "already gone" is not a failure ── */
+    let authState: "deleted" | "missing" = "missing";
+    try {
+      await auth.getUser(targetUid);
+      await auth.deleteUser(targetUid);
+      authState = "deleted";
+    } catch (error) {
+      const code = String((error as { code?: string })?.code || "").toLowerCase();
+      if (code === "auth/user-not-found") {
+        authState = "missing";
+      } else {
+        console.error("deleteAccountCompletely auth failed", targetUid, error);
+        throw new HttpsError("internal", "The Firebase Authentication account could not be deleted.");
+      }
+    }
+
+    /* ── 2. Realtime Database — only rows that really belong to this account ── */
+    const updates: Record<string, null> = {
+      [`users/${targetUid}`]: null,
+      [`admins/${targetUid}`]: null,
+      [`accounts/${targetUid}`]: null,
+    };
+    if (donorId) updates[`donors/${donorId}`] = null;
+
+    const removed: Record<string, number> = {};
+    for (const node of OWNED_NODES) {
+      let value: unknown;
+      try {
+        value = (await database.ref(node).once("value")).val();
+      } catch (error) {
+        console.warn("deleteAccountCompletely scan:", node, (error as Error)?.message);
+        continue;
+      }
+      if (!value || typeof value !== "object") continue;
+      for (const [id, row] of Object.entries(value as Record<string, any>)) {
+        if (!row || typeof row !== "object") continue;
+        const owner = OWNER_FIELDS.map((field) => String(row[field] ?? "").trim()).find(Boolean) || "";
+        const ownerMatch = owner === targetUid;
+        const donorMatch = !!donorId && (String(row.donorId ?? "").trim() === donorId || id === donorId);
+        if (!ownerMatch && !donorMatch) continue;
+        updates[`${node}/${id}`] = null;
+        removed[node] = (removed[node] || 0) + 1;
+      }
+    }
+    /* The keys above are always issued for the UID itself, even when the rows
+       are already gone — RTDB treats a null write on a missing path as a no-op. */
+    removed.users = (removed.users || 0) + 1;
+    removed.admins = (removed.admins || 0) + 1;
+    removed.accounts = (removed.accounts || 0) + 1;
+
+    /* ── 3. Storage (best effort — this project stores images on ImgBB) ── */
+    const storageRemoved = await deleteStorageArtifacts(targetUid, donorId);
+
+    try {
+      await database.ref().update(updates);
+    } catch (error) {
+      console.error("deleteAccountCompletely rtdb failed", targetUid, error);
+      throw new HttpsError("internal", "The related database records could not be deleted completely.");
+    }
+
+    return { ok: true, uid: targetUid, donorId, auth: authState, removed, storageRemoved };
+  },
+);
 
 /**
  * A privileged, setting-aware donor application path. The client uses this

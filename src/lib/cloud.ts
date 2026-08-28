@@ -35,10 +35,28 @@ async function call<TInput, TResult>(name: string, data: TInput): Promise<TResul
   return result.data;
 }
 
-export async function deleteAccountCompletely(uid: string): Promise<void> {
+export type AccountDeletionReport = {
+  ok: boolean;
+  uid: string;
+  donorId?: string;
+  /** `missing` = Auth-এ অ্যাকাউন্টটিই ছিল না (এটি কোনো ব্যর্থতা নয়)। */
+  auth?: "deleted" | "missing";
+  removed?: Record<string, number>;
+  storageRemoved?: number;
+};
+
+/**
+ * Firebase Authentication account + UID/Donor-ID সম্পর্কিত RTDB রেকর্ড মোছা
+ * (Admin SDK প্রিভিলেজ — ব্রাউজার থেকে অন্যের Auth অ্যাকাউন্ট মোছা যায় না)।
+ * Auth-এ অ্যাকাউন্ট আগেই মোছা থাকলে সেটি ব্যর্থতা নয় (`auth:"missing"`).
+ */
+export async function deleteAccountCompletely(uid: string, donorId = ""): Promise<AccountDeletionReport> {
   const targetUid = String(uid || "").trim();
   if (!targetUid) throw new Error("অ্যাকাউন্টের UID পাওয়া যায়নি।");
-  await call<{ uid: string }, { ok: boolean }>("deleteAccountCompletely", { uid: targetUid });
+  const payload: { uid: string; donorId?: string } = { uid: targetUid };
+  const targetDonorId = String(donorId || "").trim();
+  if (targetDonorId) payload.donorId = targetDonorId;
+  return call<{ uid: string; donorId?: string }, AccountDeletionReport>("deleteAccountCompletely", payload);
 }
 
 /** Used only when approval is OFF. The function validates the setting and

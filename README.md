@@ -117,7 +117,9 @@ src/
 public/
 └── img/logo.png          ★ Logo (এই ফাইল replace করলেই সর্বত্র নতুন logo)
 scripts/
-└── smoke.mjs             # jsdom-ভিত্তিক smoke test (npm run smoke)
+├── smoke.mjs             # jsdom-ভিত্তিক smoke test (npm run smoke)
+├── verify-admin-panel.mjs   # Admin panel verification (npm run verify-admin)
+└── fixtures/             # in-memory Firebase stub (শুধু verification-এর জন্য)
 
 database.rules.json      # Realtime Database Security Rules
 firebase.json            # Firebase CLI config
@@ -166,4 +168,5 @@ npm run dev        # dev server (http://localhost:5173) — একটি entry; 
 npm run build      # production build (dist/)
 npm run preview    # production preview
 npm run smoke      # jsdom-ভিত্তিক smoke test (৪টি পেজ render + logic চেক)
+npm run verify-admin   # Admin panel: loading/skeleton, অনুমোদন সেটিংস, ডোনার ডিলিট, ভূমিকা পরিবর্তন
 ```

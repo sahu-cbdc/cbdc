@@ -163,7 +163,7 @@ metadata** সেভ হয়।
 | `audit` | entry id | প্যানেলের অডিট লগ — at, who, role, act, target, mod | staff read; staff শুধু নতুন entry append করতে পারে (edit নেই), delete শুধু admin |
 | `messages` | message id | ওয়েবসাইটের যোগাযোগ বার্তা — name, phone, text, read, at | staff read; authenticated create, staff manage (read-flag) |
 | `reports` | report id | ডোনার প্যানেলের "সমস্যা জানান" রিপোর্ট — ownerUid, uid, name, username, email, type, text, screenshot (ImgBB URL), status (`open`/`resolved`), createdAt | staff read/manage; ব্যবহারকারী শুধু **নিজের** রিপোর্ট তৈরি/পড়া/মুছতে পারে |
-| `settings` | `imgbb`, `app` | `imgbb:{key,updatedAt}`, `app:{autoApproveEmergency}` | public read; staff write |
+| `settings` | `imgbb`, `app` | `imgbb:{key,updatedAt}`, `app:{rules:{donorApproval,donationApproval,emergencyApproval,bloodGroupApproval,reqApproval},autoApproveEmergency}` | public read; staff write |
 
 > **গুরুত্বপূর্ণ:**
 > - `users/{uid}` ও `admins/{uid}`-এর key **Firebase Auth uid** — Security Rules
@@ -171,6 +171,30 @@ metadata** সেভ হয়।
 > - **বয়স কোথাও সংরক্ষিত হয় না।** শুধু `dob` (জন্ম তারিখ, `YYYY-MM-DD`) রাখা হয়,
 >   আর বয়স প্রতিবার `src/lib/age.ts` → `ageFromDob()` দিয়ে হিসাব করা হয় —
 >   ফলে বয়স কখনো পুরোনো হয় না।
+
+### অনুমোদন ও সেটিংস (Admin Panel → নিয়ন্ত্রণ → অনুমোদন ও সেটিংস)
+
+চারটি সুইচ — প্রতিটি বদলালেই সাথে সাথে RTDB `settings/app/rules`-এ সেভ হয় ও live
+listener-এর মাধ্যমে সব প্যানেল/ওয়েবসাইটে কার্যকর হয় (কোনো reload লাগে না):
+
+| সুইচ | RTDB key | ON | OFF |
+| --- | --- | --- | --- |
+| ডোনার আবেদন | `donorApproval` | নতুন Donor Application approval queue-এ যায় | আবেদন সরাসরি অনুমোদিত (Cloud Function `submitDonorApplication`) |
+| রক্তদান যাচাই | `donationApproval` | রক্তদান ভেরিফিকেশন queue-এ যায় | রক্তদান সরাসরি যাচাইকৃত (`ok:true`) — queue-তে যায় না |
+| জরুরি আবেদন | `emergencyApproval` | জরুরি আবেদন approval queue-এ যায় | আবেদন সরাসরি প্রকাশিত |
+| গ্রুপ বদল | `bloodGroupApproval` | গ্রুপ পরিবর্তন queue-এ যায় | গ্রুপ সরাসরি বদলে যায় (Cloud Function `changeBloodGroup`) |
+
+### ডোনার সম্পূর্ণ মুছে ফেলা (Donor Management / অ্যাক্সেস ও ভূমিকা)
+
+`src/lib/accountDelete.ts` — Donor ID ও UID আগে RTDB থেকে পড়েই resolve করে
+(কোনো path অনুমান করা হয় না), তারপর মুছে ফেলে:
+
+`donors/{donorId}` · `users/{uid}` · `admins/{uid}` · `accounts/*` · `members/*` ·
+`queue/*` · `requests/*` · `reports/*` এবং Firebase Authentication account
+(Cloud Function `deleteAccountCompletely`)। `audit` লগ append-only — মোছা হয় না।
+
+নিয়ম: রেকর্ড না থাকলে failure নয় · ভুল UID-তে কিছুই মোছা হয় না · সব ধাপ সফল
+হলেই success (partial-এ নয়) · ব্যর্থ হলে কোন অংশ বাকি আছে তা বার্তায় দেখা যায়।
 
 ## ৬. Firebase Authentication
 

@@ -1718,7 +1718,7 @@ function initPage() {
   */
   let MY_APPLICATION_UID="";
   let AUTH_SESSION_READY=false;
-  let APPROVAL_SETTINGS={donorApproval:true,emergencyApproval:true,bloodGroupApproval:true};
+  let APPROVAL_SETTINGS={donorApproval:true,donationApproval:true,emergencyApproval:true,bloodGroupApproval:true};
   let stopApprovalSettings=()=>{};
   let MY_APPLICATION_COUNT_READY=false;
   let MY_APPLICATION_CLEANUP=false;
@@ -1782,6 +1782,7 @@ function initPage() {
       const rules=row&&row.rules&&typeof row.rules==="object"?row.rules:{};
       APPROVAL_SETTINGS={
         donorApproval:rules.donorApproval!==false,
+        donationApproval:rules.donationApproval!==false,
         emergencyApproval:rules.emergencyApproval!==false && row?.autoApproveEmergency!==true,
         bloodGroupApproval:rules.bloodGroupApproval!==false
       };
@@ -3643,12 +3644,15 @@ function initPage() {
         try{ const up=await imgbbUploadImage(f); proof=up.url; }
         catch(e){ return er(e&&e.message?e.message:"ছবি আপলোড করা যায়নি"); }
       }
+      /* রক্তদান যাচাইয়ের অনুমোদন OFF থাকলে রেকর্ডটি সরাসরি যাচাইকৃত (ok)
+         হয় — approval queue-তে কোনো এন্ট্রি যায় না (Admin সেটিং realtime)। */
+      const autoVerify=APPROVAL_SETTINGS.donationApproval===false;
       RAW.donations.unshift({date,place,bags:Number($("#ad_bags").value)||1,
-        pat:$("#ad_pat").value.trim()||"",note:$("#ad_note").value.trim()||"",proof,ok:false});
+        pat:$("#ad_pat").value.trim()||"",note:$("#ad_note").value.trim()||"",proof,ok:autoVerify});
       await saveData();
       await logAct("রক্তদান যোগ",date+" · "+place,"donor");
       renderSub("adddonation");
-      toast("যোগ হয়েছে — যাচাইয়ের অপেক্ষায়","ok");
+      toast(autoVerify?"যোগ হয়েছে — সরাসরি যাচাইকৃত হয়েছে":"যোগ হয়েছে — যাচাইয়ের অপেক্ষায়","ok");
     };
     $$("[data-delrec]").forEach(b=>b.onclick=async()=>{
       const i=Number(b.dataset.delrec);

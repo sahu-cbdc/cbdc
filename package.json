@@ -13,7 +13,8 @@
     "verify-realtime": "node scripts/verify-realtime-donors.mjs",
     "verify-group": "node scripts/verify-group-change.mjs",
     "verify-notify": "node scripts/verify-notify.mjs",
-    "verify-panel-rtdb": "node scripts/verify-panel-rtdb.mjs"
+    "verify-panel-rtdb": "node scripts/verify-panel-rtdb.mjs",
+    "verify-admin": "node scripts/verify-admin-panel.mjs"
   },
   "dependencies": {
     "firebase": "^11.10.0",
