@@ -184,17 +184,29 @@ listener-এর মাধ্যমে সব প্যানেল/ওয়ে�
 | জরুরি আবেদন | `emergencyApproval` | জরুরি আবেদন approval queue-এ যায় | আবেদন সরাসরি প্রকাশিত |
 | গ্রুপ বদল | `bloodGroupApproval` | গ্রুপ পরিবর্তন queue-এ যায় | গ্রুপ সরাসরি বদলে যায় (Cloud Function `changeBloodGroup`) |
 
-### ডোনার সম্পূর্ণ মুছে ফেলা (Donor Management / অ্যাক্সেস ও ভূমিকা)
+### ডোনার সম্পূর্ণ মুছে ফেলা — নিরাপদ server-side endpoint (Donor Management / অ্যাক্সেস ও ভূমিকা)
 
-`src/lib/accountDelete.ts` — Donor ID ও UID আগে RTDB থেকে পড়েই resolve করে
-(কোনো path অনুমান করা হয় না), তারপর মুছে ফেলে:
+Flow: **Donor Select → Delete → Confirmation → Secure Server/API Request →
+Authentication + RTDB + Storage সব Delete → Success → Realtime UI Update**
 
-`donors/{donorId}` · `users/{uid}` · `admins/{uid}` · `accounts/*` · `members/*` ·
-`queue/*` · `requests/*` · `reports/*` এবং Firebase Authentication account
-(Cloud Function `deleteAccountCompletely`)। `audit` লগ append-only — মোছা হয় না।
+- **ব্রাউজারে কোনো Firebase Admin SDK বা service-account key নেই** — অন্য কারও
+  Authentication অ্যাকাউন্ট ক্লায়েন্ট থেকে মোছার কোনো উপায়ই নেই।
+- পেজ শুধু একটি **নিরাপদ server-side callable** (`deleteAccountCompletely`)
+  কল করে `{uid, donorId}` দিয়ে। Firebase নিজেই ID token যাচাই করে; ফাংশন
+  RTDB `admins` থেকে admin-রোল আবার চেক করে, self-delete বন্ধ করে এবং
+  Donor ID আসলেই ওই UID-এর কি না যাচাই করে।
+- **সব মোছা হয় সার্ভারেই**: Firebase Auth → RTDB (`donors`, `users`, `admins`,
+  `accounts`, `members`, `queue`, `requests`, `reports` — UID/Donor ID রেফারেন্স
+  অনুযায়ী, একটি atomic multi-path update-এ) → Storage (best effort)।
+  `audit` লগ append-only — মোছা হয় না।
+- Auth-এ অ্যাকাউন্ট আগে থেকেই না থাকলে সেটি `missing` (failure নয়)।
+- সব ধাপ সফল হলেই success; ব্যর্থ হলে কোন অংশ বাকি আছে তা বার্তায় দেখা যায়।
+- শেষে পেজ read-only **যাচাই** করে — কোনো রেকর্ড থেকে গেলে সেটি RTDB security
+  rules-এর মধ্যেই মুছে ফেলা হয় (সার্ভার পুরোনো build-এ থাকলেও কাজ সম্পূর্ণ হয়)।
+- একক ও bulk দুটোতেই একই flow; listener-এর মাধ্যমে তালিকা/পরিসংখ্যান সাথে সাথে
+  আপডেট হয় — কোনো page reload লাগে না।
 
-নিয়ম: রেকর্ড না থাকলে failure নয় · ভুল UID-তে কিছুই মোছা হয় না · সব ধাপ সফল
-হলেই success (partial-এ নয়) · ব্যর্থ হলে কোন অংশ বাকি আছে তা বার্তায় দেখা যায়।
+Deploy: `firebase deploy --only functions` (ফাংশন বদলালে অবশ্যই deploy করতে হবে)।
 
 ## ৬. Firebase Authentication
 

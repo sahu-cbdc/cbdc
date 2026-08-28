@@ -120,12 +120,18 @@ function notify() {
   }
 }
 
+/* client-এর লেখা বন্ধ করে পরীক্ষা করা যায় — প্রমাণ করে যে ডিলিট আসলেই
+   সার্ভার (Cloud Function) দিয়ে হচ্ছে, ব্রাউজার দিয়ে নয়। */
+let clientWritesLocked = false;
+
 export async function set(target, value) {
+  if (clientWritesLocked) throw new Error("client write blocked (server-only test)");
   setAt(pathOf(target), value);
   notify();
 }
 
 export async function update(target, map) {
+  if (clientWritesLocked) throw new Error("client write blocked (server-only test)");
   const base = pathOf(target);
   for (const [key, value] of Object.entries(map || {})) {
     setAt([...base, ...segs(key)], value);
@@ -134,7 +140,14 @@ export async function update(target, map) {
 }
 
 export async function remove(target) {
+  if (clientWritesLocked) throw new Error("client write blocked (server-only test)");
   setAt(pathOf(target), null);
+  notify();
+}
+
+/** সার্ভার (Cloud Function) এই path দিয়ে লেখে — client lock উপেক্ষা করে। */
+export function __serverUpdate(map) {
+  for (const [key, value] of Object.entries(map || {})) setAt(segs(key), value);
   notify();
 }
 
@@ -207,6 +220,12 @@ export function __flush() {
 }
 export function __dump() {
   return clone(tree);
+}
+export function __at(path) {
+  return getAt(segs(path));
+}
+export function __lockClientWrites(locked = true) {
+  clientWritesLocked = !!locked;
 }
 export function __reset() {
   for (const key of Object.keys(tree)) delete tree[key];

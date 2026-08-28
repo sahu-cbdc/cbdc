@@ -14,7 +14,15 @@
  *    queue/{id}            → অনুমোদনের অপেক্ষায় থাকা আবেদন/রক্তদান যাচাই
  *    requests/{id}         → জরুরি রক্তের আবেদন
  *    reports/{id}          → ডোনার প্যানেল থেকে পাঠানো সমস্যা/রিপোর্ট
- *    Firebase Auth         → লগইন অ্যাকাউন্ট (শুধু Cloud Function দিয়ে মোছা যায়)
+ *    Firebase Auth         → লগইন অ্যাকাউন্ট (শুধু সার্ভার দিয়ে মোছা যায়)
+ *    Storage               → UID/Donor ID-সংক্রান্ত ফাইল (থাকলে)
+ *
+ *  ══ নিরাপত্তা ══
+ *  ব্রাউজারে কোনো Admin SDK বা service-account key নেই। Authentication সহ
+ *  সব মোছা হয় একটি **নিরাপদ server-side endpoint** (Cloud Function
+ *  `deleteAccountCompletely`) দিয়ে — Firebase ID token নিজেই যাচাই করে আর
+ *  ফাংশন RTDB `admins` থেকে admin-রোল আবার চেক করে। পেজ শুধু orchestrate করে
+ *  ও শেষে read-only যাচাই করে (কিছু থেকে গেলে RTDB rules-এর মধ্যেই মোছে)।
  *
  *  নীতি (Task requirement):
  *   • **অনুমান করে কোনো নতুন path তৈরি করা হয় না** — প্রতিটি path আগে সত্যিই
@@ -22,9 +30,8 @@
  *   • UID/Donor ID ভুল resolve হলে **কিছুই মোছা হয় না**।
  *   • সব ধাপ একসাথে শেষ না হলে `ok:false` — partial deletion-এ সাফল্য নেই।
  *   • `audit` লগ কখনো মোছা হয় না (append-only রেকর্ড)।
- *   • Storage: এই প্রজেক্টে ছবি ImgBB-এ থাকে (Firebase Storage নয়), তাই
- *     server-side-এ শুধু UID/Donor ID-সংক্রান্ত Storage object থাকলে সেগুলো
- *     best-effort মোছা হয় (Cloud Function) — ব্যর্থ হলেও বাকি ডিলিট থামে না।
+ *   • Storage এই প্রজেক্টে ImgBB-এ (Firebase Storage নয়) — server-side
+ *     best-effort cleanup; ব্যর্থ হলেও বাকি ডিলিট থামে না।
  */
 
 import { NODES } from "./firebase";
@@ -245,6 +252,8 @@ export type DonorDeletionResult = {
   failed: DeletionStep[];
   /** মোছা হয়েছে এমন RTDB path-এর সংখ্যা */
   removed: number;
+  /** সার্ভার (Cloud Function) সফলভাবে কল হয়েছে কি না */
+  server: "ok" | "failed" | "skipped";
 };
 
 const STEP_LABELS: Record<string, string> = {
@@ -261,7 +270,20 @@ const STEP_LABELS: Record<string, string> = {
 
 /**
  * একটি ডোনার সম্পূর্ণভাবে মুছে ফেলা — Donor ID, UID, প্রোফাইল, অ্যাকাউন্ট,
- * আবেদন/অনুমোদন, রক্তদান-সংক্রান্ত রেকর্ড ও (সম্ভব হলে) Authentication।
+ * আবেদন/অনুমোদন, রক্তদান-সংক্রান্ত রেকর্ড, Storage ও Firebase Authentication।
+ *
+ * ══ নিরাপত্তা মডেল (কখনো ভাঙা যাবে না) ══
+ *   • ব্রাউজারে **কোনো Firebase Admin SDK নেই** এবং কোনো service-account
+ *     key/secret থাকে না — অন্য কারও Authentication অ্যাকাউন্ট ক্লায়েন্ট থেকে
+ *     মোছার কোনো উপায়ই নেই।
+ *   • পেজ শুধুই একটি **নিরাপদ server-side endpoint** (Cloud Function
+ *     `deleteAccountCompletely`) কল করে; Firebase নিজেই কলার-এর ID token যাচাই
+ *     করে আর ফাংশন RTDB `admins` দিয়ে admin-রোল আবার চেক করে।
+ *   • Auth + RTDB + Storage — সব মোছা হয় **সার্ভারেই**, একটি atomic
+ *     multi-path update-এ।
+ *   • এরপর পেজ শুধু **যাচাই** করে (read-only): কোনো রেকর্ড থেকে গেলে সেটি
+ *     RTDB security rules-এর মধ্যে থেকে মুছে ফেলা হয় (এতে কোনো Auth/secret
+ *     জড়িত নয়)। তাই সার্ভার যতই পুরোনো build-এ থাকুক, কাজ সম্পূর্ণ হয়।
  *
  * Listener-গুলোর জন্যই ডিলিট হওয়ার সাথে সাথে তালিকা ও পরিসংখ্যান আপডেট হয় —
  * কোনো reload/রি-ফেচ দরকার হয় না।
@@ -269,7 +291,7 @@ const STEP_LABELS: Record<string, string> = {
 export async function deleteDonorCompletely(
   seed: { donorId?: string; uid?: string; name?: string; phone?: string; email?: string },
   sources: RowSources = {},
-  opts: { deleteAuth?: boolean } = {}
+  opts: { verify?: boolean } = {}
 ): Promise<DonorDeletionResult> {
   const identity = await resolveDonorIdentity(seed, sources);
   const steps: DeletionStep[] = [];
@@ -281,70 +303,85 @@ export async function deleteDonorCompletely(
       error: identity.error,
     }];
     return {
-      ok: false,
-      donorId: identity.donorId,
-      uid: "",
-      name: identity.name,
-      auth: "skipped",
-      steps: failed,
-      failed,
-      removed: 0,
+      ok: false, donorId: identity.donorId, uid: "", name: identity.name,
+      auth: "skipped", steps: failed, failed, removed: 0, server: "skipped",
     };
   }
 
-  const plan = await planDonorDeletion(identity, sources);
+  /* ── ১. নিরাপদ server-side endpoint — Auth + RTDB + Storage একসাথে ── */
   let authState: DonorDeletionResult["auth"] = "skipped";
-
-  /* ── ১. Firebase Authentication (শুধু server-side সম্ভব) ── */
-  if (identity.uid && opts.deleteAuth !== false) {
+  let removed = 0;
+  let serverState: DonorDeletionResult["server"] = "skipped";
+  if (identity.uid || identity.donorId) {
     try {
-      const res = await deleteAccountCompletely(identity.uid, identity.donorId);
-      authState = res && res.auth === "missing" ? "missing" : "deleted";
-      steps.push({ id: "auth", label: STEP_LABELS.auth, ok: true, skipped: authState === "missing" });
-    } catch (e) {
-      authState = "failed";
+      const report = await deleteAccountCompletely(identity.uid, identity.donorId);
+      serverState = "ok";
+      authState = report && report.auth === "missing" ? "missing" : "deleted";
+      removed = Number(report?.removedPaths || 0);
       steps.push({
         id: "auth",
         label: STEP_LABELS.auth,
-        ok: false,
-        error: (e as Error)?.message || "Authentication অ্যাকাউন্ট মোছা যায়নি।",
+        ok: true,
+        skipped: authState === "missing",
       });
+      /* সার্ভার যা যা মুছেছে তা রিপোর্ট থেকে ধাপ হিসেবে রাখি */
+      const removedNodes: Record<string, number> = (report && report.removed) || {};
+      for (const node of Object.keys(removedNodes)) {
+        if (!removedNodes[node]) continue;
+        steps.push({ id: node, label: STEP_LABELS[node] || node, ok: true });
+      }
+    } catch (e) {
+      serverState = "failed";
+      const failed: DeletionStep[] = [{
+        id: "server",
+        label: "নিরাপদ সার্ভার অনুরোধ (Authentication + RTDB + Storage)",
+        ok: false,
+        error: (e as Error)?.message || "সার্ভারে ডিলিট সম্পন্ন করা যায়নি।",
+      }];
+      return {
+        ok: false, donorId: identity.donorId, uid: identity.uid, name: identity.name,
+        auth: "failed", steps: failed, failed, removed: 0, server: serverState,
+      };
     }
   }
 
-  /* ── ২. Realtime Database — সব path একসাথে (atomic) ── */
-  const pathList = Object.keys(plan.paths);
-  if (pathList.length) {
+  /* ── ২. যাচাই (read-only) — সার্ভারের পরেও কোনো রেকর্ড থেকে গেলে ──
+     সাধারণত কিছুই থাকে না; থাকলে সেটি RTDB rules-এর মধ্যে থেকে মোছা হয়
+     (কোনো Admin SDK/secret ছাড়াই)। ফলে সার্ভার পুরোনো build-এ থাকলেও
+     ডিলিট সম্পূর্ণ হয়। */
+  if (opts.verify !== false) {
+    let plan: DeletionPlan = { donorId: identity.donorId, uid: identity.uid, paths: {}, matched: {} };
     try {
-      await updatePaths(plan.paths);
-      for (const node of Object.keys(plan.matched)) {
-        steps.push({
-          id: node,
-          label: STEP_LABELS[node] || node,
-          ok: true,
-        });
-      }
+      plan = await planDonorDeletion(identity, {});
     } catch (e) {
-      /* একসাথে ব্যর্থ হলে প্রতিটি path আলাদাভাবে চেষ্টা — কোনটি মোছা যায়নি
-         তা স্পষ্ট থাকে (partial success-কে success হিসেবে দেখানো হয় না)। */
-      const message = (e as Error)?.message || "তথ্য মোছা যায়নি।";
-      const nodeOf = (path: string) => String(path || "").split("/")[0] || path;
-      for (const path of pathList) {
-        try {
-          await removePath(path);
-          steps.push({ id: nodeOf(path), label: STEP_LABELS[nodeOf(path)] || nodeOf(path), ok: true });
-        } catch (err) {
-          steps.push({
-            id: nodeOf(path),
-            label: STEP_LABELS[nodeOf(path)] || nodeOf(path),
-            ok: false,
-            error: (err as Error)?.message || message,
-          });
+      console.warn("accountDelete verify:", (e as Error)?.message);
+    }
+    const leftover = Object.keys(plan.paths);
+    if (leftover.length) {
+      try {
+        await updatePaths(plan.paths);
+        removed += leftover.length;
+        for (const node of Object.keys(plan.matched)) {
+          steps.push({ id: node, label: STEP_LABELS[node] || node, ok: true });
+        }
+      } catch (e) {
+        const message = (e as Error)?.message || "তথ্য মোছা যায়নি।";
+        const nodeOf = (path: string) => String(path || "").split("/")[0] || path;
+        for (const path of leftover) {
+          try {
+            await removePath(path);
+            steps.push({ id: nodeOf(path), label: STEP_LABELS[nodeOf(path)] || nodeOf(path), ok: true });
+          } catch (err) {
+            steps.push({
+              id: nodeOf(path),
+              label: STEP_LABELS[nodeOf(path)] || nodeOf(path),
+              ok: false,
+              error: (err as Error)?.message || message,
+            });
+          }
         }
       }
     }
-  } else {
-    steps.push({ id: "donor", label: STEP_LABELS.donor, ok: true, skipped: true });
   }
 
   /* একই node-এর একাধিক ধাপ এলে একটিতে মিলিয়ে দিই (বারবার তালিকাভুক্তি নয়) */
@@ -369,7 +406,8 @@ export async function deleteDonorCompletely(
     auth: authState,
     steps: merged,
     failed,
-    removed: pathList.length,
+    removed,
+    server: serverState,
   };
 }
 

@@ -78,19 +78,31 @@ async function deleteStorageArtifacts(uid: string, donorId: string): Promise<num
 }
 
 /**
- * Delete a user from Firebase Auth and every known UID/Donor-ID owned record.
+ * SECURE SERVER-SIDE DELETION ENDPOINT — the single place where an account is
+ * destroyed. The browser can never delete another user's Firebase Auth
+ * account, so the Admin panel calls this callable (Firebase verifies the
+ * caller's ID token automatically) and this function does everything:
  *
- * Deliberate behaviour (Donor Management / Access & Role deletion flow):
- *   • an **already deleted** Auth account is reported as `missing`, not an error
- *     (a missing record is never a failure),
- *   • each node is scanned on its own (never the whole database at once) and
- *     only rows that really reference the UID/Donor ID are removed,
- *   • the append-only `audit` log and shared notices are intentionally kept,
- *   • the response reports exactly what happened, so the panel can show a
- *     precise failure instead of a generic one.
+ *   1. authorisation — the caller must be an active `admin` in RTDB `admins`;
+ *      nobody may delete their own account,
+ *   2. identity validation — the Donor ID must really belong to that UID
+ *      (a mismatched request is refused, so a wrong id can never delete the
+ *      wrong account),
+ *   3. Firebase Authentication — `auth/user-not-found` is reported as
+ *      `missing`, never as a failure,
+ *   4. Realtime Database — every row that references the UID/Donor ID across
+ *      the known nodes, removed in ONE atomic multi-path update,
+ *   5. Cloud Storage — best effort (this project keeps images on ImgBB, so
+ *      normally there is nothing to delete; a Storage failure never blocks
+ *      the rest).
+ *
+ * The append-only `audit` log and shared notices are intentionally kept.
+ * The response is a precise report so the panel can show exactly what was
+ * removed (and never claim success for a partial deletion).
  */
 export const deleteAccountCompletely = onCall(
   async (request: CallableRequest<{ uid?: string; donorId?: string }>) => {
+    /* ── 0. authorisation (server-side — never trust the client) ── */
     if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Login required.");
     if (!(await isAuthorisedAdmin(request.auth.uid))) {
       throw new HttpsError("permission-denied", "Only an authorised admin may delete accounts.");
@@ -99,11 +111,35 @@ export const deleteAccountCompletely = onCall(
     const targetUid = String(request.data?.uid || "").trim();
     const donorId = String(request.data?.donorId || "").trim();
     if (!targetUid) throw new HttpsError("invalid-argument", "A target UID is required.");
+    if (!/^[A-Za-z0-9_-]{20,64}$/.test(targetUid)) {
+      throw new HttpsError("invalid-argument", "The target UID is not valid.");
+    }
+    if (donorId && !/^[A-Za-z0-9_-]{3,64}$/.test(donorId)) {
+      throw new HttpsError("invalid-argument", "The Donor ID is not valid.");
+    }
     if (targetUid === request.auth.uid) {
       throw new HttpsError("failed-precondition", "An admin cannot delete their own account.");
     }
 
-    /* ── 1. Firebase Authentication — "already gone" is not a failure ── */
+    /* ── 1. identity validation — Donor ID must belong to this UID ── */
+    if (donorId) {
+      const [donorRow, userRow] = await Promise.all([
+        database.ref(`donors/${donorId}`).once("value"),
+        database.ref(`users/${targetUid}`).once("value"),
+      ]);
+      const donorOwner = String(donorRow.child("ownerUid").val() ?? donorRow.child("uid").val() ?? "").trim();
+      if (donorRow.exists() && donorOwner && donorOwner !== targetUid) {
+        throw new HttpsError("failed-precondition", "That Donor ID belongs to another account.");
+      }
+      /* users/{uid}/donorId ভিন্ন থাকলে (পুরোনো/অসম্পূর্ণ রেকর্ড) কেবল সতর্কতা —
+         ডোনার রেকর্ডের ownerUid-ই authoritative, তাই ভুল করে বন্ধ করা হয় না। */
+      const userDonorId = String(userRow.child("donorId").val() ?? "").trim();
+      if (userRow.exists() && userDonorId && userDonorId !== donorId) {
+        console.warn("deleteAccountCompletely: users donorId differs", targetUid, userDonorId, donorId);
+      }
+    }
+
+    /* ── 2. Firebase Authentication — "already gone" is not a failure ── */
     let authState: "deleted" | "missing" = "missing";
     try {
       await auth.getUser(targetUid);
@@ -119,43 +155,57 @@ export const deleteAccountCompletely = onCall(
       }
     }
 
-    /* ── 2. Realtime Database — only rows that really belong to this account ── */
-    const updates: Record<string, null> = {
-      [`users/${targetUid}`]: null,
-      [`admins/${targetUid}`]: null,
-      [`accounts/${targetUid}`]: null,
-    };
-    if (donorId) updates[`donors/${donorId}`] = null;
-
-    const removed: Record<string, number> = {};
+    /* ── 3. Realtime Database — only rows that really belong to this account ── */
+    const snapshots: Record<string, Record<string, any>> = {};
     for (const node of OWNED_NODES) {
-      let value: unknown;
       try {
-        value = (await database.ref(node).once("value")).val();
+        snapshots[node] = (await database.ref(node).once("value")).val() || {};
       } catch (error) {
         console.warn("deleteAccountCompletely scan:", node, (error as Error)?.message);
-        continue;
+        snapshots[node] = {};
       }
-      if (!value || typeof value !== "object") continue;
-      for (const [id, row] of Object.entries(value as Record<string, any>)) {
+    }
+
+    const updates: Record<string, null> = {};
+    const removed: Record<string, number> = {};
+    const touched = new Set<string>();
+    const mark = (node: string, id: string, exists: boolean) => {
+      const path = `${node}/${id}`;
+      if (touched.has(path)) return;
+      touched.add(path);
+      updates[path] = null;
+      if (exists) removed[node] = (removed[node] || 0) + 1;
+    };
+
+    /* UID/Donor-ID keyed rows (their body may not repeat the uid). */
+    const explicit: Array<[string, string]> = [
+      ["users", targetUid],
+      ["admins", targetUid],
+      ["accounts", targetUid],
+      ...(donorId ? ([["donors", donorId]] as Array<[string, string]>) : []),
+    ];
+    for (const [node, id] of explicit) {
+      const container = snapshots[node];
+      mark(node, id, !!container && Object.prototype.hasOwnProperty.call(container, id));
+    }
+
+    /* Every other row that references the UID or the Donor ID. */
+    for (const node of OWNED_NODES) {
+      const container = snapshots[node];
+      for (const [id, row] of Object.entries(container || {})) {
         if (!row || typeof row !== "object") continue;
         const owner = OWNER_FIELDS.map((field) => String(row[field] ?? "").trim()).find(Boolean) || "";
         const ownerMatch = owner === targetUid;
         const donorMatch = !!donorId && (String(row.donorId ?? "").trim() === donorId || id === donorId);
         if (!ownerMatch && !donorMatch) continue;
-        updates[`${node}/${id}`] = null;
-        removed[node] = (removed[node] || 0) + 1;
+        mark(node, id, true);
       }
     }
-    /* The keys above are always issued for the UID itself, even when the rows
-       are already gone — RTDB treats a null write on a missing path as a no-op. */
-    removed.users = (removed.users || 0) + 1;
-    removed.admins = (removed.admins || 0) + 1;
-    removed.accounts = (removed.accounts || 0) + 1;
 
-    /* ── 3. Storage (best effort — this project stores images on ImgBB) ── */
+    /* ── 4. Storage (best effort) ── */
     const storageRemoved = await deleteStorageArtifacts(targetUid, donorId);
 
+    /* One atomic write — either every related record goes, or nothing does. */
     try {
       await database.ref().update(updates);
     } catch (error) {
@@ -163,14 +213,18 @@ export const deleteAccountCompletely = onCall(
       throw new HttpsError("internal", "The related database records could not be deleted completely.");
     }
 
-    return { ok: true, uid: targetUid, donorId, auth: authState, removed, storageRemoved };
+    return {
+      ok: true,
+      uid: targetUid,
+      donorId,
+      auth: authState,
+      removed,
+      storageRemoved,
+      removedPaths: Object.keys(updates).length,
+    };
   },
 );
 
-/**
- * A privileged, setting-aware donor application path. The client uses this
- * only when donorApproval is OFF. Existing pending requests are never touched.
- */
 export const submitDonorApplication = onCall(async (request: CallableRequest<Record<string, unknown>>) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Login required.");

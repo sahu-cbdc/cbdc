@@ -333,14 +333,14 @@ console.log("\n── ৩. Donor Management — সম্পূর্ণ ডি�
   ok(!has("donors/CBDC-2026-0002") && !has(`users/${DONOR_B}`) && has(`users/${DONOR_A}`),
     "legacy রেকর্ড মোছার সময় অন্য অ্যাকাউন্ট অক্ষত থাকে");
 
-  /* Auth ব্যর্থ → partial-এ success নয়, আর কী বাকি আছে তা জানায় */
+  /* Auth/endpoint ব্যর্থ → partial-এ success নয়, আর কী বাকি আছে তা জানায় */
   seedDb();
   fakeFns.__failingUids.add(DONOR_A);
   const partial = await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0001", uid: DONOR_A });
   fakeFns.__failingUids.delete(DONOR_A);
-  ok(partial.ok === false && partial.failed.some((f) => f.id === "auth"),
-    "Auth মুছতে ব্যর্থ হলে সাফল্য দেখানো হয় না (partial ≠ success)");
-  ok(/Authentication/.test(accountDelete.describeDeletionFailure("রফিক উদ্দিন", partial.failed)),
+  ok(partial.ok === false && (partial.failed.some((f) => f.id === "auth" || f.id === "server")),
+    "Auth/endpoint ব্যর্থ হলে সাফল্য দেখানো হয় না (partial ≠ success)");
+  ok(/Authentication|সার্ভার/.test(accountDelete.describeDeletionFailure("রফিক উদ্দিন", partial.failed)),
     "ব্যর্থতার বার্তায় কোন অংশ মোছা যায়নি তা থাকে",
     accountDelete.describeDeletionFailure("রফিক উদ্দিন", partial.failed));
 
@@ -350,6 +350,78 @@ console.log("\n── ৩. Donor Management — সম্পূর্ণ ডি�
   const leftover = JSON.stringify(dump());
   ok(!leftover.includes(DONOR_A) && !leftover.includes("CBDC-2026-0001"),
     "UID/Donor ID-এর কোনো orphan reference বাকি থাকে না");
+}
+
+/* ── নিরাপদ server-side endpoint দিয়েই ডিলিট (client-এর লেখার অনুমতি বন্ধ) ── */
+{
+  seedDb();
+  /* ব্রাউজার (client) থেকে কোনো RTDB লেখা সম্ভব নয় — তবুও ডিলিট সম্পূর্ণ হতে
+     হবে, কারণ সব কাজ সার্ভার endpoint-এর মাধ্যমে হয়। */
+  rtdb.__lockClientWrites(true);
+  const result = await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0001", uid: DONOR_A });
+  rtdb.__lockClientWrites(false);
+  ok(result.ok === true, "client-এর লেখার অনুমতি বন্ধ থাকলেও ডিলিট সম্পূর্ণ হয় (সব সার্ভার-সাইড)",
+    JSON.stringify(result.failed.map((f) => f.label)));
+  ok(result.server === "ok" && result.auth === "deleted",
+    "নিরাপদ endpoint-এর মাধ্যমে Authentication account মুছে গেছে", `${result.server}/${result.auth}`);
+  for (const [node, label] of [
+    ["donors/CBDC-2026-0001", "Donor profile"],
+    [`users/${DONOR_A}`, "Account information"],
+    [`admins/${DONOR_A}`, "Role record"],
+    [`accounts/${DONOR_A}`, "Account record"],
+    ["members/MEMBER-A", "Application"],
+    ["queue/PD-donorA", "Queue/approval"],
+    ["requests/REQ-A", "Emergency request"],
+    ["reports/REP-A", "Report"],
+  ])
+    ok(!has(node), `সার্ভার মুছেছে: ${label} (${node})`);
+  ok(has("donors/CBDC-2026-0002") && has(`users/${DONOR_B}`) && has("audit/A-1"),
+    "অন্য ডোনারের তথ্য ও audit লগ অক্ষত");
+  const call = fakeFns.__calls.filter((c) => c.name === "deleteAccountCompletely").pop();
+  ok(!!call && call.data.uid === DONOR_A && call.data.donorId === "CBDC-2026-0001",
+    "endpoint-এ UID + Donor ID পাঠানো হয় (সার্ভার নিজেই যাচাই করে)", JSON.stringify(call?.data));
+
+  /* endpoint ব্যর্থ → কিছুই মোছা হবে না, সাফল্য দেখানো হবে না */
+  seedDb();
+  fakeFns.__failingUids.add(DONOR_A);
+  rtdb.__lockClientWrites(true);
+  const failed = await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0001", uid: DONOR_A });
+  rtdb.__lockClientWrites(false);
+  fakeFns.__failingUids.delete(DONOR_A);
+  ok(failed.ok === false && failed.server === "failed",
+    "endpoint ব্যর্থ হলে কোনো সাফল্য নেই (partial deletion-এ success নয়)");
+  ok(has("donors/CBDC-2026-0001") && has(`users/${DONOR_A}`),
+    "endpoint ব্যর্থ হলে কোনো তথ্য মোছা হয় না");
+  ok(/Authentication|সার্ভার/.test(accountDelete.describeDeletionFailure("রফিক", failed.failed)),
+    "ব্যর্থতার বার্তা পরিষ্কার", accountDelete.describeDeletionFailure("রফিক", failed.failed));
+}
+
+/* ── নিরাপত্তা: frontend-এ Admin SDK বা কোনো secret নেই ── */
+{
+  const readSrc = (rel) => readFileSync(path.join(ROOT, rel), "utf8");
+  const clientFiles = ["src/lib/accountDelete.ts", "src/lib/cloud.ts", "src/pages/Admin.tsx", "src/lib/rtdb.ts"];
+  /* আসল credential/Admin SDK ব্যবহারের patterns — কমেন্টে শব্দ থাকলেই মেলে না। */
+  const banned = [
+    /from\s+["']firebase-admin/,
+    /require\(["']firebase-admin/,
+    /private_key\s*[:=]/i,
+    /BEGIN (RSA |EC )?PRIVATE KEY/,
+    /admin\.credential/,
+    /["']type["']\s*:\s*["']service_account["']/i,
+    /getAuth\(\)\.deleteUser|admin\.auth\(\)\.deleteUser/,
+  ];
+  for (const file of clientFiles) {
+    const src = readSrc(file);
+    const hits = banned.filter((re) => re.test(src));
+    ok(hits.length === 0, `${file} — কোনো Admin SDK/service-account secret নেই`,
+      hits.map(String).join(","));
+  }
+  const adminSdkOnly = readSrc("functions/src/index.ts");
+  ok(/initializeApp\(\)/.test(adminSdkOnly) && /getAuth\(\)/.test(adminSdkOnly),
+    "Admin SDK শুধু functions/ (server-side)-এ ব্যবহৃত");
+  const cloud = readSrc("src/lib/cloud.ts");
+  ok(/httpsCallable/.test(cloud) && !/deleteUser|getAuth\(\)\.deleteUser/.test(cloud),
+    "client শুধু callable endpoint ব্যবহার করে — সরাসরি Auth delete করার কোনো পথ নেই");
 }
 
 /* ── UI দিয়েই ডিলিট (Donor Management → নির্বাচন → ডিলিট করুন) ── */
@@ -412,6 +484,17 @@ console.log("\n── ৩. Donor Management — সম্পূর্ণ ডি�
     && !has(`users/${DONOR_A}`) && !has(`users/${DONOR_B}`),
     "bulk delete-এ সব নির্বাচিত ডোনারের সব তথ্য মুছে যায়");
   ok(has("audit/A-1"), "bulk delete-এর পরেও audit লগ অক্ষত");
+  /* page reload ছাড়াই live listener দিয়ে তালিকা খালি হয়ে যায় */
+  for (let i = 0; i < 200 && w.document.querySelectorAll("[data-tsel]").length; i += 1) await wait(20);
+  ok(w.document.querySelectorAll("[data-tsel]").length === 0,
+    "reload ছাড়াই donor list realtime-এ খালি হয় (listener দিয়ে)");
+  const navCounts = [...w.document.querySelectorAll("#s-home .astat button b")].map((b) => b.textContent.trim());
+  w.go("home");
+  await wait(150);
+  const homeCounts = [...w.document.querySelectorAll("#s-home .astat button b")].map((b) => b.textContent.trim());
+  ok(homeCounts.length === 0 || homeCounts[0] === "০",
+    "ডেটা মুছে যাওয়ার পর পরিসংখ্যান realtime-এ ০ দেখায় (ভুল লোডিং-০ নয়)", JSON.stringify(homeCounts));
+  void navCounts;
   root.unmount();
 }
 

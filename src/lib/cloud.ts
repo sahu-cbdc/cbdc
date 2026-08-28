@@ -41,7 +41,10 @@ export type AccountDeletionReport = {
   donorId?: string;
   /** `missing` = Auth-এ অ্যাকাউন্টটিই ছিল না (এটি কোনো ব্যর্থতা নয়)। */
   auth?: "deleted" | "missing";
+  /** node → ঐ node-এ থেকে মোছা রেকর্ডের সংখ্যা */
   removed?: Record<string, number>;
+  /** মোছা হয়েছে এমন RTDB path-এর সংখ্যা */
+  removedPaths?: number;
   storageRemoved?: number;
 };
 
