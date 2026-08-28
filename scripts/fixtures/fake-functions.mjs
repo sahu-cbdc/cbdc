@@ -5,8 +5,10 @@
  */
 
 export const __calls = [];
-/** uid-গুলোর জন্য ফাংশন ইচ্ছে করে ব্যর্থ হবে (failure path পরীক্ষা)। */
+/** পুরো endpoint কল ব্যর্থ হবে (যেন function deploy-ই হয়নি)। */
 export const __failingUids = new Set();
+/** শুধু Authentication ধাপ ব্যর্থ হবে — RTDB মুছে যাওয়ার পর (partial failure)। */
+export const __failingAuthUids = new Set();
 
 export function getFunctions() {
   return { __fake: true };
@@ -24,8 +26,9 @@ export function httpsCallable(functions, name) {
         error.code = "functions/internal";
         throw error;
       }
-      /* ডেপ্লয় করা Cloud Function যা করে — Auth (সিমুলেটেড) + RTDB + Storage
-         সব সার্ভার-সাইডেই মোছা। Client-এর লেখার অনুমতি লক করা থাকলেও কাজ করে। */
+      /* ডেপ্লয় করা Cloud Function যা করে — RTDB + Auth (সিমুলেটেড)
+         সব সার্ভার-সাইডেই মোছা (কোনো Storage dependency নেই)।
+         Client-এর লেখার অনুমতি লক করা থাকলেও কাজ করে। */
       const nodes = ["users", "admins", "accounts", "donors", "members", "queue", "requests", "reports"];
       const ownerFields = ["ownerUid", "uid", "userId", "ownerId"];
       const removed = {};
@@ -50,16 +53,26 @@ export function httpsCallable(functions, name) {
           mark(node, id, true);
         }
       }
+      /* ক্রম: RTDB আগে, তারপর Authentication (আসল Cloud Function-এর মতো) */
       rtdb.__serverUpdate(Object.fromEntries(paths.map((p) => [p, null])));
+      let auth = "deleted";
+      let authError;
+      if (__failingAuthUids.has(uid)) {
+        auth = "failed";
+        authError = "internal";
+      } else if (uid.endsWith("missing")) {
+        auth = "missing";
+      }
       return {
         data: {
-          ok: true,
+          ok: auth === "deleted" || auth === "missing",
           uid,
           donorId,
-          auth: uid.endsWith("missing") ? "missing" : "deleted",
+          rtdb: "ok",
+          auth,
           removed,
           removedPaths: paths.length,
-          storageRemoved: 0,
+          ...(authError ? { authError } : {}),
         },
       };
     }

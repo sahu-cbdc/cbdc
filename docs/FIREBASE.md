@@ -184,29 +184,49 @@ listener-এর মাধ্যমে সব প্যানেল/ওয়ে�
 | জরুরি আবেদন | `emergencyApproval` | জরুরি আবেদন approval queue-এ যায় | আবেদন সরাসরি প্রকাশিত |
 | গ্রুপ বদল | `bloodGroupApproval` | গ্রুপ পরিবর্তন queue-এ যায় | গ্রুপ সরাসরি বদলে যায় (Cloud Function `changeBloodGroup`) |
 
-### ডোনার সম্পূর্ণ মুছে ফেলা — নিরাপদ server-side endpoint (Donor Management / অ্যাক্সেস ও ভূমিকা)
+### ডোনার সম্পূর্ণ মুছে ফেলা (Donor Management / অ্যাক্সেস ও ভূমিকা)
 
-Flow: **Donor Select → Delete → Confirmation → Secure Server/API Request →
-Authentication + RTDB + Storage সব Delete → Success → Realtime UI Update**
+> ওয়েবসাইটে শুধুই **Firebase Realtime Database** ও **Firebase Authentication**
+> ব্যবহৃত হয়। **Firebase Storage ব্যবহার করা হয় না** — ছবি ImgBB-এ থাকে,
+> তাই ডিলিট সিস্টেমে কোনো Storage dependency নেই।
 
-- **ব্রাউজারে কোনো Firebase Admin SDK বা service-account key নেই** — অন্য কারও
-  Authentication অ্যাকাউন্ট ক্লায়েন্ট থেকে মোছার কোনো উপায়ই নেই।
-- পেজ শুধু একটি **নিরাপদ server-side callable** (`deleteAccountCompletely`)
-  কল করে `{uid, donorId}` দিয়ে। Firebase নিজেই ID token যাচাই করে; ফাংশন
-  RTDB `admins` থেকে admin-রোল আবার চেক করে, self-delete বন্ধ করে এবং
-  Donor ID আসলেই ওই UID-এর কি না যাচাই করে।
-- **সব মোছা হয় সার্ভারেই**: Firebase Auth → RTDB (`donors`, `users`, `admins`,
-  `accounts`, `members`, `queue`, `requests`, `reports` — UID/Donor ID রেফারেন্স
-  অনুযায়ী, একটি atomic multi-path update-এ) → Storage (best effort)।
-  `audit` লগ append-only — মোছা হয় না।
-- Auth-এ অ্যাকাউন্ট আগে থেকেই না থাকলে সেটি `missing` (failure নয়)।
-- সব ধাপ সফল হলেই success; ব্যর্থ হলে কোন অংশ বাকি আছে তা বার্তায় দেখা যায়।
-- শেষে পেজ read-only **যাচাই** করে — কোনো রেকর্ড থেকে গেলে সেটি RTDB security
-  rules-এর মধ্যেই মুছে ফেলা হয় (সার্ভার পুরোনো build-এ থাকলেও কাজ সম্পূর্ণ হয়)।
-- একক ও bulk দুটোতেই একই flow; listener-এর মাধ্যমে তালিকা/পরিসংখ্যান সাথে সাথে
-  আপডেট হয় — কোনো page reload লাগে না।
+Flow: **Donor Select → Delete → Confirmation → identity verify → RTDB delete →
+Authentication delete → Success → Realtime UI Update**
+
+**১. Identity chain (কখনো blindly delete নয়)**
+`Donor ID → UID → existing account/profile` — `donors/{donorId}.ownerUid`,
+`users` node (UID ও `donorId` দিয়ে), `admins`, `accounts`, `members` মিলিয়ে
+যাচাই করা হয়। কোনো সূত্র না মিললে **কোনো deletion শুরুই হয় না**।
+একাধিক donor হলে প্রত্যেকের identity আলাদাভাবে resolve/verify করা হয়।
+
+**২. Realtime Database** — কোনো path অনুমান করা হয় না; প্রতিটি node পড়ে, সত্যিই
+মেলে এমন রেকর্ড মোছা হয়: `donors`, `users` (+`data`: donations, mine, notifs,
+activity, panel, groupChange), `admins`, `accounts`, `members`, `queue`
+(approval/রক্তদান যাচাই/গ্রুপ বদল), `requests`, `reports`, `messages`।
+`audit` লগ append-only — মোছা হয় না। গ্লোবাল node (`gallery`, `notices`) শুধু
+রিপোর্ট করা হয় (সাংগঠনিক কনটেন্ট নষ্ট করা যাবে না)।
+
+**৩. Firebase Authentication** — RTDB সফল হবার **পরেই**, শুধু নিরাপদ
+server-side endpoint (Cloud Function `deleteAccountCompletely`) দিয়ে।
+Client-এ কোনো Admin SDK বা service-account key নেই; Firebase ID token নিজেই
+যাচাই করে আর ফাংশন RTDB `admins` থেকে admin-রোল আবার চেক করে।
+Auth-এ অ্যাকাউন্ট আগে থেকেই না থাকলে সেটি `missing` (failure নয়)।
+
+**৪. ফলাফল**
+- সব সফল → "ডোনার সফলভাবে সম্পূর্ণ মুছে ফেলা হয়েছে" /
+  "নির্বাচিত ডোনারদের সম্পূর্ণভাবে মুছে ফেলা হয়েছে"
+- RTDB মুছে কিন্তু Auth ব্যর্থ → success নয়:
+  "ডোনারের RTDB তথ্য মুছে ফেলা হয়েছে, কিন্তু Authentication account মুছে ফেলা যায়নি।"
+- RTDB ব্যর্থ → Auth-এ যাওয়াই হয় না, কোনো success নয়
+- রেকর্ড আগে থেকেই না থাকলে failure নয়; bulk-এ প্রতিটি donor-এর ফল আলাদা করে জানানো হয়
+
+**৫. Realtime** — existing listener-ই donor list, donor count, dashboard
+পরিসংখ্যান ও আবেদন count সাথে সাথে আপডেট করে; **page reload বা পুরো ডেটাবেস
+রিলোড লাগে না**।
 
 Deploy: `firebase deploy --only functions` (ফাংশন বদলালে অবশ্যই deploy করতে হবে)।
+পরীক্ষা: `npm run verify-admin` (single/bulk, missing record, missing Auth,
+UID/Donor ID mismatch, partial failure, realtime update—সব পরিস্থিতি)।
 
 ## ৬. Firebase Authentication
 

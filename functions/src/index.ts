@@ -48,36 +48,6 @@ const OWNED_NODES = [
 const OWNER_FIELDS = ["ownerUid", "uid", "userId", "ownerId"];
 
 /**
- * Best-effort removal of Storage objects that belong to this account.
- * This project keeps images on ImgBB, so normally there is nothing here;
- * if a Storage bucket is configured the objects are removed silently and a
- * failure never blocks the rest of the deletion.
- */
-async function deleteStorageArtifacts(uid: string, donorId: string): Promise<number> {
-  let removed = 0;
-  try {
-    const { getStorage } = await import("firebase-admin/storage");
-    const bucket = getStorage().bucket();
-    const prefixes = [`users/${uid}/`, `donors/${donorId}/`, `profilePhotos/${uid}/`].filter(
-      (p) => p.split("/")[1],
-    );
-    for (const prefix of prefixes) {
-      try {
-        const [files] = await bucket.getFiles({ prefix });
-        removed += files.length;
-        await Promise.all(files.map((file) => file.delete().catch(() => undefined)));
-      } catch (e) {
-        console.warn("deleteAccountCompletely storage prefix:", prefix, (e as Error)?.message);
-      }
-    }
-  } catch (e) {
-    /* Storage is not part of this project's architecture — nothing to delete. */
-    console.warn("deleteAccountCompletely storage:", (e as Error)?.message);
-  }
-  return removed;
-}
-
-/**
  * SECURE SERVER-SIDE DELETION ENDPOINT — the single place where an account is
  * destroyed. The browser can never delete another user's Firebase Auth
  * account, so the Admin panel calls this callable (Firebase verifies the
@@ -88,13 +58,13 @@ async function deleteStorageArtifacts(uid: string, donorId: string): Promise<num
  *   2. identity validation — the Donor ID must really belong to that UID
  *      (a mismatched request is refused, so a wrong id can never delete the
  *      wrong account),
- *   3. Firebase Authentication — `auth/user-not-found` is reported as
- *      `missing`, never as a failure,
- *   4. Realtime Database — every row that references the UID/Donor ID across
+ *   3. Realtime Database — every row that references the UID/Donor ID across
  *      the known nodes, removed in ONE atomic multi-path update,
- *   5. Cloud Storage — best effort (this project keeps images on ImgBB, so
- *      normally there is nothing to delete; a Storage failure never blocks
- *      the rest).
+ *   4. Firebase Authentication — only after the RTDB step resolved;
+ *      `auth/user-not-found` is reported as `missing`, never as a failure.
+ *
+ * No Cloud Storage is involved anywhere: this project stores images on ImgBB,
+ * so the deletion has zero Storage dependency.
  *
  * The append-only `audit` log and shared notices are intentionally kept.
  * The response is a precise report so the panel can show exactly what was
@@ -139,23 +109,8 @@ export const deleteAccountCompletely = onCall(
       }
     }
 
-    /* ── 2. Firebase Authentication — "already gone" is not a failure ── */
-    let authState: "deleted" | "missing" = "missing";
-    try {
-      await auth.getUser(targetUid);
-      await auth.deleteUser(targetUid);
-      authState = "deleted";
-    } catch (error) {
-      const code = String((error as { code?: string })?.code || "").toLowerCase();
-      if (code === "auth/user-not-found") {
-        authState = "missing";
-      } else {
-        console.error("deleteAccountCompletely auth failed", targetUid, error);
-        throw new HttpsError("internal", "The Firebase Authentication account could not be deleted.");
-      }
-    }
+    /* ── 2. Realtime Database — only rows that really belong to this account ── */
 
-    /* ── 3. Realtime Database — only rows that really belong to this account ── */
     const snapshots: Record<string, Record<string, any>> = {};
     for (const node of OWNED_NODES) {
       try {
@@ -202,25 +157,54 @@ export const deleteAccountCompletely = onCall(
       }
     }
 
-    /* ── 4. Storage (best effort) ── */
-    const storageRemoved = await deleteStorageArtifacts(targetUid, donorId);
-
     /* One atomic write — either every related record goes, or nothing does. */
+    let rtdbState: "ok" | "failed" = "ok";
     try {
       await database.ref().update(updates);
     } catch (error) {
+      rtdbState = "failed";
       console.error("deleteAccountCompletely rtdb failed", targetUid, error);
-      throw new HttpsError("internal", "The related database records could not be deleted completely.");
+      /* RTDB ব্যর্থ হলে Authentication-এ যাওয়া হয় না — ভুল করে এগিয়ে গেলে
+         orphan RTDB ডেটা থেকে যেত। */
+      return {
+        ok: false,
+        uid: targetUid,
+        donorId,
+        rtdb: rtdbState,
+        auth: "skipped" as const,
+        removed: {},
+        removedPaths: 0,
+        authError: "The related database records could not be deleted completely.",
+      };
+    }
+
+    /* ── 3. Firebase Authentication — RTDB সফল হবার পরেই ── */
+    let authState: "deleted" | "missing" | "failed" = "missing";
+    let authError: string | undefined;
+    try {
+      await auth.getUser(targetUid);
+      await auth.deleteUser(targetUid);
+      authState = "deleted";
+    } catch (error) {
+      const code = String((error as { code?: string })?.code || "").toLowerCase();
+      if (code === "auth/user-not-found") {
+        authState = "missing";
+      } else {
+        authState = "failed";
+        authError = "The Firebase Authentication account could not be deleted.";
+        console.error("deleteAccountCompletely auth failed", targetUid, error);
+      }
     }
 
     return {
-      ok: true,
+      ok: rtdbState === "ok" && (authState === "deleted" || authState === "missing"),
       uid: targetUid,
       donorId,
+      rtdb: rtdbState,
       auth: authState,
       removed,
-      storageRemoved,
       removedPaths: Object.keys(updates).length,
+      ...(authError ? { authError } : {}),
     };
   },
 );

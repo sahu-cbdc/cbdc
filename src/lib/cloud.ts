@@ -39,18 +39,21 @@ export type AccountDeletionReport = {
   ok: boolean;
   uid: string;
   donorId?: string;
+  /** Realtime Database অংশ — Auth-এ যাওয়া হয় এর পরেই */
+  rtdb?: "ok" | "failed";
   /** `missing` = Auth-এ অ্যাকাউন্টটিই ছিল না (এটি কোনো ব্যর্থতা নয়)। */
-  auth?: "deleted" | "missing";
+  auth?: "deleted" | "missing" | "failed" | "skipped";
   /** node → ঐ node-এ থেকে মোছা রেকর্ডের সংখ্যা */
   removed?: Record<string, number>;
   /** মোছা হয়েছে এমন RTDB path-এর সংখ্যা */
   removedPaths?: number;
-  storageRemoved?: number;
+  authError?: string;
 };
 
 /**
- * Firebase Authentication account + UID/Donor-ID সম্পর্কিত RTDB রেকর্ড মোছা
- * (Admin SDK প্রিভিলেজ — ব্রাউজার থেকে অন্যের Auth অ্যাকাউন্ট মোছা যায় না)।
+ * নিরাপদ server-side endpoint — Realtime Database-এর সব সংশ্লিষ্ট রেকর্ড, এরপর
+ * Firebase Authentication account মোছা (Admin SDK প্রিভিলেজ; ব্রাউজার থেকে অন্যের
+ * Auth অ্যাকাউন্ট মোছা যায় না)। কোনো Storage dependency নেই।
  * Auth-এ অ্যাকাউন্ট আগেই মোছা থাকলে সেটি ব্যর্থতা নয় (`auth:"missing"`).
  */
 export async function deleteAccountCompletely(uid: string, donorId = ""): Promise<AccountDeletionReport> {

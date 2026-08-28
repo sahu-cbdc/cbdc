@@ -17,7 +17,7 @@ import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERR
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage, getImgbbKey, saveImgbbKey } from "../lib/imgbb";
-import { deleteDonorCompletely, describeDeletionFailure, isAuthUid, type DeletionStep } from "../lib/accountDelete";
+import { deleteDonorCompletely, deletionMessage, describeDeletionFailure, isAuthUid, type DeletionStep } from "../lib/accountDelete";
 import { noticeIsActive, noticeTarget } from "../lib/notice";
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -4582,7 +4582,7 @@ function initPage() {
       accounts:DB.accounts,queue:DB.queue,requests:DB.live};
   }
 
-  /** একজন ডোনার সম্পূর্ণ মুছে ফেলা। true → সবকিছু মুছেছে, false → ব্যর্থ (কারণসহ)। */
+  /** একজন ডোনার সম্পূর্ণ মুছে ফেলা — RTDB → Authentication → রিপোর্ট। */
   async function deleteOneDonor(d){
     const result=await deleteDonorCompletely(
       {donorId:String(d&&d.id||"").trim(),uid:String((d&&(d.ownerUid||d.uid))||"").trim(),
@@ -4591,10 +4591,11 @@ function initPage() {
     if(result.ok){
       await logAudit("ডোনার সম্পূর্ণ মুছে ফেলা",
         `${result.name||result.donorId} · ${result.donorId}${result.uid?" · "+result.uid:""}`,"donor");
-      return true;
+      return result;
     }
-    toast(describeDeletionFailure(result.name||result.donorId,result.failed),"er");
-    return false;
+    /* কোন অংশ মুছেছে আর কোনটি মুছেনি — তা-ই দেখানো হয় (কোনো সাফল্য নয়) */
+    toast(`${result.name||result.donorId}: ${deletionMessage(result)}`,"er");
+    return result;
   }
 
   async function bulkDeleteDonors(ids){
@@ -4604,27 +4605,27 @@ function initPage() {
     if(!await confirmS({title:list.length>1?"নির্বাচিত ডোনারদের মুছবেন?":"ডোনার মুছবেন?",
       desc:`${names}-এর অ্যাকাউন্ট, ডোনার আইডি এবং সংশ্লিষ্ট সব তথ্য মুছে যাবে। এটি ফেরানো যাবে না।`,
       ok:"হ্যাঁ, মুছুন",danger:true}))return;
-    let done=0;const failedNames=[];
+    const done=[],failed=[];
     for(const d of list){
-      /* প্রতিটি ডোনারের সব তথ্য (Auth + RTDB) শেষ না হওয়া পর্যন্ত সাফল্য নেই */
-      const okOne=await deleteOneDonor(d).catch(e=>{
+      /* প্রতিটি ডোনারের UID/Donor ID আলাদাভাবে resolve ও verify করা হয় —
+         একজনের ভুল identity অন্য কারও তথ্য মুছতে পারে না। */
+      const result=await deleteOneDonor(d).catch(e=>{
         console.warn("donor delete:",d.id,e&&e.message);
-        toast(describeDeletionFailure(d.name||d.id,
-          [{id:"unknown",label:"ডোনার মুছে ফেলা",ok:false,error:(e&&e.message)||"অজানা সমস্যা"}]),"er");
-        return false;
+        return {ok:false,name:d.name||d.id,donorId:String(d.id||""),rtdb:"failed",auth:"skipped",
+          failed:[{id:"unknown",label:"ডোনার মুছে ফেলা",ok:false,error:(e&&e.message)||"অজানা সমস্যা"}],
+          steps:[],removed:0,server:"failed",references:{},warnings:[]};
       });
-      if(okOne){done++;toast("মুছে ফেলা হচ্ছে… ("+bn(done)+"/"+bn(list.length)+")","")}
-      else failedNames.push(String(d.name||d.id));
+      if(result.ok){done.push(d);toast("মুছে ফেলা হচ্ছে… ("+bn(done.length)+"/"+bn(list.length)+")","")}
+      else failed.push(`${result.name||result.donorId||d.id}: ${deletionMessage(result)}`);
     }
-    /* সব required deletion সফল হলেই success — partial deletion-এ সাফল্য নেই */
-    if(done&&done===list.length){
+    /* সবকিছু সফল হলেই success — আংশিক হলে কী কী বাকি আছে তা জানানো হয় */
+    if(!failed.length){
       teamSel=new Set();
       toast(list.length>1?"নির্বাচিত ডোনারদের সম্পূর্ণভাবে মুছে ফেলা হয়েছে"
         :"ডোনার সফলভাবে সম্পূর্ণ মুছে ফেলা হয়েছে","ok");
-    }else if(failedNames.length){
-      toast((done?bn(done)+" জন মুছে গেছে, তবে ":"")+failedNames.slice(0,3).join(", ")+
-        (failedNames.length>3?" সহ আরও "+bn(failedNames.length-3)+" জন":"")+
-        " সম্পূর্ণ মুছে ফেলা যায়নি","er");
+    }else{
+      toast((done.length?bn(done.length)+" জন মুছে গেছে — ":"")+failed.slice(0,2).join(" | ")
+        +(failed.length>2?" | আরও "+bn(failed.length-2)+" জন":""),"er");
     }
     /* live listener-ই তালিকা/পরিসংখ্যান আপডেট করে — reload নয় */
     renderSub("team");paintNav();paintTop();
@@ -4927,13 +4928,13 @@ function initPage() {
             desc:"এই রক্তদাতার অ্যাকাউন্ট, ডোনার আইডি ও সংশ্লিষ্ট সব তথ্য মুছে যাবে। সাধারণত স্থগিত করাই ভালো — মুছলে ফেরানো যায় না।",
             ok:"মুছে ফেলুন",danger:true}))return;
           /* সম্পূর্ণ ডিলিট — Donor ID, UID, প্রোফাইল, অ্যাকাউন্ট, আবেদন ও Auth */
-          const okDel=await deleteOneDonor(d).catch(e=>{
+          const delResult=await deleteOneDonor(d).catch(e=>{
             console.warn("donor delete:",d.id,e&&e.message);
             toast(describeDeletionFailure(d.name||d.id,
               [{id:"unknown",label:"ডোনার মুছে ফেলা",ok:false,error:(e&&e.message)||"অজানা সমস্যা"}]),"er");
-            return false;
+            return {ok:false} as ReturnType<typeof deleteOneDonor> extends Promise<infer R>?R:never;
           });
-          if(!okDel)return;
+          if(!delResult||!delResult.ok)return;
           /* live listener-ই তালিকা ও পরিসংখ্যান আপডেট করে — কোনো reload নয় */
           go(CUR,"donors");toast("ডোনার সফলভাবে সম্পূর্ণ মুছে ফেলা হয়েছে","ok")}
       });
@@ -5144,7 +5145,7 @@ function initPage() {
     try{
       const result=await deleteDonorCompletely({uid:String(uid),donorId,name:a.name||""},deletionSources());
       if(!result.ok){
-        toast(describeDeletionFailure(a.name||a.email||uid,result.failed),"er");
+        toast(`${a.name||a.email||uid}: ${deletionMessage(result)}`,"er");
         return false;
       }
       await logAudit("অ্যাকাউন্ট সম্পূর্ণ মুছে ফেলা",`${a.name||a.email||uid}`,"access");
