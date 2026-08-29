@@ -4958,6 +4958,10 @@ function initPage() {
         showAppLoading();
         const password = o.password || "";
         delete o.password;
+        /* Firebase Auth অ্যাকাউন্ট তৈরি হওয়ার পর RTDB প্রোফাইল লেখা ব্যর্থ হলে
+           catch-এ দুটো পরিস্থিতি আলাদা করা হয় — auth account হয়নি বনাম হয়েছে
+           কিন্তু প্রোফাইল লেখা হয়নি। */
+        let signupUid = null;
 
         try{
           if(!fbReady) throw new Error("ডাটাবেস সংযোগ নেই। ইন্টারনেট সংযোগ পরীক্ষা করুন।");
@@ -4971,6 +4975,7 @@ function initPage() {
             try{ await updateProfile(cred.user, {displayName: o.name}); }catch(_){}
           }
           if(!uid) throw new Error("অ্যাকাউন্ট তৈরি করা যায়নি।");
+          signupUid = uid;
 
           const existingProfile = await getRow(NODES.users, uid);
           const photoURL = photoForUid(existingProfile, googleProfile ? (googleProfile.photo||"") : "");
@@ -5047,12 +5052,28 @@ function initPage() {
           }
         }catch(err){
           hideAppModal();
-          console.warn("signup error:", err);
-          const msg = authErrorMessage(err, {fallback: "অ্যাকাউন্ট তৈরি করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।"});
+          /* আসল error code/message কনসোলে — UI-তে কখনো raw Firebase টেক্সট নয়। */
+          console.warn("signup error:", (err && err.code) || "", (err && err.message) || "", err);
           const code = (err && err.code) || "";
-          if(code === "auth/email-already-in-use" || code === "auth/invalid-email") setFieldError($("#suEmail"), msg);
-          else if(code === "auth/weak-password") setFieldError($("#suPassword"), msg);
-          else showMessage(message, msg, "error");
+          if(code === "auth/email-already-in-use" || code === "auth/invalid-email"){
+            setFieldError($("#suEmail"), authErrorMessage(err, {fallback:"এই ইমেইল দিয়ে অ্যাকাউন্ট তৈরি করা যায়নি।"}));
+            return;
+          }
+          if(code === "auth/weak-password"){
+            setFieldError($("#suPassword"), authErrorMessage(err));
+            return;
+          }
+          /* Firebase Auth-এ account তৈরি হয়েছে, কিন্তু RTDB `users/{uid}` প্রোফাইল
+             লেখা যায়নি (Security Rules/সংযোগ) — একই uid-এ আবার লগইন করলে প্রোফাইল
+             স্বয়ংক্রিয়ভাবে তৈরি হয়, তাই বিভ্রান্তিকর "তৈরি করা যায়নি" না দেখিয়ে
+             পরিষ্কার কারণ দেখাই। */
+          if(signupUid){
+            showMessage(message,
+              "অ্যাকাউন্ট তৈরি হয়েছে, কিন্তু প্রোফাইল সংরক্ষণ করা যায়নি (ডাটাবেস অনুমতি বা সংযোগ সমস্যা)। আবার লগইন করলে প্রোফাইল স্বয়ংক্রিয়ভাবে তৈরি হয়ে যাবে — সমস্যা থাকলে অ্যাডমিনের সাথে যোগাযোগ করুন।",
+              "error");
+            return;
+          }
+          showMessage(message, authErrorMessage(err, {fallback: "অ্যাকাউন্ট তৈরি করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।"}), "error");
         }
       });
       attachLiveClear($("#signupForm"));
