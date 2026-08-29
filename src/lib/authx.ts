@@ -37,7 +37,7 @@ import {
   type ActionCodeSettings,
 } from "firebase/auth";
 import { NODES } from "./firebase";
-import { getRow, updateRow, setRow, findBy, nowIso } from "./rtdb";
+import { getRow, updateRow, setRow, findBy, nowIso, probeRow, type Row } from "./rtdb";
 import { isValidDob, toEnglishDigits } from "./age";
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -207,6 +207,31 @@ export function authErrorMessage(err: unknown, opts: MessageOptions = {}): strin
    ═══════════════════════════════════════════════════════════════════ */
 
 export type GoogleProfile = { uid: string; email: string; name: string; photo: string };
+
+/**
+ * Firebase Auth user থেকে Google প্রোফাইল (UID, Name, Email, Photo URL) নিরাপদে বের করা।
+ * `user.displayName`/`user.photoURL` কোনো কারণে খালি থাকলে Google provider-এর
+ * `providerData` থেকে পড়া হয় — ফলে Google থেকে পাওয়া তথ্য সবসময় সঠিকভাবে আসে।
+ */
+export function profileFromFirebaseUser(u: { uid?: string; email?: string | null; displayName?: string | null; photoURL?: string | null; providerData?: ReadonlyArray<{ email?: string | null; displayName?: string | null; photoURL?: string | null } | null> } | null): GoogleProfile {
+  const out: GoogleProfile = { uid: "", email: "", name: "", photo: "" };
+  if (!u) return out;
+  out.uid = String(u.uid || "");
+  out.email = String(u.email || "");
+  out.name = String(u.displayName || "");
+  out.photo = String(u.photoURL || "");
+  try {
+    for (const p of u.providerData || []) {
+      if (!p) continue;
+      if (!out.email && p.email) out.email = String(p.email);
+      if (!out.name && p.displayName) out.name = String(p.displayName);
+      if (!out.photo && p.photoURL) out.photo = String(p.photoURL);
+    }
+  } catch {
+    /* ignore */
+  }
+  return out;
+}
 
 const GOOGLE_INTENT_KEY = "cbdc.pendingGoogleIntent";
 
@@ -403,12 +428,7 @@ export async function consumeGoogleRedirect(
         current.uid
       );
       return {
-        profile: {
-          uid: current.uid,
-          email: current.email || "",
-          name: current.displayName || "",
-          photo: current.photoURL || "",
-        },
+        profile: profileFromFirebaseUser(current),
         intent,
       };
     }
@@ -423,12 +443,7 @@ export async function consumeGoogleRedirect(
   }
   const u = result.user;
   return {
-    profile: {
-      uid: u.uid,
-      email: u.email || "",
-      name: u.displayName || "",
-      photo: u.photoURL || "",
-    },
+    profile: profileFromFirebaseUser(u),
     intent,
   };
 }
@@ -478,10 +493,13 @@ export async function ensureUserProfile(
     appliedAt?: string;
     cardTheme?: string;
   },
-  extra: { provider?: string } = {}
+  extra: { provider?: string; existing?: Record<string, any> | null } = {}
 ): Promise<void> {
   if (!user || !user.uid) return;
-  const existing = await getRow(NODES.users, user.uid);
+  /* আগে থেকেই প্রোফাইল পড়া থাকলে সেটাই ব্যবহার হয় — অপ্রয়োজনীয় দ্বিতীয়
+     RTDB read বাদ দিয়ে login/loading দ্রুত করা হয়। */
+  const existing =
+    extra.existing !== undefined ? extra.existing || null : await getRow(NODES.users, user.uid);
   /* ছবি: আগে থেকে RTDB-তে থাকলে সেটাই রাখি — অন্য user বা খালি Google ছবি দিয়ে মুছে ফেলি না */
   const photoURL = String(existing?.photoURL || user.photo || "").trim();
   const base: Record<string, unknown> = {
@@ -590,21 +608,42 @@ function normaliseRole(raw: unknown): AppRole | null {
  *
  * `admins`-এ না থাকলে কেউ কখনো admin/moderator হতে পারে না — `users` নোডে
  * role লেখা থাকলেও তা গ্রাহ্য নয় (নিরাপত্তা)।
+ *
+ * দ্রুততার জন্য:
+ *   • `admins/{uid}` ও `users/{uid}` একসাথে (parallel) পড়া হয়;
+ *   • Security Rules-এর কারণে কোনো read ব্লক হলে (permission-denied) সেই node-এর
+ *     email-fallback query আর চেষ্টা করা হয় না — নিশ্চিত ব্যর্থ হবে, তাই
+ *     নিরর্থক network round-trip বাঁচিয়ে Google login-এর loading ছোট রাখা হয়;
+ *   • `opts.knownProfile` দেওয়া থাকলে `users/{uid}` আর পড়া হয় না (duplicate read বাদ)।
  */
 export async function resolveUserRole(
-  user: { uid?: string; email?: string; name?: string } | null | undefined
+  user: { uid?: string; email?: string; name?: string } | null | undefined,
+  opts: { knownProfile?: Record<string, any> | null } = {}
 ): Promise<ResolvedRole> {
   const out: ResolvedRole = { role: "donor", name: user?.name || "", permissions: [], staff: null };
   if (!user) return out;
   const uid = String(user.uid || "");
   const email = String(user.email || "").toLowerCase();
 
-  let staff: Record<string, any> | null = null;
-  try {
-    if (uid) staff = await getRow(NODES.admins, uid);
-    if (!staff && email) staff = await findBy(NODES.admins, "email", email);
-  } catch (e) {
-    console.warn("role lookup (admins):", (e as Error)?.message);
+  /* admins/{uid} ও users/{uid} — দুটো independent read একসাথে পাঠানো হয় */
+  const [adminsRead, profile] = await Promise.all([
+    uid ? probeRow(NODES.admins, uid) : Promise.resolve({ row: (null as Row | null), denied: false }),
+    opts.knownProfile !== undefined
+      ? Promise.resolve({ row: (opts.knownProfile || null) as Row | null, denied: false })
+      : uid
+        ? probeRow(NODES.users, uid)
+        : Promise.resolve({ row: (null as Row | null), denied: false }),
+  ]);
+
+  let staff: Record<string, any> | null = adminsRead.row;
+  /* email দিয়ে staff খোঁজা তখনই অর্থবহ যখন admins node পড়ার অনুমতি আছে
+     (permission-denied হলে fallback query-ও denied — বাদ)। */
+  if (!staff && !adminsRead.denied && email) {
+    try {
+      staff = await findBy(NODES.admins, "email", email);
+    } catch (e) {
+      console.warn("role lookup (admins email):", (e as Error)?.message);
+    }
   }
   if (staff && staff.status !== "disabled") {
     const r = normaliseRole(staff.role);
@@ -617,16 +656,18 @@ export async function resolveUserRole(
     }
   }
 
-  try {
-    let profile: Record<string, any> | null = uid ? await getRow(NODES.users, uid) : null;
-    if (!profile && email) profile = await findBy(NODES.users, "email", email);
-    if (profile) {
-      out.name = profile.name || out.name;
-      // users নোডে admin/moderator লেখা থাকলেও তা উপেক্ষা করা হয়
-      out.role = "donor";
+  let userData: Record<string, any> | null = profile.row;
+  if (!userData && !profile.denied && email) {
+    try {
+      userData = await findBy(NODES.users, "email", email);
+    } catch (e) {
+      console.warn("role lookup (users email):", (e as Error)?.message);
     }
-  } catch (e) {
-    console.warn("role lookup (users):", (e as Error)?.message);
+  }
+  if (userData) {
+    out.name = userData.name || out.name;
+    // users নোডে admin/moderator লেখা থাকলেও তা উপেক্ষা করা হয়
+    out.role = "donor";
   }
   return out;
 }
