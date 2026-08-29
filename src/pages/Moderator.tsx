@@ -5037,9 +5037,9 @@ function initPage() {
        /admin খুললে) তাকে তার নিজের dashboard-এ পাঠিয়ে দেওয়া হয়। */
     (async function authorize(){
       try{
-        const shared=initSharedFirebase();
-        const {onAuthStateChanged}=await import("firebase/auth");
-        onAuthStateChanged(shared.auth, async (user)=>{
+        initSharedFirebase();
+        const {subscribeAuthUser}=await import("../lib/authState");
+        subscribeAuthUser(async (user)=>{
           if(!user){
             navigateToPage("home");
             return;

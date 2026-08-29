@@ -130,10 +130,6 @@ src/
     └── Moderator.tsx     # মডারেটর প্যানেল
 public/
 └── img/logo.png          ★ Logo (এই ফাইল replace করলেই সর্বত্র নতুন logo)
-scripts/
-├── smoke.mjs             # jsdom-ভিত্তিক smoke test (npm run smoke)
-├── verify-admin-panel.mjs   # Admin panel verification (npm run verify-admin)
-└── fixtures/             # in-memory Firebase stub (শুধু verification-এর জন্য)
 
 database.rules.json      # Realtime Database Security Rules
 firebase.json            # Firebase CLI config
@@ -161,9 +157,12 @@ Logic** থাকে:
   হয় **না**। প্রতিটি স্ক্রিন `onValue` listener-এ যুক্ত, তাই Add / Edit / Delete করলে সব
   dashboard-এ সঙ্গে সঙ্গে live update হয়। কোনো demo/mock/seed data নেই।
 - **Auth:** Login / Register / Logout / Session — Firebase Authentication (email+password ও
-  Google)। Password reset — Firebase-এর built-in reset link, সাইটের নিজস্ব
-  `/forgot-password` ও `/reset-password` full-page UI দিয়ে; change password — re-auth +
-  `updatePassword`।
+  Google)। Google-এর জন্য শুধু official `GoogleAuthProvider` (popup + redirect fallback);
+  কোনো manual OAuth client / client secret নেই। Auth state-এর **একটিমাত্র**
+  `onAuthStateChanged` `src/lib/authState.ts`-এ নিবন্ধিত — বাকি সব জায়গা সেই
+  shared subscriber ব্যবহার করে (duplicate listener নেই)। Password reset — Firebase-এর
+  built-in reset link, সাইটের নিজস্ব `/forgot-password` ও `/reset-password` full-page UI
+  দিয়ে; change password — re-auth + `updatePassword`।
 - **Role & Permission:** RTDB `admins/{uid}` থেকে role ও `permissions[]`।
   Doner → `/doner`, Moderator → `/moderator`, Admin → `/admin` — প্রতিটি প্যানেল নিজেই
   gate করে, তাই Admin/Moderator কখনো সাধারণ Doner dashboard ব্যবহার করে না।
@@ -181,9 +180,6 @@ npm install
 npm run dev        # dev server (http://localhost:5173) — একটি entry; প্যানেলগুলো ভেতরের নেভিগেশনে
 npm run build      # production build (dist/)
 npm run preview    # production preview
-npm run smoke      # jsdom-ভিত্তিক smoke test (৪টি পেজ render + logic চেক)
-npm run verify-admin   # Admin panel: loading/skeleton, অনুমোদন সেটিংস, ডোনার ডিলিট, ভূমিকা পরিবর্তন
-npm run verify-security   # architecture/security audit (bundle-এ secret আছে কি না, rules, host-independence)
 ```
 
 ## স্থাপত্য ও নিরাপত্তা (Architecture & Security)

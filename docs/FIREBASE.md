@@ -62,7 +62,10 @@ Project: **`chokbazarbloodclub-69d5f`** (`.firebaserc`-এও সেট কর�
   2. Firebase Console → Authentication → Settings → **Authorized domains**-এ
      সাইট যে ডোমেইনে চলে (যেমন `cbdc-a9418.web.app`, `chokbazarbloodclub-69d5f.firebaseapp.com`,
      কাস্টম ডোমেইন, প্রয়োজনে `localhost`) যোগ করা। অনুমোদিত ডোমেইন ছাড়া
-     `auth/unauthorized-domain` আসে এবং সাইন-ইন শেষ হয় না।
+     `auth/unauthorized-domain` আসে এবং সাইন-ইন শেষ হয় না। কোডে production
+     authorized domain দুটি (`chawkbazarbloodclub.com`, `www.chawkbazarbloodclub.com`)
+     `src/lib/authx.ts`-এর `AUTHORIZED_HOSTS`-এ যাচাই করা আছে; এই ডোমেইনে থাকলেও
+     অস্বীকৃতি এলে আরও নির্দিষ্ট diagnostic বার্তা দেখানো হয়।
   3. সাইটটি যদি ভিন্ন হোস্টিং/প্রেভিউ ডোমেইনে চলে, সেটিও যোগ করতে হবে।
   **দ্রষ্টব্য:** `chokbazarbloodclub-69d5f.firebaseapp.com/__/auth/handler`
   হলো বাধ্যতামূলক প্রযুক্তিগত redirect — এটি বদলানো যাবে না; ব্র্যান্ডিং
@@ -231,8 +234,6 @@ donor count, dashboard পরিসংখ্যান ও উভয় ব্য
 Deploy: `npm run build` → `npx wrangler deploy` (Worker + assets) অথবা শুধু
 `firebase deploy --only database` (rules)। Authorization delete-এর জন্য কোনো
 Admin SDK নেই — তাই লগইন account মুছতে হলে Firebase Console → Authentication।
-পরীক্ষা: `npm run verify-admin` (server API, independence দুই দিক, 401/403/400/404,
-UI-র দুটি স্ক্রিন, checkbox/row ক্লিক, realtime update—সব পরিস্থিতি)।
 
 ### নিরাপত্তা স্থাপত্য (কোনো secret frontend-এ নেই)
 
@@ -277,7 +278,7 @@ Netlify · Vercel — যেকোনো static host-এ `dist/` serve করল
 | Register (Google) | লগইনের সাথে **একই** ফ্লো — `signInWithPopup` (ডেস্কটপ) / `signInWithRedirect` fallback; নতুন হলে বিদ্যমান নিবন্ধন ফর্মে যায়, আগে থেকে অ্যাকাউন্ট থাকলে ডুপ্লিকেট ছাড়াই সরাসরি লগইন |
 | Login | `signInWithEmailAndPassword` (username/phone দিলে RTDB `users` থেকে email resolve); Google — একই ফ্লো |
 | Logout | `signOut` (Home-এর লগইন গেট + Doner `doLogout`) |
-| Session | `onAuthStateChanged` (Home, Doner, Admin, Moderator — সব পেজে) + `browserLocalPersistence` — রিলোডের পরেও সেশন থাকে |
+| Session | `browserLocalPersistence` + **একটিমাত্র** `onAuthStateChanged` (`src/lib/authState.ts`); Home / Doner / Admin / Moderator সবাই সেই shared subscriber ব্যবহার করে — duplicate listener নেই। রিলোডের পরেও সেশন থাকে |
 | Password reset | Firebase built-in reset link + সাইটের নিজস্ব `/forgot-password` ও `/reset-password` full-page UI (দেখুন `docs/PASSWORD_RESET_EMAIL.md`) |
 | Change password | `reauthenticateWithCredential` + `updatePassword` |
 

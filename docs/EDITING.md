@@ -145,7 +145,6 @@ npm install
 npm run dev        # dev server — http://localhost:5173
 npm run build      # production build → dist/ (যেকোনো স্ট্যাটিক হোস্টে upload করুন)
 npm run preview    # production preview
-npm run smoke      # ৪টি পেজ render + logic চেক (jsdom)
 ```
 
 Firebase deploy:
@@ -169,8 +168,8 @@ npm run build && firebase deploy --only hosting
   তাই backend বদলানো সহজ।
 - **ফর্মের নিয়ম এক জায়গায়**: `src/lib/forms.ts` — placeholder নেই, popup নেই;
   ফাঁকা ঘর highlight হয় ও নিচে বার্তা আসে, পূরণ করলেই মুছে যায়।
-- **একটা জিনিস ভাঙলে চেক:** `npm run build` + `npm run smoke` চালান — syntax/runtime
-  সমস্যা ধরা পড়বে।
+- **একটা জিনিস ভাঙলে চেক:** `npm run build` চালান — TypeScript + production build-এর
+  syntax/runtime সমস্যা ধরা পড়ে।
 - **নতুন পেজ যোগ করতে:** `src/pages/`-এ নতুন `.tsx` কম্পোনেন্ট → `src/lib/router.ts`-এ
   `PageName`-এ নাম যোগ করুন → `src/main.tsx`-এর `ActivePage()`-এ lazy import + case
   যোগ করুন (আলাদা `.html` এন্ট্রি আর নেই — শুধু index.html)।
