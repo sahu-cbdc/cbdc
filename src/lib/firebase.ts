@@ -1,3 +1,33 @@
+/**
+ * CBDC — Firebase integration layer
+ *
+ * Single, shared Firebase instance for the whole app:
+ *   - Firebase Authentication (email/password + Google) for login / register /
+ *     logout / session,
+ *   - **Firebase Realtime Database** as the primary data source for all app
+ *     data (Cloud Firestore is no longer used anywhere).
+ *
+ * ছবি Firebase Storage-এ সংরক্ষণ করা হয় না — image hosting-এর জন্য ImgBB API
+ * ব্যবহার করা হয় (দেখুন src/lib/imgbb.ts)। তাই Storage এখানে initialized হয় না।
+ *
+ * Realtime Database-এর সব read/write helper আছে src/lib/rtdb.ts-এ; পেজগুলো
+ * সরাসরি `firebase/database` আমদানি না করে ওই helper গুলো ব্যবহার করে, তাই
+ * পুরো অ্যাপে একটাই data access layer থাকে।
+ */
+
+import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
+import { getDatabase, type Database } from "firebase/database";
+import { getAuth, browserLocalPersistence, setPersistence, type Auth } from "firebase/auth";
+
+/**
+ * Firebase project configuration — project: chokbazarbloodclub-69d5f
+ * (project number 826987875853).
+ *
+ * These values are public client-side identifiers (web API key) — access
+ * control is enforced by Realtime Database Security Rules (see database.rules.json)
+ * and by Firebase Auth itself, not by hiding this config. No server credential /
+ * service account / admin key may ever be added here.
+ */
 const DEFAULT_FIREBASE_CONFIG = {
   apiKey: "AIzaSyBxUlGig2NtQLf6tZMRwK6xxzjScNIqbrM",
   authDomain: "chokbazarbloodclub-69d5f.firebaseapp.com",
