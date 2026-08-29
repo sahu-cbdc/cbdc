@@ -17,7 +17,7 @@ import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERR
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage, getImgbbKey, saveImgbbKey } from "../lib/imgbb";
-import { deleteDonorCompletely, deletionMessage, describeDeletionFailure, isAuthUid, type DeletionStep } from "../lib/accountDelete";
+import { serverDeleteEntity, deletionMessage, describeDeletionFailure, isAuthUid, type DeletionStep, type DeleteScope } from "../lib/accountDelete";
 import { noticeIsActive, noticeTarget } from "../lib/notice";
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -2462,7 +2462,7 @@ function initPage() {
       if(document.querySelector(".sheet"))return;
       const key=(CUR==="set"&&SUB)?SUB:CUR;
       if(CUR==="home"&&!SUB){go(CUR,SUB,false,ARG);return}
-      if(["team","access","users","audit","inbox","stats","donors","live","gallery","notice"].includes(key))
+      if(["team","donorid","access","users","audit","inbox","stats","donors","live","gallery","notice"].includes(key))
         go(CUR,SUB,false,ARG);
     }catch(e){/* প্রথম render-এর আগে CUR/SUB থাকে না — তখন কিছুই করতে হয় না */}
   }
@@ -2549,6 +2549,7 @@ function initPage() {
     live:{title:"চলমান আবেদন",perm:"request.view"},
     users:{title:"ব্যবহারকারী",perm:"user.view"},
     team:{title:"ডোনার ব্যবস্থাপনা",perm:"team.view"},
+    donorid:{title:"ডোনার আইডি ব্যবস্থাপনা",perm:"team.view"},
     site:{title:"ওয়েবসাইট",perm:"website.view"},
     gallery:{title:"গ্যালারি",perm:"website.view"},
     notice:{title:"নোটিশ",perm:"website.view"},
@@ -4166,13 +4167,14 @@ function initPage() {
         <button class="g" data-sub="donors"><b>${bn(DB.donors.length)}</b><span>রক্তদাতা</span></button>
         <button class="r" data-sub="donors"><b>${bn(ready)}</b><span>প্রস্তুত</span></button>
         <button class="a" data-sub="users"><b>${bn(DB.reports.filter(r=>r.status!=="resolved").length)}</b><span>অভিযোগ</span></button>
-        <button class="b" data-sub="team"><b>${bn(DB.donors.length)}</b><span>ডোনার</span></button>
+        <button class="b" data-sub="donorid"><b>${bn(DB.donors.length)}</b><span>ডোনার আইডি</span></button>
       </div>`
     +sect("",[
         row("donor.view","donors","drop","রক্তদাতা তালিকা","খুঁজুন, সম্পাদনা করুন, স্থগিত করুন",bn(DB.donors.length)),
         row("user.view","users","users","ব্যবহারকারী ও অভিযোগ","অ্যাকাউন্ট ও রিপোর্ট",DB.reports.filter(r=>r.status!=="resolved").length?bn(DB.reports.filter(r=>r.status!=="resolved").length):""),
         row("user.view","inbox","mail","বার্তা","ওয়েবসাইটের যোগাযোগ ফর্ম",unread()?`<span class="tag r">${bn(unread())} নতুন</span>`:""),
-        row("team.view","team","users","ডোনার ব্যবস্থাপনা","ডোনার অ্যাকাউন্ট ও ডোনার আইডি",bn(DB.donors.length))])
+        row("team.view","team","users","ডোনার ব্যবস্থাপনা","শুধু Website/Firebase অ্যাকাউন্ট-ওয়ালা ডোনার",bn(accountDonors().length)),
+        row("team.view","donorid","card","ডোনার আইডি ব্যবস্থাপনা","সব ডোনার আইডি — অ্যাকাউন্ট না থাকলেও",bn(DB.donors.length))])
     +`<div class="sec-t">শীর্ষ রক্তদাতা</div>
       <div class="card pad0">${DB.donors.slice().sort((a,b)=>b.donations-a.donations).slice(0,5)
         .map((d,i)=>`<button class="prow" data-dn="${d.id}">
@@ -4214,7 +4216,8 @@ function initPage() {
     +sect("",ACC_PAGES.map(a=>row(null,a.id,a.icon,a.title,a.desc,"")))
     +sect("ব্যবস্থাপনা",[
         row("access.manage","access","key","অ্যাক্সেস ও ভূমিকা","অ্যাডমিন, মডারেটর বা ডোনার ভূমিকা পরিবর্তন",""),
-        row("team.view","team","users","ডোনার ব্যবস্থাপনা","ডোনার অ্যাকাউন্ট ও ডোনার আইডি",bn(DB.donors.length)),
+        row("team.view","team","users","ডোনার ব্যবস্থাপনা","শুধু Website/Firebase অ্যাকাউন্ট-ওয়ালা ডোনার",bn(accountDonors().length)),
+        row("team.view","donorid","card","ডোনার আইডি ব্যবস্থাপনা","সব ডোনার আইডি — অ্যাকাউন্ট না থাকলেও",bn(DB.donors.length)),
         row("gallery.manage","gallery","cam","গ্যালারি","ওয়েবসাইটের গ্যালারিতে ছবি যোগ/মুছুন",bn(DB.gallery.length)),
         row("settings.manage","rules","gear","অনুমোদন ও সেটিংস","কোন কোন কাজে অনুমোদন লাগবে","")])
     +sect("ডেটাবেস",[
@@ -4507,27 +4510,43 @@ function initPage() {
   }
   
   /* ---------- ডোনার ব্যবস্থাপনা (সাবেক "টিম ও ভূমিকা") ----------
-     শুধুমাত্র Donor অ্যাকাউন্ট ও Donor ID-এর তালিকা। প্রতিটি ডোনারের জন্য
-     সংক্ষিপ্ত তথ্য: প্রোফাইল ছবি, নাম, Username, রক্তের গ্রুপ, এলাকা,
-     ডোনার আইডি ও স্ট্যাটাস। তালিকায় ক্লিক করলে বিদ্যমান রক্তদাতার
-     প্রোফাইল ভিউ খোলে; একক বা একাধিক (bulk) ডোনার নির্বাচন করে
-     নিশ্চিতকরণসহ সম্পূর্ণ ডিলিট করা যায়। */
-  let teamSel=new Set();
-  SUBP.team=el=>{
-    /* ডেটা না আসা পর্যন্ত স্কেলিটন — "কোনো ডোনার নেই"/ভুল তালিকা নয় */
-    if(!dataReady("donors")){el.innerHTML=skelRows(4);return}
-    /* username আসে RTDB `users` node-এর live listener (accountUsers) থেকে */
-    const usersByUid=new Map(accountUsers.map(u=>[String(u.uid||u.id),u]));
-    const rows=DB.donors.map(d=>{
-      const prof=d.ownerUid?usersByUid.get(String(d.ownerUid)):null;
+     শুধু সেই ডোনার যাদের **Website/Firebase অ্যাকাউন্ট আছে** (users/{uid}
+     রেকর্ড)। প্রতিটি ডোনারের সংক্ষিপ্ত তথ্য: প্রোফাইল ছবি, নাম, Username,
+     রক্তের গ্রুপ, এলাকা, ডোনার আইডি ও স্ট্যাটাস — **আগের ডিজাইন হুবহু**।
+     অ্যালগোরিদম পরিবর্তন:
+       • "দেখুন" বাটন নেই — কার্ড/পঙ্‌ক্তির যে-কোনো অংশে ক্লিক করলে
+         বিদ্যমান রক্তদাতার প্রোফাইল ভিউ খোলে (openDonor)।
+       • চেকবক্সে ক্লিক = শুধু নির্বাচন/বাতিল; কখনো প্রোফাইল খোলে না।
+       • নির্বাচিত এক/একাধিক ডোনারের **অ্যাকাউন্ট** মুছে যায় (scope
+         "account") — ডোনার আইডি অক্ষত থাকে। */
+  let teamSel=new Set(), donorIdSel=new Set();
+
+  /** কোন ডোনারের Website/Firebase অ্যাকাউন্ট আছে (users/{uid} রেকর্ড)। */
+  function accountDonors(){
+    const byUid=new Map(accountUsers.map(u=>[String(u.uid||u.id),u]));
+    return DB.donors.filter(d=>{
+      const uid=String((d&&(d.ownerUid||d.uid))||"").trim();
+      return !!uid&&byUid.has(uid);
+    });
+  }
+
+  /** তালিকার row — username/photo অ্যাকাউন্ট থেকে (থাকলে), না থাকলে শুধু donor। */
+  function donorManageRows(all){
+    const byUid=new Map(accountUsers.map(u=>[String(u.uid||u.id),u]));
+    return (all?DB.donors:accountDonors()).map(d=>{
+      const prof=d.ownerUid?byUid.get(String(d.ownerUid)):null;
       return {d,username:String((prof&&prof.username)||""),photo:String(d.photo||(prof&&prof.photo)||"")};
     });
-    const selCount=[...teamSel].filter(id=>DB.donors.some(d=>String(d.id)===String(id))).length;
-    teamSel=new Set([...teamSel].filter(id=>DB.donors.some(d=>String(d.id)===String(id))));
-    const allChecked=rows.length>0&&selCount===rows.length;
+  }
 
-    el.innerHTML=`
-      <div class="frow" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+  /** দুটি ব্যবস্থাপনা স্ক্রিনের অভিন্ন কার্ড-ডিজাইন (শুধু ডেলিট scope আলাদা)। */
+  function donorManageHtml(rows,sel,emptyTitle,emptyDesc){
+    const keep=new Set(rows.map(r=>String(r.d.id)));
+    const pruned=new Set([...sel].filter(id=>keep.has(String(id))));
+    sel.clear();pruned.forEach(id=>sel.add(id));
+    const selCount=pruned.size;
+    const allChecked=rows.length>0&&selCount===rows.length;
+    return `<div class="frow" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
         <label style="display:flex;align-items:center;gap:7px;font-size:.78rem;font-weight:700;cursor:pointer">
           <input type="checkbox" id="tall" ${allChecked?"checked":""} style="width:17px;height:17px;accent-color:var(--grn)">
           সব নির্বাচন করুন</label>
@@ -4536,101 +4555,135 @@ function initPage() {
           style="margin-left:auto">${SI.trash(14)} ডিলিট করুন${selCount?" ("+bn(selCount)+")":""}</button>
       </div>`
     +(rows.length
-      ?`<div class="card pad0">${rows.map(({d,username,photo})=>`<div class="prow" style="cursor:pointer">
-          <input type="checkbox" data-tsel="${esc(d.id)}" ${teamSel.has(String(d.id))?"checked":""}
+      ?`<div class="card pad0">${rows.map(({d,username,photo})=>`<div class="prow" style="cursor:pointer" data-row="${esc(d.id)}">
+          <input type="checkbox" data-tsel="${esc(d.id)}" ${sel.has(String(d.id))?"checked":""}
             style="width:17px;height:17px;accent-color:var(--red);flex:none" aria-label="নির্বাচন করুন">
           ${photo?`<img src="${esc(photo)}" alt="" style="width:40px;height:40px;border-radius:11px;object-fit:cover;background:var(--card2)">`
             :`<span class="bg2" style="background:var(--grn-s);color:var(--grn)">${esc(d.group||"")}</span>`}
-          <span class="tx" data-top="${esc(d.id)}" style="cursor:pointer"><b>${esc(d.name)}${d.ownerUid===ME.uid?" (আপনি)":""}</b>
+          <span class="tx"><b>${esc(d.name)}${d.ownerUid===ME.uid?" (আপনি)":""}</b>
             <small>${username?"@"+esc(username)+" · ":""}${esc(d.group||"")} · ${esc(d.area||"")}</small>
             <small>${esc(d.donorId||d.id)} · ${d.suspended?`<span style="color:var(--red)">স্থগিত</span>`:`<span style="color:var(--grn)">অনুমোদিত</span>`}</small></span>
-          <button class="btn gh sm" data-top="${esc(d.id)}" style="flex:none">${SI.eye(14)} দেখুন</button>
         </div>`).join("")}</div>`
-      :`<div class="card">${emptyBox("users","কোনো ডোনার নেই","অনুমোদিত রক্তদাতারা এখানে দেখা যাবেন")}</div>`);
-
-    $("#tall").onchange=e=>{
-      teamSel=e.target.checked?new Set(rows.map(r=>String(r.d.id))):new Set();
-      renderSub("team");
-    };
-    el.querySelectorAll("[data-tsel]").forEach(c=>c.onchange=()=>{
-      const id=c.dataset.tsel;
-      c.checked?teamSel.add(String(id)):teamSel.delete(String(id));
-      renderSub("team");
-    });
-    /* নাম/তথ্যে ক্লিক করলে বিদ্যমান প্রোফাইল ভিউ খোলে (চেকবক্স নয়) */
-    el.querySelectorAll("[data-top]").forEach(x=>x.onclick=()=>openDonor(x.dataset.top));
-    $("#tdel").onclick=()=>bulkDeleteDonors([...teamSel]);
-  };
-
-  /* ══════════ সম্পূর্ণ ডোনার ডিলিট (একক + bulk) ══════════
-     প্রতিটি ডোনারের — Donor ID, UID, প্রোফাইল/ডোনার রেকর্ড, অ্যাকাউন্ট তথ্য
-     (users), ভূমিকা (admins), অ্যাকাউন্ট রেকর্ড (accounts), ডোনার আবেদন
-     (members), অপেক্ষমাণ আবেদন (queue), জরুরি আবেদন (requests), রিপোর্ট
-     (reports) এবং Firebase Authentication account — সব মুছে ফেলা হয়
-     (src/lib/accountDelete.ts)।
-
-       • কোনো path অনুমান করা হয় না — আগে পড়ে দেখা হয়; রেকর্ড না থাকলে
-         সেটি failure নয় (missing record ≠ failure)।
-       • UID/Donor ID ভুল resolve হলে কিছুই মোছা হয় না।
-       • সব ধাপ সফল হলেই success; partial হলে কোন অংশ বাকি আছে তা দেখানো হয়।
-       • ডিলিট হওয়ার সাথে সাথেই existing live listener অনুযায়ী তালিকা ও
-         পরিসংখ্যান আপডেট হয় — কোনো page reload লাগে না। */
-
-  /** এই প্যানেলে ইতিমধ্যে লোড করা তালিকা reuse করে (নতুন read নয়)। */
-  function deletionSources(){
-    return {donors:DB.donors,users:accountUsers,admins:accountAdmins,
-      accounts:DB.accounts,queue:DB.queue,requests:DB.live};
+      :`<div class="card">${emptyBox("users",emptyTitle,emptyDesc)}</div>`);
   }
 
-  /** একজন ডোনার সম্পূর্ণ মুছে ফেলা — RTDB → Authentication → রিপোর্ট। */
-  async function deleteOneDonor(d){
-    const result=await deleteDonorCompletely(
-      {donorId:String(d&&d.id||"").trim(),uid:String((d&&(d.ownerUid||d.uid))||"").trim(),
-        name:String((d&&d.name)||"").trim()},
-      deletionSources());
+  /** row ক্লিক → প্রোফাইল; চেকবক্স ক্লিক → শুধু নির্বাচন (stopPropagation)। */
+  function wireDonorManage(el,rows,sel,scope){
+    $("#tall").onchange=e=>{
+      sel.clear();
+      if(e.target.checked)rows.forEach(r=>sel.add(String(r.d.id)));
+      renderSub(scope==="account"?"team":"donorid");
+    };
+    el.querySelectorAll("[data-tsel]").forEach(c=>{
+      c.onclick=e=>e.stopPropagation();
+      c.onchange=()=>{
+        const id=String(c.dataset.tsel);
+        c.checked?sel.add(id):sel.delete(id);
+        renderSub(scope==="account"?"team":"donorid");
+      };
+    });
+    /* কার্ড/পঙ্‌ক্তির অন্য যেকোনো অংশ → বিদ্যমান প্রোফাইল ভিউ (দেখুন বাটন নেই) */
+    el.querySelectorAll("[data-row]").forEach(x=>x.onclick=()=>openDonor(x.dataset.row));
+    $("#tdel").onclick=()=>bulkDeleteEntities(scope,[...sel]);
+  }
+
+  /* ---------- ডোনার ব্যবস্থাপনা — শুধু অ্যাকাউন্ট-ওয়ালা ডোনার ---------- */
+  SUBP.team=el=>{
+    /* ডেটা না আসা পর্যন্ত স্কেলিটন — "কোনো ডোনার নেই"/ভুল তালিকা নয় */
+    if(!dataReady("donors","users")){el.innerHTML=skelRows(4);return}
+    const rows=donorManageRows(false);
+    el.innerHTML=donorManageHtml(rows,teamSel,
+      "কোনো ডোনার নেই","অ্যাকাউন্ট-ওয়ালা অনুমোদিত রক্তদাতারা এখানে দেখা যাবেন");
+    wireDonorManage(el,rows,teamSel,"account");
+  };
+
+  /* ---------- ডোনার আইডি ব্যবস্থাপনা — সব ডোনার আইডি (অ্যাকাউন্ট ছাড়াও) ----------
+     Someone with a Donor ID is anyone who has a `donors/{donorId}` record;
+     having a Website/Firebase অ্যাকাউন্ট প্রয়োজন হয় না। একই কার্ড-ডিজাইন;
+     ডিলিট scope "donor" — শুধু Donor ID ও ডোনার-সম্পর্কিত রেকর্ড মোছে,
+     অ্যাকাউন্ট (users/accounts/admins) অক্ষত থাকে। */
+  SUBP.donorid=el=>{
+    if(!dataReady("donors")){el.innerHTML=skelRows(4);return}
+    const rows=donorManageRows(true);
+    el.innerHTML=donorManageHtml(rows,donorIdSel,
+      "কোনো ডোনার আইডি নেই","সব ডোনার আইডি এখানে দেখা যাবেন — অ্যাকাউন্ট ছাড়াও");
+    wireDonorManage(el,rows,donorIdSel,"donor");
+  };
+
+  /* ══════════ নিরাপদ সার্ভার-ভিত্তিক ডিলিট (একক + bulk) ══════════
+     ব্রাউজার আর নিজে কিছু মোছে না — লগইন করা অ্যাডমিনের Firebase ID token
+     নিয়ে secure server endpoint (`<base>api/admin/delete`)-এ অনুরোধ পাঠায়;
+     সেখানে token + অ্যাডমিন role যাচাই করে শুধু নির্ধারিত entity-র RTDB
+     রেকর্ড মোছা হয় (src/lib/accountDelete.ts → server/deleteApi.ts)।
+
+       • **দুটি স্বাধীন entity**:
+           scope "account" → users/{uid} · admins/{uid} · accounts/*
+                             (ডোনার আইডি অক্ষত)
+           scope "donor"   → donors/{donorId} · members/* · queue/*
+                             (অ্যাকাউন্ট অক্ষত)
+       • ভুল identity দিলে সার্ভার কিছুই মোছা না; প্রতিটি path মোছার আগে
+         read করে যাচাই করা হয়।
+       • সফল হলে RTDB বদলায় → existing live listener-ই তালিকা ও পরিসংখ্যান
+         আপডেট করে — কোনো page reload/full reload/loading লাগে না। */
+
+  /** একজন ডোনারের একটি entity (অ্যাকাউন্ট বা ডোনার আইডি) — সার্ভার দিয়ে। */
+  async function deleteOneEntity(d,scope){
+    const result=await serverDeleteEntity({
+      scope,
+      donorId:String(d&&d.id||"").trim(),
+      uid:String((d&&(d.ownerUid||d.uid))||"").trim(),
+      name:String((d&&d.name)||"").trim()});
     if(result.ok){
-      await logAudit("ডোনার সম্পূর্ণ মুছে ফেলা",
-        `${result.name||result.donorId} · ${result.donorId}${result.uid?" · "+result.uid:""}`,"donor");
-      /* Auth account রয়ে গেলে (server-side প্রিভিলেজ প্রয়োজন) সেটি লুকানো হয় না */
+      await logAudit(scope==="account"?"অ্যাকাউন্ট মুছে ফেলা":"ডোনার আইডি মুছে ফেলা",
+        `${result.name||result.donorId||result.uid} · ${result.donorId||"—"}${result.uid?" · "+result.uid:""}`,"donor");
+      /* Auth account রয়ে গেলে (server-এ private key নেই) সেটি লুকানো হয় না */
       (result.warnings||[]).forEach(w=>toast(w,""));
       return result;
     }
-    /* কোন অংশ মুছেছে আর কোনটি মুছেনি — তা-ই দেখানো হয় (কোনো সাফল্য নয়) */
-    toast(`${result.name||result.donorId}: ${deletionMessage(result)}`,"er");
+    /* কিছু মোছেনি/অনুমতি নেই — স্পষ্ট কারণ দেখানো হয় (কোনো সাফল্য নয়) */
+    toast(`${result.name||result.donorId||result.uid||"ডোনার"}: ${deletionMessage(result)}`,"er");
     return result;
   }
 
-  async function bulkDeleteDonors(ids){
+  async function bulkDeleteEntities(scope,ids){
+    const isAccount=scope==="account";
+    const entity=isAccount?"অ্যাকাউন্ট":"ডোনার আইডি";
     const list=DB.donors.filter(d=>ids.includes(String(d.id)));
     if(!list.length)return toast("কোনো ডোনার নির্বাচিত হয়নি","er");
     const names=list.slice(0,3).map(d=>d.name).join(", ")+(list.length>3?" সহ "+bn(list.length)+" জন":"");
-    if(!await confirmS({title:list.length>1?"নির্বাচিত ডোনারদের মুছবেন?":"ডোনার মুছবেন?",
-      desc:`${names}-এর অ্যাকাউন্ট, ডোনার আইডি এবং সংশ্লিষ্ট সব তথ্য মুছে যাবে। এটি ফেরানো যাবে না।`,
+    if(!await confirmS({title:list.length>1?`নির্বাচিত ${entity}গুলো মুছবেন?`:`${entity} মুছবেন?`,
+      desc:isAccount
+        ?`${names}-এর Website/Firebase অ্যাকাউন্ট (users/accounts/admins রেকর্ড) মুছে যাবে — ডোনার আইডি ও পাবলিক ডোনার তথ্য অক্ষত থাকবে। এটি ফেরানো যাবে না।`
+        :`${names}-এর ডোনার আইডি ও ডোনার-সম্পর্কিত রেকর্ড (members/queue) মুছে যাবে — অ্যাকাউন্ট (যদি থাকে) অক্ষত থাকবে। এটি ফেরানো যাবে না।`,
       ok:"হ্যাঁ, মুছুন",danger:true}))return;
     const done=[],failed=[];
     for(const d of list){
-      /* প্রতিটি ডোনারের UID/Donor ID আলাদাভাবে resolve ও verify করা হয় —
-         একজনের ভুল identity অন্য কারও তথ্য মুছতে পারে না। */
-      const result=await deleteOneDonor(d).catch(e=>{
-        console.warn("donor delete:",d.id,e&&e.message);
-        return {ok:false,name:d.name||d.id,donorId:String(d.id||""),rtdb:"failed",auth:"skipped",
-          failed:[{id:"unknown",label:"ডোনার মুছে ফেলা",ok:false,error:(e&&e.message)||"অজানা সমস্যা"}],
-          steps:[],removed:0,server:"failed",references:{},warnings:[]};
+      /* প্রতিটি entity আলাদাভাবে সার্ভারে যাচাই হয় — ভুল identity অন্য
+         কারও তথ্য মুছতে পারে না। */
+      const result=await deleteOneEntity(d,scope).catch(e=>{
+        console.warn("server delete:",d.id,e&&e.message);
+        return {ok:false,scope,donorId:String(d.id||""),uid:String((d&&(d.ownerUid||d.uid))||""),
+          name:d.name||d.id,rtdb:"skipped",auth:"skipped",server:"failed",
+          failed:[{id:"server",label:"নিরাপদ সার্ভার অনুরোধ",ok:false,error:(e&&e.message)||"অজানা সমস্যা"}],
+          steps:[],removed:0,references:{},warnings:[],error:(e&&e.message)||"অজানা সমস্যা"}
       });
       if(result.ok){done.push(d);toast("মুছে ফেলা হচ্ছে… ("+bn(done.length)+"/"+bn(list.length)+")","")}
       else failed.push(`${result.name||result.donorId||d.id}: ${deletionMessage(result)}`);
     }
     /* সবকিছু সফল হলেই success — আংশিক হলে কী কী বাকি আছে তা জানানো হয় */
     if(!failed.length){
-      teamSel=new Set();
-      toast(list.length>1?"নির্বাচিত ডোনারদের সম্পূর্ণভাবে মুছে ফেলা হয়েছে"
-        :"ডোনার সফলভাবে সম্পূর্ণ মুছে ফেলা হয়েছে","ok");
+      (isAccount?teamSel:donorIdSel).clear();
+      toast(isAccount
+        ?(list.length>1?"নির্বাচিত অ্যাকাউন্টগুলো মুছে ফেলা হয়েছে — ডোনার আইডি অক্ষত"
+          :"অ্যাকাউন্ট মুছে ফেলা হয়েছে — ডোনার আইডি অক্ষত আছে")
+        :(list.length>1?"নির্বাচিত ডোনার আইডিগুলো মুছে ফেলা হয়েছে — অ্যাকাউন্ট অক্ষত"
+          :"ডোনার আইডি মুছে ফেলা হয়েছে — অ্যাকাউন্ট অক্ষত আছে"),"ok");
     }else{
       toast((done.length?bn(done.length)+" জন মুছে গেছে — ":"")+failed.slice(0,2).join(" | ")
         +(failed.length>2?" | আরও "+bn(failed.length-2)+" জন":""),"er");
     }
     /* live listener-ই তালিকা/পরিসংখ্যান আপডেট করে — reload নয় */
-    renderSub("team");paintNav();paintTop();
+    renderSub(isAccount?"team":"donorid");paintNav();paintTop();
   }
 
   /* Team editing and the account directory use one guarded editor. This
@@ -4926,19 +4979,19 @@ function initPage() {
             ["আইডি","নাম","গ্রুপ","এলাকা","ফোন","বয়স","লিঙ্গ","শেষ দান","মোট দান","অবস্থা"]));
           logAudit("প্রোফাইল রপ্তানি",d.id,"data");toast("ফাইল নামছে","ok")}
         if(m==="del"){
-          if(!await confirmS({title:"স্থায়ীভাবে মুছবেন?",
-            desc:"এই রক্তদাতার অ্যাকাউন্ট, ডোনার আইডি ও সংশ্লিষ্ট সব তথ্য মুছে যাবে। সাধারণত স্থগিত করাই ভালো — মুছলে ফেরানো যায় না।",
+          if(!await confirmS({title:"ডোনার আইডি স্থায়ীভাবে মুছবেন?",
+            desc:"এই ডোনার আইডি ও ডোনার-সম্পর্কিত রেকর্ড মুছে যাবে — অ্যাকাউন্ট (যদি থাকে) অক্ষত থাকবে। সাধারণত স্থগিত করাই ভালো — মুছলে ফেরানো যায় না।",
             ok:"মুছে ফেলুন",danger:true}))return;
-          /* সম্পূর্ণ ডিলিট — Donor ID, UID, প্রোফাইল, অ্যাকাউন্ট, আবেদন ও Auth */
-          const delResult=await deleteOneDonor(d).catch(e=>{
-            console.warn("donor delete:",d.id,e&&e.message);
+          /* নিরাপদ সার্ভার ডিলিট — শুধু Donor ID (scope "donor"); অ্যাকাউন্ট অক্ষত */
+          const delResult=await deleteOneEntity(d,"donor").catch(e=>{
+            console.warn("server delete:",d.id,e&&e.message);
             toast(describeDeletionFailure(d.name||d.id,
-              [{id:"unknown",label:"ডোনার মুছে ফেলা",ok:false,error:(e&&e.message)||"অজানা সমস্যা"}]),"er");
-            return {ok:false} as ReturnType<typeof deleteOneDonor> extends Promise<infer R>?R:never;
+              [{id:"server",label:"নিরাপদ সার্ভার অনুরোধ",ok:false,error:(e&&e.message)||"অজানা সমস্যা"}]),"er");
+            return {ok:false} as ReturnType<typeof deleteOneEntity> extends Promise<infer R>?R:never;
           });
           if(!delResult||!delResult.ok)return;
           /* live listener-ই তালিকা ও পরিসংখ্যান আপডেট করে — কোনো reload নয় */
-          go(CUR,"donors");toast("ডোনার সফলভাবে সম্পূর্ণ মুছে ফেলা হয়েছে","ok")}
+          go(CUR,"donors");toast("ডোনার আইডি মুছে ফেলা হয়েছে — অ্যাকাউন্ট অক্ষত আছে","ok")}
       });
     }
   }
@@ -5139,25 +5192,25 @@ function initPage() {
     if(String(uid)&&!isAuthUid(uid)){
       toast("অ্যাকাউন্টের UID সঠিক নয় — ভুল তথ্য দিয়ে কিছু মোছা হবে না","er");return false;
     }
-    if(!await confirmS({title:"অ্যাকাউন্ট সম্পূর্ণ মুছবেন?",
-      desc:`${a.name||a.email||uid}-এর Firebase Authentication account, Donor ID এবং Realtime Database/Storage-এর সকল সম্পর্কিত তথ্য স্থায়ীভাবে মুছে যাবে। এটি ফেরানো যাবে না।`,
-      ok:"সম্পূর্ণ মুছুন",danger:true}))return false;
-    const donorId=String((a&&a.donorId)||"").trim()
-      ||String((DB.donors.find(d=>String(d.ownerUid||d.uid||"")===String(uid))||{}).id||"").trim();
+    if(!await confirmS({title:"অ্যাকাউন্ট মুছবেন?",
+      desc:`${a.name||a.email||uid}-এর Website/Firebase অ্যাকাউন্ট (users/accounts/admins রেকর্ড) স্থায়ীভাবে মুছে যাবে — ডোনার আইডি ও পাবলিক ডোনার তথ্য অক্ষত থাকবে। এটি ফেরানো যাবে না।`,
+      ok:"অ্যাকাউন্ট মুছুন",danger:true}))return false;
     try{
-      const result=await deleteDonorCompletely({uid:String(uid),donorId,name:a.name||""},deletionSources());
+      /* Account ও Donor ID দুটি স্বাধীন entity — শুধু অ্যাকাউন্ট মোছা হয়
+         (scope "account"), ডোনার আইডি কোনোভাবেই স্পর্শ করা হয় না। */
+      const result=await serverDeleteEntity({scope:"account",uid:String(uid),donorId:"",name:a.name||""});
       if(!result.ok){
         toast(`${a.name||a.email||uid}: ${deletionMessage(result)}`,"er");
         return false;
       }
-      await logAudit("অ্যাকাউন্ট সম্পূর্ণ মুছে ফেলা",`${a.name||a.email||uid}`,"access");
+      await logAudit("অ্যাকাউন্ট মুছে ফেলা",`${a.name||a.email||uid} — ডোনার আইডি অক্ষত`,"access");
       (result.warnings||[]).forEach(w=>toast(w,""));
-      toast("ডোনার সফলভাবে সম্পূর্ণ মুছে ফেলা হয়েছে","ok");
+      toast("অ্যাকাউন্ট মুছে ফেলা হয়েছে — ডোনার আইডি অক্ষত আছে","ok");
       return true;
     }catch(e){
-      console.warn("complete account deletion:",e&&e.message);
+      console.warn("account deletion:",e&&e.message);
       toast(describeDeletionFailure(a.name||a.email||uid,
-        [{id:"unknown",label:"অ্যাকাউন্ট মুছে ফেলা",ok:false,error:(e&&e.message)||"অজানা সমস্যা"}]),"er");
+        [{id:"server",label:"নিরাপদ সার্ভার অনুরোধ",ok:false,error:(e&&e.message)||"অজানা সমস্যা"}]),"er");
       return false;
     }
   }
@@ -6160,7 +6213,7 @@ function initPage() {
        (প্রথম বুট / লগইন-লগআউটে কোনো `meta.node` থাকে না — তখন পূর্ণ
        স্ক্রিন refresh প্রয়োজন।) */
     const NODE_SCREENS={
-      donors:["home","people","donors","donor","stats","search","team","set","live","users"],
+      donors:["home","people","donors","donor","stats","search","team","donorid","set","live","users"],
       requests:["home","work","live","search"],
       queue:["home","work","search"],
       gallery:["gallery","site","set","home"],

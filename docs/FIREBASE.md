@@ -184,58 +184,62 @@ listener-এর মাধ্যমে সব প্যানেল/ওয়ে�
 | জরুরি আবেদন | `emergencyApproval` | জরুরি আবেদন approval queue-এ যায় | আবেদন সরাসরি প্রকাশিত |
 | গ্রুপ বদল | `bloodGroupApproval` | গ্রুপ পরিবর্তন queue-এ যায় | গ্রুপ সরাসরি বদলে যায় (staff হলে সরাসরি RTDB-তে; নইলে pending queue) |
 
-### ডোনার সম্পূর্ণ মুছে ফেলা (Donor Management / অ্যাক্সেস ও ভূমিকা)
+### ডোনার ব্যবস্থাপনা ↔ ডোনার আইডি ব্যবস্থাপনা — নিরাপদ সার্ভার ডিলিট
 
 > ওয়েবসাইটে শুধুই **Firebase Realtime Database** ও **Firebase Authentication**
 > ব্যবহৃত হয়। **Firebase Storage ব্যবহার করা হয় না** — ছবি ImgBB-এ থাকে,
 > তাই ডিলিট সিস্টেমে কোনো Storage dependency নেই।
 
-Flow: **Donor Select → Delete → Confirmation → identity verify → RTDB delete →
-Authentication delete → Success → Realtime UI Update**
+**দুটি স্বাধীন entity:**
 
-**১. Identity chain (কখনো blindly delete নয়)**
-`Donor ID → UID → existing account/profile` — `donors/{donorId}.ownerUid`,
-`users` node (UID ও `donorId` দিয়ে), `admins`, `accounts`, `members` মিলিয়ে
-যাচাই করা হয়। কোনো সূত্র না মিললে **কোনো deletion শুরুই হয় না**।
-একাধিক donor হলে প্রত্যেকের identity আলাদাভাবে resolve/verify করা হয়।
+| স্ক্রিন | দেখায় | Delete scope | সার্ভার যেটি মোছে |
+| --- | --- | --- | --- |
+| ডোনার ব্যবস্থাপনা | শুধু **Website/Firebase অ্যাকাউন্ট-ওয়ালা** ডোনার (`users/{uid}` আছে) | `account` | `users/{uid}` · `admins/{uid}` · `accounts/*` — **ডোনার আইডি অক্ষত** |
+| ডোনার আইডি ব্যবস্থাপনা | **সব** ডোনার আইডি (`donors/{donorId}`) — অ্যাকাউন্ট ছাড়াও | `donor` | `donors/{donorId}` · `members/*` · `queue/*` — **অ্যাকাউন্ট অক্ষত** |
 
-**২. Realtime Database** — কোনো path অনুমান করা হয় না; প্রতিটি node পড়ে, সত্যিই
-মেলে এমন রেকর্ড মোছা হয়: `donors`, `users` (+`data`: donations, mine, notifs,
-activity, panel, groupChange), `admins`, `accounts`, `members`, `queue`
-(approval/রক্তদান যাচাই/গ্রুপ বদল), `requests`, `reports`, `messages`।
-`audit` লগ append-only — মোছা হয় না। গ্লোবাল node (`gallery`, `notices`) শুধু
-রিপোর্ট করা হয় (সাংগঠনিক কনটেন্ট নষ্ট করা যাবে না)।
+Flow: **Select (checkbox → শুধু নির্বাচন) → Confirmation → POST
+`<base>api/admin/delete` (Bearer Firebase ID token) → server: token verify →
+admin role verify → identity verify → RTDB delete → Success → Realtime UI Update**
 
-**৩. Firebase Authentication** — RTDB সফল হবার **পরেই**।
-Firebase-এর নিরাপত্তা নিয়ম অনুযায়ী ব্রাউজার থেকে অন্য কারও Auth account মোছা
-সম্ভব নয় (Admin SDK/সার্ভার প্রয়োজন), আর এই প্রকল্পে কোনো Cloud Function নেই:
-- **নিজের অ্যাকাউন্ট** → client SDK (`deleteUser`) দিয়ে মোছা যায়,
-- **অন্য কারও** → RTDB ডেটা মোছার পর `auth: skipped` + স্পষ্ট warning
-  (Firebase Console → Authentication থেকে মুছতে হবে)। কোনো মিথ্যে সাফল্য নয়।
+**১. কেন সার্ভার-সাইড (ব্রাউজার আর কিছু মোছে না)**
+`src/lib/accountDelete.ts` শুধু authenticated অনুরোধ পাঠায়। একমাত্র deletion
+engine `server/deleteApi.ts` — ওই একই logic চলে:
+- production → **Cloudflare Worker** (`server/index.ts`; `wrangler.jsonc` → `main`),
+- `vite dev` → Vite middleware (`vite.config.ts` → `cbdcDeleteApi`) — build/preview-এ নেই।
 
-**৪. ফলাফল**
-- RTDB সম্পূর্ণ মোছা হলেই সফল → "ডোনার সফলভাবে সম্পূর্ণ মুছে ফেলা হয়েছে" /
-  "নির্বাচিত ডোনারদের সম্পূর্ণভাবে মুছে ফেলা হয়েছে"
-- নিজের Auth delete ব্যর্থ → success নয়:
-  "ডোনারের RTDB তথ্য মুছে ফেলা হয়েছে, কিন্তু Authentication account মুছে ফেলা যায়নি।"
-- RTDB ব্যর্থ → Auth-এ যাওয়াই হয় না, কোনো success নয়
-- রেকর্ড আগে থেকেই না থাকলে failure নয়; bulk-এ প্রতিটি donor-এর ফল আলাদা করে জানানো হয়
+**২. নিরাপত্তা সার্ভার-সাইড (কোথাও কোনো private key নেই)**
+- ID token যাচাই: Firebase Identity Toolkit `accounts:lookup` (শুধু public web API key),
+- `admins/{uid}/role === 'admin'` (এবং disabled নয়) — মডারেটর/ডোনার 403,
+- প্রতিটি RTDB read/write client-এর token দিয়ে (`?auth=<token>`) → **RTDB Security
+  Rules-ই** দ্বিতীয় স্তরের সুরক্ষা,
+- নিজের অ্যাকাউন্ট delete → 400; ভুল UID → 400; অজানা Donor ID → 404;
+  ভুল/অমিল identity → কিছুই মোছা হয় না,
+- **Firebase Authentication (লগইন) account মোছা যায় না** — Admin SDK/private key
+  ছাড়া সম্ভব নয়; তাই success-এর সাথে স্পষ্ট warning দেওয়া হয়
+  (Console → Authentication থেকে মুছতে হবে)। কোনো মিথ্যে সাফল্য নয়।
 
-**৫. Realtime** — existing listener-ই donor list, donor count, dashboard
-পরিসংখ্যান ও আবেদন count সাথে সাথে আপডেট করে; **page reload বা পুরো ডেটাবেস
-রিলোড লাগে না**।
+**৩. Realtime** — server-এর multi-path delete-এর পর existing listener-ই donor list,
+donor count, dashboard পরিসংখ্যান ও উভয় ব্যবস্থাপনা স্ক্রিন সাথে সাথে আপডেট করে;
+**page reload বা পুরো ডেটাবেস রিলোড লাগে না**; কোনো নতুন listener যোগ হয় না।
 
-Deploy: কোনো Cloud Function নেই — শুধু `firebase deploy --only database` (rules)।
-Authentication account মুছতে হলে: Firebase Console → Authentication (Admin SDK ছাড়া সম্ভব নয়)।
-পরীক্ষা: `npm run verify-admin` (single/bulk, missing record, missing Auth,
-UID/Donor ID mismatch, partial failure, realtime update—সব পরিস্থিতি)।
+**৪. UI (দুই স্ক্রিন, ডিজাইন অপরিবর্তিত)**
+- একই কার্ড/পঙ্‌ক্তি ডিজাইন; কোনো আলাদা "দেখুন" বাটন নেই,
+- কার্ড/পঙ্‌ক্তির অন্য অংশে ক্লিক → বিদ্যমান ডোনার প্রোফাইল (`openDonor`),
+- চেকবক্সে ক্লিক → শুধু নির্বাচন/বাতিল (`stopPropagation`) — প্রোফাইল খোলে না,
+- একক ও bulk ডিলিট, প্রতিটির আগে confirmation; প্রতিটি entity আলাদাভাবে সার্ভারে যাচাই হয়।
+
+Deploy: `npm run build` → `npx wrangler deploy` (Worker + assets) অথবা শুধু
+`firebase deploy --only database` (rules)। Authorization delete-এর জন্য কোনো
+Admin SDK নেই — তাই লগইন account মুছতে হলে Firebase Console → Authentication।
+পরীক্ষা: `npm run verify-admin` (server API, independence দুই দিক, 401/403/400/404,
+UI-র দুটি স্ক্রিন, checkbox/row ক্লিক, realtime update—সব পরিস্থিতি)।
 
 ### নিরাপত্তা স্থাপত্য (কোনো secret frontend-এ নেই)
 
 | বিষয় | কীভাবে |
 | --- | --- |
 | Firebase service | শুধু Realtime Database + Authentication (Firestore/Storage নয়) |
-| Admin SDK / service account | কোথাও নেই — কোনো Cloud Function/সার্ভার কোড নেই |
+| Admin SDK / service account | কোথাও নেই — client-এও না, সার্ভারেও না (Worker শুধু public API key + client token) |
 | অন্য user-এর Auth delete | ব্রাউজার থেকে সম্ভব নয় (Firebase নিরাপত্তা) → RTDB মোছা হয় + স্পষ্ট warning; Firebase Console থেকে Auth account মুছতে হয় |
 | ছবি আপলোড (ImgBB) | সরাসরি ImgBB API — key মূলত RTDB `settings/imgbb`-এ (admin লেখে), source/bundle-এ কোনো literal নেই |
 | `VITE_*` env | bundle-এ inline হয় → কোনো third-party secret এখানে রাখা যাবে না |
@@ -259,6 +263,11 @@ Firebase Storage ব্যবহার করা হয় না, এবং এ
 কোডে কোনো host-নির্দিষ্ট path নেই। Root deploy → ডিফল্ট `base: "/"`; sub-directory হোস্টিং →
 `VITE_BASE=/cbdc/` env। Firebase Hosting · Cloudflare Pages (`wrangler.jsonc`, SPA rewrite) ·
 Netlify · Vercel — যেকোনো static host-এ `dist/` serve করলেই চলে।
+
+> ⚠️ **নিরাপদ ডিলিট endpoint** শুধু সেই host-এ কাজ করে যেখানে সার্ভার-সাইড
+> endpoint আছে: Cloudflare Workers (`npm run build && npx wrangler deploy`) অথবা
+> `vite dev` (development middleware)। শুধু static host (Firebase Hosting ইত্যাদি)-এ
+> ডিলিট করলে স্পষ্ট ত্রুটি বার্তা দেখানো হয় — ডেটা মোছা হয় না।
 
 ## ৬. Firebase Authentication
 
@@ -343,6 +352,10 @@ firebase deploy --only database
 # (ঐচ্ছিক) hosting deploy — production build প্রথমে
 npm run build
 firebase deploy --only hosting
+
+# নিরাপদ ডিলিট endpoint-সহ পুরো সাইট — Cloudflare Workers (দেখুন wrangler.jsonc)
+npm run build
+npx wrangler deploy
 ```
 
 `database.rules.json`-এ যা যা আছে:

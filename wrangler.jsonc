@@ -7,10 +7,23 @@
   // src/lib/router.ts দেখুন)। legacy URL গুলো (যেমন /doner.html) যেন না ভাঙে
   // "single-page-application" not-found handling রাখা হয়েছে — যেকোনো অচেনা পাথ
   // index.html-ই পরিবেশন করবে।
+  //
+  // ⚙️ Secure server-side delete (Admin panel → ডোনার/অ্যাকাউন্ট মুছা):
+  // `main`-এ Worker entry আছে (server/index.ts)। শুধুমাত্র একটি endpoint —
+//   POST <base>api/admin/delete
+//   এতে কোনো private key/service-account নেই: client-এর Firebase ID token
+//   (Bearer header) Identity Toolkit দিয়ে যাচাই হয়, তারপর RTDB Security
+  // Rules-এর অধীনেই (admin token) সংশ্লিষ্ট node মোছা হয়। তাই শুধু
+  // public মানগুলোর `vars` প্রয়োজন — client bundle-এ থাকা হুবহু একই মান।
   "name": "cbdc",
   "compatibility_date": "2026-08-16",
+  "main": "server/index.ts",
   "assets": {
     "directory": "./dist",
     "not_found_handling": "single-page-application"
+  },
+  "vars": {
+    "FIREBASE_API_KEY": "AIzaSyBxUlGig2NtQLf6tZMRwK6xxzjScNIqbrM",
+    "FIREBASE_DATABASE_URL": "https://chokbazarbloodclub-69d5f-default-rtdb.firebaseio.com"
   }
 }
