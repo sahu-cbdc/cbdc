@@ -3,6 +3,8 @@ import react from "@vitejs/plugin-react";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { handleAdminEntityDelete } from "./server/deleteApi";
+import { makeHttpIo } from "./server/httpIo";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Admin Panel → "ওয়েবসাইট" সেটিংস ↔ Main Website-এর src/config/site.ts
@@ -135,6 +137,86 @@ function cbdcSiteConfig(): Plugin {
   };
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   Admin Panel → secure server-side delete (dev-only middleware)
+   ═══════════════════════════════════════════════════════════════════════════
+
+   The same logic that runs in production on the Cloudflare Worker
+   (server/index.ts) is mounted here for `vite dev` — so the delete flow works
+   identically in development (Real Firebase: Identity Toolkit + RTDB REST,
+   no private keys). It is explicitly dev-only (`apply: "serve"`):
+   `vite build`/`vite preview` never register this endpoint — production uses
+   the Worker (`wrangler.jsonc` → `main`).
+
+   Safety mirror of the site-config middleware:
+   • same-origin only (Origin/Host must match),
+   • JSON body limited to 64 KB, POST only,
+   • client's Firebase ID token in `Authorization: Bearer` is verified
+     (Identity Toolkit) + admin role checked before any delete. */
+function cbdcDeleteApi(): Plugin {
+  const send = (res: any, status: number, payload: unknown) => {
+    res.statusCode = status;
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.end(JSON.stringify(payload));
+  };
+  return {
+    name: "cbdc-delete-api",
+    apply: "serve",
+    configureServer(server) {
+      if (server.config.command !== "serve") return;
+      server.middlewares.use((req, res, next) => {
+        const url = (req.url || "").split("?")[0];
+        if (!url.replace(/\/+$/, "").endsWith("/api/admin/delete")) return next();
+        /* same-origin যাচাই — cross-site থেকে token-সহ delete বন্ধ */
+        const host = String(req.headers.host || "").split(":")[0];
+        const origin = String(req.headers.origin || req.headers.referer || "");
+        let originHost = "";
+        try {
+          originHost = origin ? new URL(origin).host.split(":")[0] : "";
+        } catch {
+          originHost = "";
+        }
+        if (originHost && host && originHost !== host) {
+          send(res, 403, { ok: false, error: "cross-origin request rejected" });
+          return;
+        }
+        if (req.method !== "POST") {
+          send(res, 405, { ok: false, error: "POST only" });
+          return;
+        }
+        const idToken = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+        if (!idToken) {
+          send(res, 401, { ok: false, error: "অনুমোদন প্রয়োজন — লগইন করে আবার চেষ্টা করুন।" });
+          return;
+        }
+        let body = "";
+        let oversized = false;
+        req.on("data", (chunk: Buffer) => {
+          body += chunk;
+          if (body.length > 64 * 1024) oversized = true;
+        });
+        req.on("end", () => {
+          void (async () => {
+            try {
+              if (oversized) throw new Error("payload too large");
+              const payload = JSON.parse(body || "{}");
+              const result = await handleAdminEntityDelete(
+                { ...payload, idToken },
+                makeHttpIo({}, idToken),
+              );
+              send(res, 200, result);
+            } catch (e) {
+              const status = Number((e as any)?.status) || 500;
+              send(res, status, { ok: false, error: (e as Error)?.message || "সার্ভার সমস্যা" });
+            }
+          })();
+        });
+      });
+    },
+  };
+}
+
 // https://vitejs.dev/config/
 //
 // `base: "/"` — absolute asset paths are required for SPA deep links.
@@ -155,7 +237,7 @@ function cbdcSiteConfig(): Plugin {
 const BASE = process.env.VITE_BASE || "/";
 
 export default defineConfig({
-  plugins: [react(), cbdcSiteConfig()],
+  plugins: [react(), cbdcSiteConfig(), cbdcDeleteApi()],
   base: BASE,
   server: {
     host: "0.0.0.0",

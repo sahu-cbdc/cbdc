@@ -9,7 +9,17 @@ const USER = {
   displayName: "শাহাদাত আহমেদ",
   photoURL: "",
   emailVerified: true,
+  /* secure server delete — client শুধু এই ID token পাঠায় (কোনো secret নেই) */
+  getIdToken: async () => "fake-id-token-admin",
 };
+
+/* verification-এ ব্যবহৃত token → uid ম্যাপ (server-side Identity Toolkit stub-এ)। */
+export const __tokens = new Map([
+  ["fake-id-token-admin", USER.uid],
+  ["fake-id-token-donor-a", "donoruid000000000000000a"],
+  ["fake-id-token-donor-b", "donoruid000000000000000b"],
+  ["fake-id-token-nobody", "nobodyuid00000000000000"],
+]);
 
 export function __user() {
   return { ...USER };

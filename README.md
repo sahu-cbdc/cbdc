@@ -41,6 +41,20 @@ Hosting-এর জন্য `firebase.json`-এ rewrite (`** → /index.html`) �
 সরাসরি খুললেও (যেমন **Refresh করলে**) `index.html`-ই পরিবেশিত হয় এবং 404/blank
 পেজ আসে না (পুরোনো ভাগ করা লিংকও ভাঙে না)।
 
+> 🔒 **নিরাপদ সার্ভার-সাইড ডিলিট** — Admin panel-এর ডোনার/অ্যাকাউন্ট ডিলিট
+> আর ব্রাউজার থেকে হয় না: client শুধু লগইন করা অ্যাডমিনের Firebase ID token-সহ
+> `POST api/admin/delete`-এ অনুরোধ পাঠায়। এই endpoint-টি **Cloudflare Worker**
+> (`server/index.ts`; `wrangler.jsonc`-এর `main`) অথবা `vite dev`-এ থাকে —
+> কোনো private key/Admin SDK নেই (শুধু public API key + RTDB Security Rules)।
+> তাই ডিলিট ফিচার চালাতে Worker-এ deploy করুন:
+>
+> ```bash
+> npm run build && npx wrangler deploy
+> ```
+>
+> শুধু static host (Firebase Hosting, Netlify, GitHub Pages …)-এ ডিলিট করলে
+> স্পষ্ট ত্রুটি বার্তা দেখানো হয় এবং কোনো ডেটা মোছা হয় না।
+
 > ⚠️ **`_redirects` ফাইল এখানে নেই** — Cloudflare Workers-এর static-asset engine
 > `/* → /index.html 200`-টাইপ `_redirects` rule-কে infinite-loop হিসেবে নাকচ করে
 > দেয় (`Invalid _redirects configuration: Infinite loop detected`)। Workers-এ

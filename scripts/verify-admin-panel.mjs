@@ -5,8 +5,8 @@
  *     ডেটা আসার পর আসল সংখ্যা, এবং realtime-এ নতুন করে full-load না হওয়া।
  *  ২. "অনুমোদন ও সেটিংস" — পুরোনো "নিয়ম/সংযোগ/ImgBB/ডেটা/সংরক্ষণ করুন"
  *     অংশ নেই; ৪টি approval toggle RTDB-তে সেভ হয়।
- *  ৩. Donor delete — Donor ID/UID/প্রোফাইল/অ্যাকাউন্ট/আবেদন/Auth সব মুছে যায়,
- *     orphan data থাকে না; ভুল UID-তে কিছু মোছা হয় না; partial-এ success নয়।
+ *  ৩. ডোনার ব্যবস্থাপনা + ডোনার আইডি ব্যবস্থাপনা — দুটি স্বাধীন entity
+ *     (Account ↔ Donor ID), secure server-side delete (Worker endpoint)।
  *  ৪. Role/Access change — existing account information অক্ষত থাকে, শুধু
  *     role/permission আপডেট হয় এবং reload ছাড়াই realtime-এ UI আপডেট হয়।
  *
@@ -122,7 +122,7 @@ const vite = await createServer({
 
 const rtdb = await vite.ssrLoadModule("/scripts/fixtures/fake-rtdb.mjs");
 const fakeAuth = await vite.ssrLoadModule("/scripts/fixtures/fake-auth.mjs");
-const accountDelete = await vite.ssrLoadModule("/src/lib/accountDelete.ts");
+const deleteApi = await vite.ssrLoadModule("/server/deleteApi.ts");
 
 /* ───────────────────────── seeded database ───────────────────────── */
 function seedDb(live = false) {
@@ -280,189 +280,130 @@ console.log("\n── ২. অনুমোদন ও সেটিংস ──")
   root.unmount();
 }
 
-/* ══════════════════ ৩. Donor delete — সম্পূর্ণ delete system ══════════════════ */
-console.log("\n── ৩. Donor Management — সম্পূর্ণ ডিলিট (RTDB → Auth) ──");
+/* ══════════════════ ৩. নিরাপদ সার্ভার-ভিত্তিক ডিলিট (Account ↔ Donor ID independent) ══════════════════ */
+console.log("\n── ৩. ডোনার ব্যবস্থাপনা + ডোনার আইডি ব্যবস্থাপনা — নিরাপদ সার্ভার ডিলিট ──");
 
-/* ১) Single donor delete — RTDB + Auth */
-{
-  seedDb();
-  const result = await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0001", uid: DONOR_A });
-  ok(result.ok === true, "১. Single donor delete — সব ধাপ সফল", JSON.stringify(result.failed.map((f) => f.label)));
-  ok(result.rtdb === "ok", "৩. RTDB data delete সফল", String(result.rtdb));
-  ok(result.auth === "skipped" && result.server === "not-possible"
-    && (result.warnings || []).some((w) => /Authentication/.test(w)),
-    "৪. অন্য ব্যবহারকারীর Auth account: সম্ভব নয় → skipped + warning (মিথ্যে সাফল্য নয়)",
-    `${result.auth}/${result.server}`);
-  ok(!/httpsCallable|firebase\/functions/.test(readFileSync(path.join(ROOT, "src/lib/accountDelete.ts"), "utf8")),
-    "Auth delete-এর জন্য কোনো Cloud Function/callable নেই");
-  for (const [node, label] of [
-    ["donors/CBDC-2026-0001", "Donor profile"],
-    [`users/${DONOR_A}`, "User profile (+ data/donations)"],
-    [`admins/${DONOR_A}`, "Admin/Moderator reference"],
-    [`accounts/${DONOR_A}`, "Account information"],
-    ["members/MEMBER-A", "Donor application (members)"],
-    ["queue/PD-donorA", "Queue/approval + blood donation verification"],
-    ["requests/REQ-A", "Emergency application (requests)"],
-    ["reports/REP-A", "Reports"],
-  ])
-    ok(!has(node), `মুছে গেছে: ${label} (${node})`);
-  for (const [node, label] of [
-    ["donors/CBDC-2026-0002", "অন্য ডোনারের প্রোফাইল"],
-    [`users/${DONOR_B}`, "অন্য ডোনারের অ্যাকাউন্ট"],
-    ["queue/PD-donorB", "অন্য ডোনারের queue"],
-    ["audit/A-1", "audit লগ (append-only)"],
-    [`admins/${ADMIN_UID}`, "নিজের (অ্যাডমিন) রেকর্ড"],
-  ])
-    ok(has(node), `অক্ষত আছে: ${label}`);
-  const leftover = JSON.stringify(dump());
-  ok(!leftover.includes(DONOR_A) && !leftover.includes("CBDC-2026-0001"),
-    "UID/Donor ID-এর কোনো orphan reference বাকি থাকে না");
-  ok(accountDelete.deletionMessage(result) === "ডোনার সফলভাবে সম্পূর্ণ মুছে ফেলা হয়েছে",
-    "সাফল্যের বার্তা (একজন)", accountDelete.deletionMessage(result));
+/* ── Cloudflare Worker-এর logic-ই fake RTDB-র সাথে (server-side) ── */
+const TOKEN_ADMIN = "fake-id-token-admin";
+const TOKEN_DONOR_A = "fake-id-token-donor-a";
+const TOKEN_DONOR_B = "fake-id-token-donor-b";
+const TOKEN_NOBODY = "fake-id-token-nobody";
+const serverCalls = { deletes: [] };
+/* সার্ভার ব্যর্থতা সিমুলেট (যেমন 403) — client কী দেখায় সেটা পরীক্ষার জন্য */
+let serverFailWith = null;
+const tokenMap = new Map([
+  [TOKEN_ADMIN, ADMIN_UID],
+  [TOKEN_DONOR_A, DONOR_A],
+  [TOKEN_DONOR_B, DONOR_B],
+  [TOKEN_NOBODY, "nobodyuid00000000000000"],
+]);
+
+function makeServerIo() {
+  return {
+    verifyToken: async (token) => {
+      const uid = tokenMap.get(String(token || ""));
+      return uid ? { uid } : null;
+    },
+    get: async (p) => rtdb.__at(p) ?? null,
+    list: async (node) => rtdb.__at(node) ?? null,
+    apply: async (paths) => {
+      serverCalls.deletes.push(paths);
+      rtdb.__serverUpdate(paths);
+      return true;
+    },
+  };
 }
 
-/* ৫) Missing RTDB record — failure নয় */
+const serverText = (e) => String((e && e.message) || "server error");
+
+/* client-এর fetch-কে server endpoint-এ নিয়ে যায় — UI থেকেই আসল সার্ভার logic চলে */
+function installFakeServerFetch() {
+  const realFetch = global.fetch;
+  global.fetch = async (url, init = {}) => {
+    const u = String(url || "");
+    if (!u.includes("/api/admin/delete")) return realFetch(url, init);
+    if (serverFailWith) {
+      const err = serverFailWith;
+      serverFailWith = null;
+      return { ok: false, status: Number(err.status || 500), json: async () => ({ ok: false, error: serverText(err) }) };
+    }
+    const payload = JSON.parse(String(init.body || "{}"));
+    const token = String((init.headers && init.headers.Authorization) || "").replace(/^Bearer\s+/i, "");
+    try {
+      const data = await deleteApi.handleAdminEntityDelete({ ...payload, idToken: token }, makeServerIo());
+      return { ok: true, status: 200, json: async () => data };
+    } catch (e) {
+      return { ok: false, status: Number((e && e.status) || 500), json: async () => ({ ok: false, error: serverText(e) }) };
+    }
+  };
+}
+
+/* ── সার্ভার API সরাসরি — token/role যাচাই + entity independence ── */
 {
+  /* account scope: users/accounts/admins মোছা যায়, ডোনার আইডি অক্ষত */
   seedDb();
-  const missing = await accountDelete.deleteDonorCompletely({ uid: "missinguid00000000000missing" });
-  ok(missing.ok === true && (missing.auth === "skipped" || missing.auth === "missing"),
-    "৫-৬. Missing RTDB record ও missing Auth account safely handled", `${missing.ok}/${missing.auth}`);
+  const acc = await deleteApi.handleAdminEntityDelete(
+    { scope: "account", uid: DONOR_A, idToken: TOKEN_ADMIN }, makeServerIo());
+  ok(acc.ok === true && acc.scope === "account" && acc.rtdb === "ok" && acc.removed >= 3,
+    "account scope — সার্ভার সফল (users + admins + accounts রেকর্ড)",
+    JSON.stringify({ ok: acc.ok, removed: acc.removed }));
+  ok(!has(`users/${DONOR_A}`) && !has(`admins/${DONOR_A}`) && !has(`accounts/${DONOR_A}`),
+    "অ্যাকাউন্ট ডিলিট → users/admins/accounts মুছে গেছে");
   ok(has("donors/CBDC-2026-0001") && has("donors/CBDC-2026-0002"),
-    "রেকর্ড না থাকলে অন্য কোনো ডোনারের তথ্য ছোঁয়া হয় না");
+    "অ্যাকাউন্ট ডিলিট → ডোনার আইডি (donors node) পুরোপুরি অক্ষত");
+  ok(has("members/MEMBER-A") && has("queue/PD-donorA") && has("requests/REQ-A") && has("reports/REP-A"),
+    "অ্যাকাউন্ট ডিলিট → members/queue/requests/reports (ডোনার/সংগঠন তথ্য) অক্ষত");
+  ok((acc.warnings || []).some((w) => /Authentication/.test(w)),
+    "Auth account রয়ে গেলে স্পষ্ট warning (সার্ভারে private key নেই)");
+
+  /* donor scope: donors/members/queue মোছা যায়, অ্যাকাউন্ট অক্ষত */
+  seedDb();
+  const don = await deleteApi.handleAdminEntityDelete(
+    { scope: "donor", donorId: "CBDC-2026-0001", idToken: TOKEN_ADMIN }, makeServerIo());
+  ok(don.ok === true && don.scope === "donor" && don.rtdb === "ok" && don.removed >= 3,
+    "donor scope — সার্ভার সফল (donors + members + queue)", JSON.stringify({ ok: don.ok, removed: don.removed }));
+  ok(!has("donors/CBDC-2026-0001") && !has("members/MEMBER-A") && !has("queue/PD-donorA"),
+    "ডোনার আইডি ডিলিট → donors/members/queue মুছে গেছে");
+  ok(has(`users/${DONOR_A}`) && has(`admins/${DONOR_A}`) && has(`accounts/${DONOR_A}`),
+    "ডোনার আইডি ডিলিট → অ্যাকাউন্ট (users/admins/accounts) পুরোপুরি অক্ষত");
+  ok(has("donors/CBDC-2026-0002") && has(`users/${DONOR_B}`) && has("requests/REQ-A"),
+    "অন্য ডোনারের ডোনার আইডি ও অ্যাকাউন্ট অক্ষত (donor scope শুধু টার্গেট স্পর্শ করে)");
+
+  /* ক্রম: account → donor (একই মানুষ) — দুটো entity আলাদা থাকে */
+  seedDb();
+  await deleteApi.handleAdminEntityDelete({ scope: "account", uid: DONOR_A, idToken: TOKEN_ADMIN }, makeServerIo());
+  const afterAccount = await deleteApi.handleAdminEntityDelete(
+    { scope: "donor", donorId: "CBDC-2026-0001", idToken: TOKEN_ADMIN }, makeServerIo());
+  ok(afterAccount.ok === true && !has("donors/CBDC-2026-0001") && !has(`users/${DONOR_A}`),
+    "একই মানুষ: প্রথম অ্যাকাউন্ট, পরে ডোনার আইডি — উভয়ই আলাদাভাবে মুছে যায়");
+
+  /* অনুমোদন: ভুল টোকেন / অ-অ্যাডমিন / নিজের অ্যাকাউন্ট / ভুল input */
+  seedDb();
+  const noToken = await deleteApi.handleAdminEntityDelete({ scope: "donor", donorId: "CBDC-2026-0001", idToken: "" }, makeServerIo())
+    .then(() => null, (e) => e);
+  ok(noToken && noToken.status === 401, "টোকেন ছাড়া → 401 (কিছুই মোছা হয় না)", serverText(noToken));
+  const badToken = await deleteApi.handleAdminEntityDelete({ scope: "donor", donorId: "CBDC-2026-0001", idToken: "not-a-valid-token" }, makeServerIo())
+    .then(() => null, (e) => e);
+  ok(badToken && badToken.status === 401, "ভুল টোকেন → 401", serverText(badToken));
+  const donorAsCaller = await deleteApi.handleAdminEntityDelete({ scope: "donor", donorId: "CBDC-2026-0001", idToken: TOKEN_DONOR_A }, makeServerIo())
+    .then(() => null, (e) => e);
+  ok(donorAsCaller && donorAsCaller.status === 403, "মডারেটর/সাধারণ ডোনার → 403 — শুধু অ্যাডমিন", serverText(donorAsCaller));
+  const self = await deleteApi.handleAdminEntityDelete({ scope: "account", uid: ADMIN_UID, idToken: TOKEN_ADMIN }, makeServerIo())
+    .then(() => null, (e) => e);
+  ok(self && self.status === 400, "নিজের অ্যাকাউন্ট delete → 400", serverText(self));
+  const badUid = await deleteApi.handleAdminEntityDelete({ scope: "account", uid: "short", idToken: TOKEN_ADMIN }, makeServerIo())
+    .then(() => null, (e) => e);
+  ok(badUid && badUid.status === 400, "ভুল UID ফরম্যাট → 400 — কিছুই মোছা হয় না", serverText(badUid));
+  const missing = await deleteApi.handleAdminEntityDelete({ scope: "donor", donorId: "CBDC-9999-0000", idToken: TOKEN_ADMIN }, makeServerIo())
+    .then(() => null, (e) => e);
+  ok(missing && missing.status === 404, "অজানা ডোনার আইডি → 404 — কিছুই মোছা হয় না", serverText(missing));
+  ok(has("donors/CBDC-2026-0001") && has(`users/${DONOR_A}`), "তালিকার উপরের সব ব্যর্থতায় সব ডেটা অক্ষত");
 }
 
-/* ৭) UID/Donor ID mismatch — কিছুই মোছা হবে না */
-{
-  seedDb();
-  const bad = await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0002", uid: DONOR_A });
-  ok(bad.ok === false && /মিলছে না|UID/.test(String(bad.failed[0]?.error || "")),
-    "৭. UID/Donor ID mismatch — কোনো deletion শুরুই হয় না", bad.failed[0]?.error || "");
-  ok(has("donors/CBDC-2026-0002") && has(`users/${DONOR_B}`) && has(`users/${DONOR_A}`),
-    "mismatch-এ সব ডেটা অক্ষত থাকে");
-  /* Donor ID → UID chain: donors row-এর ownerUid অন্য হলেও ধরা পড়ে */
-  const cross = await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0001", uid: DONOR_B });
-  ok(cross.ok === false, "Donor ID-এর মালিক অন্য UID হলে delete হবে না");
-  /* legacy uid hint (Donor ID) — সঠিক UID resolve করে মোছা হয় */
-  seedDb();
-  const legacy = await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0002", uid: "CBDC-2026-0002" });
-  ok(legacy.ok === true && legacy.uid === DONOR_B,
-    "legacy uid hint উপেক্ষা করে identity chain থেকে সঠিক UID resolve করে", `${legacy.ok}/${legacy.uid}`);
-  ok(!has("donors/CBDC-2026-0002") && has(`users/${DONOR_A}`),
-    "legacy রেকর্ড মোছার সময় অন্য অ্যাকাউন্ট অক্ষত");
-}
-
-/* ৮) Authentication — নিজের অ্যাকাউন্ট মোছা যায়, অন্যের সম্ভব নয় (warning) */
-{
-  seedDb();
-  /* অন্য ব্যবহারকারী (admin নিজে নন) → RTDB মোছা যায়, Auth সম্ভব নয় */
-  const other = await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0001", uid: DONOR_A });
-  ok(other.ok === true && other.rtdb === "ok" && other.auth === "skipped",
-    "৮. অন্য ব্যবহারকারী: RTDB সম্পূর্ণ মোছা যায়, Auth skipped (কোনো মিথ্যে সাফল্য নয়)",
-    `${other.rtdb}/${other.auth}`);
-  ok((other.warnings || []).some((w) => /Authentication/.test(w)),
-    "Auth account রয়ে গেলে স্পষ্ট warning থাকে", (other.warnings || [])[0] || "");
-  ok((other.warnings || []).some((w) => /Authentication/.test(w) && /Console/.test(w)),
-    "Warning-এ পরিষ্কার নির্দেশ: Auth account Firebase Console থেকে মুছতে হবে",
-    (other.warnings || [])[0] || "(কোনো warning নেই)");
-  for (const node of ["donors/CBDC-2026-0001", `users/${DONOR_A}`, `admins/${DONOR_A}`,
-    `accounts/${DONOR_A}`, "members/MEMBER-A", "queue/PD-donorA", "requests/REQ-A", "reports/REP-A"])
-    ok(!has(node), `RTDB থেকে মুছে গেছে: ${node}`);
-
-  /* নিজের অ্যাকাউন্ট (currentUser = ADMIN_UID) → client SDK দিয়ে Auth-ও মোছা যায় */
-  seedDb();
-  fakeAuth.__deletedUids.length = 0;
-  const self = await accountDelete.deleteDonorCompletely({ uid: ADMIN_UID });
-  ok(self.ok === true && self.auth === "deleted" && fakeAuth.__deletedUids.includes(ADMIN_UID),
-    "নিজের Authentication account client SDK দিয়ে মোছা যায়", `${self.auth}`);
-
-  /* নিজের হলেও Auth ব্যর্থ হলে success নয় */
-  seedDb();
-  fakeAuth.__failingDeleteUids.add(ADMIN_UID);
-  const selfFail = await accountDelete.deleteDonorCompletely({ uid: ADMIN_UID });
-  fakeAuth.__failingDeleteUids.delete(ADMIN_UID);
-  ok(selfFail.ok === false && selfFail.rtdb === "ok" && selfFail.auth === "failed",
-    "RTDB সফল কিন্তু Auth ব্যর্থ → success নয়", `${selfFail.rtdb}/${selfFail.auth}`);
-  ok(accountDelete.deletionMessage(selfFail)
-    === "ডোনারের RTDB তথ্য মুছে ফেলা হয়েছে, কিন্তু Authentication account মুছে ফেলা যায়নি।",
-    "partial বার্তা পরিষ্কার", accountDelete.deletionMessage(selfFail));
-
-  /* RTDB ব্যর্থ → Auth-এ যাওয়া হবে না */
-  seedDb();
-  rtdb.__lockClientWrites(true);
-  const rtdbFailed = await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0001", uid: DONOR_A });
-  rtdb.__lockClientWrites(false);
-  ok(rtdbFailed.ok === false && rtdbFailed.rtdb === "failed" && rtdbFailed.auth === "skipped",
-    "RTDB ব্যর্থ হলে Authentication-এ যাওয়া হয় না", `${rtdbFailed.rtdb}/${rtdbFailed.auth}`);
-  ok(has("donors/CBDC-2026-0001") && has(`users/${DONOR_A}`), "RTDB ব্যর্থ হলে কোনো তথ্য মোছা হয় না");
-}
-
-
-/* ২) Multiple donor delete — প্রতিটি donor আলাদাভাবে resolve, mixed outcome */
-{
-  seedDb();
-  /* দুজন-ই অন্য ব্যবহারকারী — RTDB মোছা যায়, Auth skipped (Firebase সীমা) */
-  const first = await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0001", uid: DONOR_A });
-  const second = await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0002", uid: DONOR_B });
-  ok(first.ok === true && first.rtdb === "ok" && first.auth === "skipped",
-    "২. একাধিক donor — প্রত্যেকের identity আলাদাভাবে resolve হয়ে RTDB মোছা যায়",
-    `${first.rtdb}/${first.auth}`);
-  ok(second.ok === true && second.rtdb === "ok" && second.auth === "skipped",
-    "দ্বিতীয় donor-এরও নিজস্ব identity দিয়েই deletion সম্পন্ন হয়",
-    `${second.rtdb}/${second.auth}`);
-  ok(accountDelete.deletionMessage(first) === "ডোনার সফলভাবে সম্পূর্ণ মুছে ফেলা হয়েছে"
-    && accountDelete.deletionMessage(second) === "ডোনার সফলভাবে সম্পূর্ণ মুছে ফেলা হয়েছে",
-    "প্রতিটি donor-এর জন্য সাফল্য বার্তা", accountDelete.deletionMessage(first));
-  ok(!has(`users/${DONOR_A}`) && !has(`users/${DONOR_B}`)
-    && !has("donors/CBDC-2026-0001") && !has("donors/CBDC-2026-0002"),
-    "সব নির্বাচিত donor-এর সব তথ্য মুছে গেছে");
-  /* ভুল identity যেন অন্য donor-এর ডেটা না মোছে */
-  seedDb();
-  const wrongForB = await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0001", uid: DONOR_B });
-  ok(wrongForB.ok === false, "এক donor-এর ভুল identity দেওয়া হলে deletion শুরুই হয় না");
-  ok(has("donors/CBDC-2026-0001") && has("donors/CBDC-2026-0002") && has(`users/${DONOR_B}`),
-    "ভুল identity-তে কারও কোনো তথ্য মোছা হয় না");
-}
-
-/* Storage/Cloud Functions কোনোভাবেই ব্যবহৃত হবে না + database structure অপরিবর্তিত */
-{
-  const readSrc = (rel) => readFileSync(path.join(ROOT, rel), "utf8");
-  const storagePatterns = [/firebase-admin\/storage/, /getStorage\s*\(/, /\.bucket\s*\(/, /deleteFiles/];
-  for (const file of ["src/lib/accountDelete.ts", "src/lib/imgbb.ts", "src/pages/Admin.tsx", "src/pages/Doner.tsx"]) {
-    const hits = storagePatterns.filter((re) => re.test(readSrc(file)));
-    ok(hits.length === 0, `${file} — কোনো Firebase Storage dependency নেই`, hits.map(String).join(","));
-  }
-  ok(!/httpsCallable|firebase\/functions/.test(readSrc("src/lib/accountDelete.ts"))
-    && !/httpsCallable|firebase\/functions/.test(readSrc("src/lib/imgbb.ts")),
-    "delete/upload flow-এ কোনো Cloud Function/callable নেই");
-  ok(!existsSync(path.join(ROOT, "functions")), "functions/ ডিরেক্টরি সম্পূর্ণ remove করা হয়েছে");
-  ok(!/"functions":/.test(readSrc("firebase.json")), "firebase.json-এ functions config নেই");
-  /* নতুন কোনো path তৈরি হয় না — মুছার আগে/পরে top-level node একই থাকে */
-  seedDb();
-  const before = Object.keys(dump()).sort().join(",");
-  await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0001", uid: DONOR_A });
-  const after = Object.keys(dump()).sort().join(",");
-  ok(before === after, "কোনো নতুন database path/node তৈরি হয় না (structure অপরিবর্তিত)", after);
-}
-
-/* ── কোনো Cloud Function ছাড়াই RTDB দিয়েই পুরো ডিলিট ── */
-{
-  seedDb();
-  const result = await accountDelete.deleteDonorCompletely({ donorId: "CBDC-2026-0001", uid: DONOR_A });
-  ok(result.ok === true, "Cloud Function ছাড়াই ডিলিট সম্পন্ন (Realtime Database + rules)",
-    JSON.stringify(result.failed.map((f) => f.label)));
-  for (const node of ["donors/CBDC-2026-0001", `users/${DONOR_A}`, `admins/${DONOR_A}`,
-    `accounts/${DONOR_A}`, "members/MEMBER-A", "queue/PD-donorA", "requests/REQ-A", "reports/REP-A"])
-    ok(!has(node), `সম্পূর্ণ মুছে গেছে: ${node}`);
-  ok(has("donors/CBDC-2026-0002") && has(`users/${DONOR_B}`) && has("audit/A-1"),
-    "অন্য ডোনারের তথ্য ও audit লগ অক্ষত");
-}
-
-
-/* ── নিরাপত্তা: frontend-এ Admin SDK বা কোনো secret নেই ── */
+/* ── নিরাপত্তা: client-এ কোনো Admin SDK / secret / deletion logic নেই; server-এও না ── */
 {
   const readSrc = (rel) => readFileSync(path.join(ROOT, rel), "utf8");
   const clientFiles = ["src/lib/accountDelete.ts", "src/lib/imgbb.ts", "src/pages/Admin.tsx", "src/lib/rtdb.ts"];
-  /* আসল credential/Admin SDK ব্যবহারের patterns — কমেন্টে শব্দ থাকলেই মেলে না। */
   const banned = [
     /from\s+["']firebase-admin/,
     /require\(["']firebase-admin/,
@@ -475,26 +416,50 @@ console.log("\n── ৩. Donor Management — সম্পূর্ণ ডি�
   for (const file of clientFiles) {
     const src = readSrc(file);
     const hits = banned.filter((re) => re.test(src));
-    ok(hits.length === 0, `${file} — কোনো Admin SDK/service-account secret নেই`,
-      hits.map(String).join(","));
+    ok(hits.length === 0, `${file} — কোনো Admin SDK/service-account secret নেই`, hits.map(String).join(","));
   }
-  ok(!existsSync(path.join(ROOT, "functions")), "Cloud Functions সম্পূর্ণ remove (functions/ নেই)");
-  ok(!existsSync(path.join(ROOT, "src/lib/cloud.ts")), "Cloud Function wrapper (src/lib/cloud.ts) নেই");
+  for (const file of ["server/deleteApi.ts", "server/httpIo.ts", "server/index.ts"]) {
+    const src = readSrc(file);
+    const hits = banned.filter((re) => re.test(src));
+    ok(hits.length === 0, `${file} — সার্ভারেও কোনো private key/service-account নেই`, hits.map(String).join(","));
+  }
   ok(!/httpsCallable|firebase\/functions/.test(readSrc("src/lib/accountDelete.ts"))
     && !/httpsCallable|firebase\/functions/.test(readSrc("src/lib/imgbb.ts")),
-    "client-এ কোনো Cloud Function/callable নেই (Auth delete শুধু নিজের, client SDK)");
-  const imgbbSrc = readSrc("src/lib/imgbb.ts");
-  const imgbbCode = imgbbSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
-  ok(!/["'][0-9a-f]{32}["']/.test(imgbbCode), "ImgBB key-এর কোনো literal মান source-এ নেই");
-  ok(/getRow\(\s*"settings"\s*,\s*"imgbb"\s*\)/.test(imgbbCode),
-    "ImgBB key-এর মূল উৎস RTDB `settings/imgbb` (আগের working flow)");
-  ok(/https:\/\/api\.imgbb\.com/.test(imgbbCode), "Upload সরাসরি ImgBB-তে (আগের মতোই)");
+    "delete/upload flow-এ কোনো Cloud Function/callable নেই (একটাই secure Worker endpoint)");
+  ok(!existsSync(path.join(ROOT, "functions")), "functions/ ডিরেক্টরি নেই");
+  ok(!/"functions":/.test(readSrc("firebase.json")), "firebase.json-এ functions config নেই");
+  const clientDelete = readSrc("src/lib/accountDelete.ts");
+  ok(/api\/admin\/delete/.test(clientDelete) && /Bearer \$\{token\}/.test(clientDelete),
+    "client শুধু authenticated request পাঠায় (Authorization: Bearer ID token)");
+  ok(!/updatePaths|removePath|planDonorDeletion|resolveDonorIdentity|deletePaths/.test(clientDelete),
+    "client-এ কোনো deletion logic নেই — সব সার্ভারে (server/deleteApi.ts)");
+  const serverSrc = readSrc("server/deleteApi.ts") + readSrc("server/httpIo.ts");
+  ok(/handleAdminEntityDelete/.test(serverSrc) && /identitytoolkit|accounts:lookup/i.test(serverSrc)
+    && /role\s*(?:===\s*"admin"|!==\s*"admin")/.test(serverSrc) && /auth=/.test(serverSrc),
+    "server: token যাচাই → অ্যাডমিন role যাচাই → RTDB Security Rules-এর অধীনেই delete");
+  ok(readSrc("server/index.ts").includes("ASSETS.fetch") && readSrc("wrangler.jsonc").includes('"main": "server/index.ts"'),
+    "Cloudflare Worker entry + static assets একসাথে (wrangler.jsonc)");
+  const storagePatterns = [/firebase-admin\/storage/, /getStorage\s*\(/, /\.bucket\s*\(/, /deleteFiles/];
+  for (const file of [...clientFiles, "server/deleteApi.ts", "server/httpIo.ts", "server/index.ts"]) {
+    const hits = storagePatterns.filter((re) => re.test(readSrc(file)));
+    ok(hits.length === 0, `${file} — কোনো Firebase Storage dependency নেই`, hits.map(String).join(","));
+  }
 }
 
-/* ── UI দিয়েই ডিলিট (Donor Management → নির্বাচন → ডিলিট করুন) ── */
+/* ── UI দিয়েই ডিলিট: দুটি আলাদা স্ক্রিন, checkbox শুধু নির্বাচন, row ক্লিক → প্রোফাইল ── */
 {
+  const originalHandleAdminDelete = deleteApi.handleAdminEntityDelete;
   seedDb(true);
+  /* অ্যাকাউন্ট-বিহীন ডোনার আইডি — ডোনার আইডি ব্যবস্থাপনায় দেখা যাবে, অ্যাকাউন্ট ব্যবস্থাপনায় নয় */
+  rtdb.__seed({
+    "donors/CBDC-2026-0003": {
+      id: "CBDC-2026-0003", donorId: "CBDC-2026-0003", name: "আব্দুল করিম", bloodGroup: "AB+",
+      area: "আগ্রাবাদ", phone: "01733333333", status: "approved",
+      available: true, verified: true, suspended: false, donations: 0, totalDonations: 0, joined: "2026-03-01",
+    },
+  });
   const w = makeDom();
+  installFakeServerFetch();
   const { default: Admin } = await vite.ssrLoadModule("/src/pages/Admin.tsx");
   const root = ReactDOM.createRoot(w.document.getElementById("root"));
   root.render(React.createElement(Admin));
@@ -504,6 +469,7 @@ console.log("\n── ৩. Donor Management — সম্পূর্ণ ডি�
     return list.length ? list[list.length - 1].textContent.trim() : "";
   };
   const click = (el) => el && el.dispatchEvent(new w.MouseEvent("click", { bubbles: true }));
+  const change = (el) => el && el.dispatchEvent(new w.Event("change", { bubbles: true }));
   const clearToasts = () => {
     const box = w.document.getElementById("toasts");
     if (box) box.innerHTML = "";
@@ -512,56 +478,165 @@ console.log("\n── ৩. Donor Management — সম্পূর্ণ ডি�
     for (let i = 0; i < 100 && !w.document.querySelector("#cy"); i += 1) await wait(20);
     clearToasts();
     click(w.document.querySelector("#cy"));
-    /* শেষ বার্তা (success/failure) আসা পর্যন্ত অপেক্ষা */
     for (let i = 0; i < 400 && !lastToast(); i += 1) await wait(20);
   };
+  const tsel = () => [...w.document.querySelectorAll("#s-sub [data-tsel]")].map((c) => c.dataset.tsel);
 
+  /* ── ১) ডোনার ব্যবস্থাপনা: শুধু অ্যাকাউন্ট-ওয়ালা ডোনার ── */
   w.go("set", "team");
   await wait(200);
-  /* একজন নির্বাচন → ডিলিট */
-  let box = w.document.querySelector('[data-tsel="CBDC-2026-0001"]');
-  ok(!!box, "Donor Management-এ একজন ডোনার নির্বাচন করা যায়");
-  box.checked = true;
-  box.dispatchEvent(new w.Event("change", { bubbles: true }));
+  ok(JSON.stringify(tsel()) === JSON.stringify(["CBDC-2026-0001", "CBDC-2026-0002"]),
+    "ডোনার ব্যবস্থাপনায় শুধু Website/Firebase অ্যাকাউন্ট-ওয়ালা ডোনার (অ্যাকাউন্ট-বিহীন নয়)", JSON.stringify(tsel()));
+
+  /* ✓ কোনো "দেখুন" বাটন নেই */
+  ok([...w.document.querySelectorAll("#s-sub button")].every((b) => !/দেখুন/.test(b.textContent)),
+    "ডোনার ব্যবস্থাপনায় কোনো আলাদা “দেখুন” বাটন নেই");
+  ok(!w.document.querySelector("#s-sub [data-top]"), "data-top (দেখুন) এলিমেন্ট নেই");
+
+  /* ✓ চেকবক্স ক্লিক → শুধু নির্বাচন (প্রোফাইল খোলে না) */
+  const cbA = w.document.querySelector('[data-tsel="CBDC-2026-0001"]');
+  click(cbA);
   await wait(120);
+  ok(w.getSub() === "team", "চেকবক্সে ক্লিক প্রোফাইল খোলে না — শুধু নির্বাচন", w.getSub());
+  cbA.checked = true;
+  change(cbA);
+  await wait(120);
+  ok(!w.document.querySelector("#tdel").disabled && /১/.test(w.document.querySelector("#tdel").textContent),
+    "একজন নির্বাচিত → ডিলিট বাটন সক্রিয় (১)", w.document.querySelector("#tdel").textContent);
+
+  /* ✓ একাধিক নির্বাচন (multi select) */
+  const cbB = w.document.querySelector('[data-tsel="CBDC-2026-0002"]');
+  cbB.checked = true;
+  change(cbB);
+  await wait(120);
+  ok(/২/.test(w.document.querySelector("#tdel").textContent), "একাধিক নির্বাচন (bulk) — ডিলিট (২)", w.document.querySelector("#tdel").textContent);
+
+  /* ✓ row-এর অন্য অংশে ক্লিক → বিদ্যমান প্রোফাইল */
+  click(w.document.querySelector('[data-row="CBDC-2026-0001"]'));
+  await wait(200);
+  ok(w.getSub() === "donor", "কার্ড/পঙ্‌ক্তিতে ক্লিক → বিদ্যমান ডোনার প্রোফাইল খোলে", w.getSub());
+  ok((w.document.getElementById("s-sub")?.textContent || "").includes("CBDC-2026-0001"),
+    "প্রোফাইলে সঠিক ডোনার খোলে");
+
+  /* ── ২) ডোনার ব্যবস্থাপনা → একজনের অ্যাকাউন্ট ডিলিট (ডোনার আইডি অক্ষত) ── */
+  w.go("set", "team");
+  await wait(150);
+  /* আগের multi-select রিসেট — শুধু একজন নির্বাচন */
+  {
+    const tallAll = w.document.querySelector("#tall");
+    tallAll.checked = false;
+    change(tallAll);
+    await wait(120);
+  }
+  {
+    const only = w.document.querySelector('[data-tsel="CBDC-2026-0001"]');
+    only.checked = true;
+    change(only);
+  }
+  await wait(100);
+  serverCalls.deletes.length = 0;
   click(w.document.querySelector("#tdel"));
   await confirmDelete();
-  ok(lastToast() === "ডোনার সফলভাবে সম্পূর্ণ মুছে ফেলা হয়েছে",
-    "একজনের success বার্তা: “ডোনার সফলভাবে সম্পূর্ণ মুছে ফেলা হয়েছে”", lastToast());
-  ok(!has("donors/CBDC-2026-0001") && !has(`users/${DONOR_A}`),
-    "UI থেকে ডিলিট করলে RTDB-র সব সংশ্লিষ্ট তথ্য মুছে যায়");
+  ok(lastToast() === "অ্যাকাউন্ট মুছে ফেলা হয়েছে — ডোনার আইডি অক্ষত আছে",
+    "একজনের success: “অ্যাকাউন্ট মুছে ফেলা হয়েছে — ডোনার আইডি অক্ষত আছে”", lastToast());
+  ok(serverCalls.deletes.length === 1
+    && !("donors/CBDC-2026-0001" in serverCalls.deletes[0])
+    && (`users/${DONOR_A}` in serverCalls.deletes[0]),
+    "সার্ভারেই মোছা হয়েছে (client নিজে RTDB-তে লেখেনি) — account scope", JSON.stringify(serverCalls.deletes));
+  ok(!has(`users/${DONOR_A}`) && !has(`accounts/${DONOR_A}`) && !has(`admins/${DONOR_A}`),
+    "RTDB থেকে users/accounts/admins মুছে গেছে");
+  ok(has("donors/CBDC-2026-0001"), "অ্যাকাউন্ট ডিলিটের পর ডোনার আইডি অক্ষত আছে");
+  /* reload ছাড়াই realtime — অ্যাকাউন্ট-বিহীন ডোনার ডোনার ব্যবস্থাপনা থেকে সরে যায় */
+  for (let i = 0; i < 200 && tsel().length !== 1; i += 1) await wait(20);
+  ok(JSON.stringify(tsel()) === JSON.stringify(["CBDC-2026-0002"]),
+    "reload ছাড়াই realtime-এ তালিকা আপডেট (অ্যাকাউন্টহীন ডোনার সরে গেছে)", JSON.stringify(tsel()));
 
-  /* একাধিক নির্বাচন (bulk) → ডিলিট */
+  /* পরের দৃশ্যের জন্য আবার সিড — UI/লিসেনার অক্ষত রেখে (Firebase-এর মতো) */
   seedDb(true);
-  w.go("set", "team");
+  rtdb.__seedLive({
+    "donors/CBDC-2026-0003": {
+      id: "CBDC-2026-0003", donorId: "CBDC-2026-0003", name: "আব্দুল করিম", bloodGroup: "AB+",
+      area: "আগ্রাবাদ", phone: "01733333333", status: "approved",
+      available: true, verified: true, suspended: false, donations: 0, totalDonations: 0, joined: "2026-03-01",
+    },
+  });
   await wait(250);
-  const boxes = [...w.document.querySelectorAll("[data-tsel]")];
-  ok(boxes.length >= 2, "একাধিক ডোনার নির্বাচন করা যায় (bulk)", `${boxes.length} জন`);
+
+  /* ── ৩) ডোনার আইডি ব্যবস্থাপনা: সব ডোনার আইডি (অ্যাকাউন্ট ছাড়াও) ── */
+  w.go("set", "donorid");
+  await wait(200);
+  ok(JSON.stringify(tsel()) === JSON.stringify(["CBDC-2026-0001", "CBDC-2026-0002", "CBDC-2026-0003"]),
+    "ডোনার আইডি ব্যবস্থাপনায় সব ডোনার আইডি — অ্যাকাউন্ট না থাকলেও (অ্যাকাউন্টবিহীন 0003 সহ)", JSON.stringify(tsel()));
+  ok([...w.document.querySelectorAll("#s-sub button")].every((b) => !/দেখুন/.test(b.textContent)),
+    "ডোনার আইডি ব্যবস্থাপনায়ও কোনো “দেখুন” বাটন নেই");
+  const cbC = w.document.querySelector('[data-tsel="CBDC-2026-0001"]');
+  click(cbC);
+  await wait(120);
+  ok(w.getSub() === "donorid", "ডোনার আইডি স্ক্রিনেও চেকবক্স ক্লিক প্রোফাইল খোলে না", w.getSub());
+  change(cbC);
+  await wait(100);
+  click(w.document.querySelector('[data-row="CBDC-2026-0003"]'));
+  await wait(200);
+  ok(w.getSub() === "donor", "অ্যাকাউন্ট-বিহীন ডোনার আইডির row ক্লিকেও প্রোফাইল খোলে", w.getSub());
+
+  /* ── ৪) ডোনার আইডি ব্যবস্থাপনা → একাধিক ডোনার আইডি ডিলিট (অ্যাকাউন্ট অক্ষত) ── */
+  w.go("set", "donorid");
+  await wait(150);
+  const boxes = [...w.document.querySelectorAll("[data-tsel]")].filter((b) =>
+    b.dataset.tsel === "CBDC-2026-0001" || b.dataset.tsel === "CBDC-2026-0003");
   boxes.forEach((b) => {
     b.checked = true;
-    b.dispatchEvent(new w.Event("change", { bubbles: true }));
-    return undefined;
+    change(b);
   });
-  await wait(150);
+  await wait(120);
+  serverCalls.deletes.length = 0;
   click(w.document.querySelector("#tdel"));
   await confirmDelete();
-  ok(lastToast() === "নির্বাচিত ডোনারদের সম্পূর্ণভাবে মুছে ফেলা হয়েছে",
-    "একাধিকের success বার্তা: “নির্বাচিত ডোনারদের সম্পূর্ণভাবে মুছে ফেলা হয়েছে”", lastToast());
-  ok(!has("donors/CBDC-2026-0001") && !has("donors/CBDC-2026-0002")
-    && !has(`users/${DONOR_A}`) && !has(`users/${DONOR_B}`),
-    "bulk delete-এ সব নির্বাচিত ডোনারের সব তথ্য মুছে যায়");
+  ok(lastToast() === "নির্বাচিত ডোনার আইডিগুলো মুছে ফেলা হয়েছে — অ্যাকাউন্ট অক্ষত",
+    "একাধিকের success: “নির্বাচিত ডোনার আইডিগুলো মুছে ফেলা হয়েছে — অ্যাকাউন্ট অক্ষত”", lastToast());
+  ok(serverCalls.deletes.length === 2
+    && serverCalls.deletes.every((p) => !(`users/${DONOR_A}` in p) && !(`accounts/${DONOR_A}` in p))
+    && serverCalls.deletes.every((p) => ("donors/CBDC-2026-0001" in p) || ("donors/CBDC-2026-0003" in p)),
+    "donor scope-র প্রতিটি path-এ অ্যাকাউন্ট (users/accounts) নেই", JSON.stringify(serverCalls.deletes));
+  ok(!has("donors/CBDC-2026-0001") && !has("donors/CBDC-2026-0003"),
+    "ডোনার আইডি রেকর্ড দুটি RTDB থেকে মুছে গেছে");
+  ok(has(`users/${DONOR_A}`) && has(`accounts/${DONOR_A}`) && has(`admins/${DONOR_A}`),
+    "ডোনার আইডি ডিলিটের পর অ্যাকাউন্ট পুরোপুরি অক্ষত");
+  ok(!has("members/MEMBER-A") && !has("queue/PD-donorA"),
+    "ডোনার-সম্পর্কিত রেকর্ড (members/queue) মুছে গেছে");
+  ok(has("donors/CBDC-2026-0002") && has(`users/${DONOR_B}`),
+    "অন্য ডোনারের আইডি ও অ্যাকাউন্ট অক্ষত");
+  /* reload ছাড়াই realtime — তালিকা থেকে মুছে যায় */
+  for (let i = 0; i < 200 && tsel().length !== 1; i += 1) await wait(20);
+  ok(JSON.stringify(tsel()) === JSON.stringify(["CBDC-2026-0002"]),
+    "reload ছাড়াই realtime-এ ডোনার আইডি তালিকা আপডেট", JSON.stringify(tsel()));
   ok(has("audit/A-1"), "bulk delete-এর পরেও audit লগ অক্ষত");
-  /* page reload ছাড়াই live listener দিয়ে তালিকা খালি হয়ে যায় */
-  for (let i = 0; i < 200 && w.document.querySelectorAll("[data-tsel]").length; i += 1) await wait(20);
-  ok(w.document.querySelectorAll("[data-tsel]").length === 0,
-    "reload ছাড়াই donor list realtime-এ খালি হয় (listener দিয়ে)");
-  const navCounts = [...w.document.querySelectorAll("#s-home .astat button b")].map((b) => b.textContent.trim());
-  w.go("home");
+
+  /* ── ৫) cross-screen realtime: ডোনার আইডি মুছলে অ্যাকাউন্ট স্ক্রিনও আপডেট ── */
+  w.go("set", "team");
   await wait(150);
-  const homeCounts = [...w.document.querySelectorAll("#s-home .astat button b")].map((b) => b.textContent.trim());
-  ok(homeCounts.length === 0 || homeCounts[0] === "০",
-    "ডেটা মুছে যাওয়ার পর পরিসংখ্যান realtime-এ ০ দেখায় (ভুল লোডিং-০ নয়)", JSON.stringify(homeCounts));
-  void navCounts;
+  ok(JSON.stringify(tsel()) === JSON.stringify(["CBDC-2026-0002"]),
+    "ডোনার আইডি মুছলে ডোনার ব্যবস্থাপনাও realtime-এ আপডেট (কোনো reload নয়)", JSON.stringify(tsel()));
+
+  /* ── ৬) fail হলে সাফল্য নয়: সার্ভার ৪০০/৪০৩ → স্পষ্ট বার্তা, ডেটা অক্ষত ── */
+  w.go("set", "team");
+  await wait(150);
+  change(w.document.querySelector('[data-tsel="CBDC-2026-0002"]'));
+  await wait(100);
+  clearToasts();
+  {
+    const only = w.document.querySelector('[data-tsel="CBDC-2026-0002"]');
+    only.checked = true;
+    change(only);
+    await wait(100);
+  }
+  serverFailWith = Object.assign(new Error("শুধু অ্যাডমিন এই কাজ করতে পারেন।"), { status: 403 });
+  click(w.document.querySelector("#tdel"));
+  await confirmDelete();
+  ok(/শুধু অ্যাডমিন/.test(lastToast()), "সার্ভার অনুমতি না দিলে সাফল্য দেখানো হয় না", lastToast());
+  ok(has("donors/CBDC-2026-0002") && has(`users/${DONOR_B}`),
+    "ব্যর্থ হলে কোনো ডেটা মোছা হয় না");
+  void originalHandleAdminDelete;
   root.unmount();
 }
 

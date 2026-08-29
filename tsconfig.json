@@ -22,5 +22,5 @@
     "noFallthroughCasesInSwitch": false,
     "useUnknownInCatchVariables": false
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "server", "vite.config.ts"]
 }
