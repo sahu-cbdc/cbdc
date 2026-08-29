@@ -1,6 +1,6 @@
 const DEFAULT_FIREBASE_CONFIG = {
   apiKey: "AIzaSyBxUlGig2NtQLf6tZMRwK6xxzjScNIqbrM",
-  authDomain: "auth.chawkbazarbloodclub.com",
+  authDomain: "chokbazarbloodclub-69d5f.firebaseapp.com",
   databaseURL: "https://chokbazarbloodclub-69d5f-default-rtdb.firebaseio.com",
   projectId: "chokbazarbloodclub-69d5f",
   storageBucket: "chokbazarbloodclub-69d5f.firebasestorage.app",
