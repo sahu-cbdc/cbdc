@@ -234,8 +234,6 @@ donor count, dashboard পরিসংখ্যান ও উভয় ব্য
 Deploy: `npm run build` → `npx wrangler deploy` (Worker + assets) অথবা শুধু
 `firebase deploy --only database` (rules)। Authorization delete-এর জন্য কোনো
 Admin SDK নেই — তাই লগইন account মুছতে হলে Firebase Console → Authentication।
-পরীক্ষা: `npm run verify-admin` (server API, independence দুই দিক, 401/403/400/404,
-UI-র দুটি স্ক্রিন, checkbox/row ক্লিক, realtime update—সব পরিস্থিতি)।
 
 ### নিরাপত্তা স্থাপত্য (কোনো secret frontend-এ নেই)
 

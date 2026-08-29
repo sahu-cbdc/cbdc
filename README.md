@@ -130,11 +130,6 @@ src/
     └── Moderator.tsx     # মডারেটর প্যানেল
 public/
 └── img/logo.png          ★ Logo (এই ফাইল replace করলেই সর্বত্র নতুন logo)
-scripts/
-├── smoke.mjs             # jsdom-ভিত্তিক smoke test (npm run smoke)
-├── verify-admin-panel.mjs   # Admin panel verification (npm run verify-admin)
-├── verify-google-auth.mjs   # Google Sign-In / Firebase Auth audit (npm run verify-google-auth)
-└── fixtures/             # in-memory Firebase stub (শুধু verification-এর জন্য)
 
 database.rules.json      # Realtime Database Security Rules
 firebase.json            # Firebase CLI config
@@ -185,10 +180,6 @@ npm install
 npm run dev        # dev server (http://localhost:5173) — একটি entry; প্যানেলগুলো ভেতরের নেভিগেশনে
 npm run build      # production build (dist/)
 npm run preview    # production preview
-npm run smoke      # jsdom-ভিত্তিক smoke test (৪টি পেজ render + logic চেক)
-npm run verify-admin   # Admin panel: loading/skeleton, অনুমোদন সেটিংস, ডোনার ডিলিট, ভূমিকা পরিবর্তন
-npm run verify-google-auth   # Google Sign-In / Firebase Authentication audit (single auth listener, no secret, authorized domains, error handling)
-npm run verify-security   # architecture/security audit (bundle-এ secret আছে কি না, rules, host-independence)
 ```
 
 ## স্থাপত্য ও নিরাপত্তা (Architecture & Security)

@@ -140,7 +140,7 @@ export function attachLiveClear(form: HTMLElement | null): void {
   form.addEventListener("change", handler);
 }
 
-/** checkbox / radio কিনা — `instanceof` ছাড়াই (SSR/jsdom-নিরাপদ)। */
+/** checkbox / radio কিনা — `instanceof` ছাড়াই (SSR-নিরাপদ)। */
 function isToggle(el: any): boolean {
   const tag = String(el?.tagName || "").toUpperCase();
   const type = String(el?.type || "").toLowerCase();
