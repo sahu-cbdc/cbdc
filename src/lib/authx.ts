@@ -12,7 +12,8 @@
  *       (getRedirectResult) — intent ("login"|"signup")-সহ।
  *    ৪. ensureUserProfile() — login/signup সফল হলে Realtime Database-এর
  *       `users/{uid}` নোডে প্রোফাইল তৈরি/আপডেট (merge) — আগের role/status নষ্ট হয় না।
- *    ৫. onAuthUserChanged() — auth state লিসেনারের ছোট wrapper।
+ *    ৫. onAuthUserChanged() — shared auth-state subscriber (src/lib/authState.ts-এর
+ *       single `onAuthStateChanged`-এ), কোনো duplicate auth listener নয়।
  *    ৬. resolveUserRole() — role কোথা থেকে আসে তার একমাত্র সিদ্ধান্তকেন্দ্র
  *       (RTDB `admins` → তারপর `users`)।
  *    ৭. requestPasswordReset() / completePasswordReset() — Firebase-এর built-in
@@ -24,11 +25,11 @@ import {
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
-  onAuthStateChanged,
   type Auth,
   type User,
   type UserCredential,
 } from "firebase/auth";
+import { subscribeAuthUser } from "./authState";
 import {
   sendPasswordResetEmail,
   verifyPasswordResetCode,
@@ -73,10 +74,34 @@ export const CONFIG_NOT_FOUND_MESSAGE =
   "③ Project settings-এর API key-এ restriction থাকলে বর্তমান ওয়েবসাইটের ডোমেইনটি allowed রাখুন, " +
   "④ সাইটের সর্বশেষ build deploy করে ব্রাউজার হার্ড-রিফ্রেশ (Ctrl+Shift+R) করুন।";
 
+/** সাইটের production Authorized domains (Firebase Console-এ থাকা)। */
+export const AUTHORIZED_HOSTS = ["chawkbazarbloodclub.com", "www.chawkbazarbloodclub.com"] as const;
+
+/** বর্তমান browser host — SSR/অসমর্থিত পরিবেশে "". */
+export function currentHost(): string {
+  try {
+    return String(window.location.host || "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+/** বর্তমান host production authorized domain-এর মধ্যে কিনা। */
+export function isKnownAuthorizedHost(host: string = currentHost()): boolean {
+  const h = String(host || "").toLowerCase().replace(/[:/].*$/, "");
+  return (AUTHORIZED_HOSTS as readonly string[]).includes(h);
+}
+
 const UNAUTHORIZED_DOMAIN_MESSAGE = (host: string) =>
-  `এই ডোমেইন (${host}) থেকে লগইনের অনুমতি নেই। Firebase Console → Authentication → ` +
-  `Settings → Authorized domains-এ এই ডোমেইনটি যোগ করুন (যেমন: Cloudflare Pages/Workers-এর ` +
-  `ঠিকানা অথবা কাস্টম ডোমেইন)।`;
+  `এই ডোমেইন (${host || "বর্তমান সাইট"}) থেকে লগইনের অনুমতি নেই। Firebase Console → ` +
+  `Authentication → Settings → Authorized domains-এ এই ডোমেইনটি যোগ করুন। ` +
+  `সাইটের মূল অনুমোদিত domain: ${AUTHORIZED_HOSTS.join(", ")}।`;
+
+const KNOWN_HOST_UNAUTHORIZED_MESSAGE = (host: string) =>
+  `এই ডোমেইন (${host}) Firebase Console-এ Authorized domain হিসেবেই সেট থাকলেও ` +
+  `Authentication এখনো এটি থেকে লগইনের অনুমতি দিচ্ছে না। সম্ভাব্য কারণ: অ্যাপটি অন্য/পুরোনো ` +
+  `Firebase project-এর config নিয়ে চলছে, অথবা Authorized domains পরিবর্তন এখনো কার্যকর হয়নি। ` +
+  `Project settings-এর সর্বশেষ config ও Authentication → Authorized domains যাচাই করুন।`;
 
 type MessageOptions = {
   /** ভুল পাসওয়ার্ড/ইমেইলের ক্ষেত্রে প্রেক্ষাপট-নির্দিষ্ট বার্তা (যেমন পাসওয়ার্ড পরিবর্তনের সময়) */
@@ -139,13 +164,9 @@ export function authErrorMessage(err: unknown, opts: MessageOptions = {}): strin
     case "auth/configuration-not-found":
       return CONFIG_NOT_FOUND_MESSAGE;
     case "auth/unauthorized-domain": {
-      let host = "";
-      try {
-        host = window.location.host;
-      } catch {
-        /* SSR */
-      }
-      return UNAUTHORIZED_DOMAIN_MESSAGE(host || "বর্তমান সাইট");
+      const host = currentHost();
+      if (host && isKnownAuthorizedHost(host)) return KNOWN_HOST_UNAUTHORIZED_MESSAGE(host);
+      return UNAUTHORIZED_DOMAIN_MESSAGE(host);
     }
     case "auth/unauthorized-continue-uri":
       return "লগইনের পর ফেরার ঠিকানাটি অনুমোদিত নয়। Firebase Console-এ Authorized domains যাচাই করুন।";
@@ -374,9 +395,16 @@ export async function consumeGoogleRedirect(
   };
 }
 
-/** Firebase-এ sign-in/sign-out state পরিবর্তনের ছোট wrapper। */
-export function onAuthUserChanged(auth: Auth, cb: (user: User | null) => void): () => void {
-  return onAuthStateChanged(auth, cb);
+/**
+ * Firebase-এ sign-in/sign-out state পরিবর্তনের ছোট wrapper।
+ *
+ * গুরুত্বপূর্ণ: এটি **নতুন** `onAuthStateChanged` listener নিবন্ধন করে না —
+ * `src/lib/authState.ts`-এর single shared listener-এ subscriber যুক্ত করে।
+ * তাই পুরো অ্যাপে duplicate auth listener থাকে না।
+ */
+export function onAuthUserChanged(_auth: Auth, cb: (user: User | null) => void): () => void {
+  void _auth; // legacy signature compatibility
+  return subscribeAuthUser(cb);
 }
 
 /* ═══════════════════════════════════════════════════════════════════

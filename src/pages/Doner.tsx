@@ -5434,10 +5434,10 @@ function initPage() {
      into the local account cache and guards the donor panel. */
   (async function syncAuthSession(){
     try{
-      const shared = initSharedFirebase();
-      const {onAuthStateChanged} = await import("firebase/auth");
+      initSharedFirebase();
+      const {subscribeAuthUser} = await import("../lib/authState");
       let authUid = STORE.account.uid || "";
-      onAuthStateChanged(shared.auth, async (user)=>{
+      subscribeAuthUser(async (user)=>{
         if(PUBLIC_MODE)return;
         AUTH_SESSION_READY=true;
         if(!user){

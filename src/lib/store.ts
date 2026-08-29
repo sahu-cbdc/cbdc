@@ -20,8 +20,8 @@
  * ported page logic works unchanged.
  */
 
-import { onAuthStateChanged, type Unsubscribe as AuthUnsubscribe } from "firebase/auth";
-import { NODES, getAuthInstance } from "./firebase";
+import { getAuthUser, subscribeAuthUser } from "./authState";
+import { NODES } from "./firebase";
 import { watchList, setRow, removeRow } from "./rtdb";
 import { resolveAge } from "./age";
 
@@ -174,7 +174,7 @@ function load(): any {
 // ── Realtime Database live sync ──
 const rtdbUnsubs: Array<() => void> = [];
 let rtdbStarted = false;
-let authUnsub: AuthUnsubscribe | null = null;
+let authUnsub: (() => void) | null = null;
 let currentAuthUid: string | null = null;
 
 /* ── node readiness (loading/skeleton state) ─────────────────────────────────
@@ -279,10 +279,10 @@ function restartRealtimeSync(meta?: any) {
 function watchAuthForPrivateNodes() {
   if (authUnsub) return;
   try {
-    const auth = getAuthInstance();
-    if (!auth) return;
-    currentAuthUid = auth.currentUser?.uid || null;
-    authUnsub = onAuthStateChanged(auth, (user) => {
+    /* একটাই `onAuthStateChanged` (src/lib/authState.ts) — এখানে শুধু তার
+       shared subscriber হিসেবে private cache/sync সামলানো হয়। */
+    currentAuthUid = getAuthUser()?.uid || null;
+    authUnsub = subscribeAuthUser((user) => {
       const nextUid = user?.uid || null;
       if (nextUid === currentAuthUid && rtdbStarted) return;
       currentAuthUid = nextUid;

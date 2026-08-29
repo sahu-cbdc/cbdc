@@ -9,6 +9,7 @@
 import { useEffect } from "react";
 import "../lib/store";
 import { initFirebase as initSharedFirebase, isFirebaseReady } from "../lib/firebase";
+import { waitForAuthUser } from "../lib/authState";
 import { navigateToPage, pagePath, appBase } from "../lib/router";
 import {
   authErrorMessage,
@@ -4547,14 +4548,11 @@ function initPage() {
          বসে। তাই ফ্লো এগনোর আগে ছোট একটি অপেক্ষা — এতে "সাইন-ইন হলো কিন্তু
          সেশন তৈরি হলো না" সমস্যাটি থাকে না। */
       function awaitAuthUser(timeoutMs=4000){
-        return new Promise(resolve=>{
-          let done=false, un=null;
-          const finish=u=>{ if(done)return; done=true; try{ un&&un(); }catch(e){} resolve(u||null); };
-          if(!auth) return finish(null);
-          if(auth.currentUser) return finish(auth.currentUser);
-          try{ un=onAuthUserChanged(auth,u=>{ if(u)finish(u); }); }catch(e){ /* ignore */ }
-          setTimeout(()=>finish(auth && auth.currentUser), timeoutMs);
-        });
+        /* নতুন auth listener তৈরি হয় না — shared `src/lib/authState.ts`-এর
+           একটিমাত্র listener-এর `waitForAuthUser` ব্যবহার হয়। */
+        if(!auth) return Promise.resolve(null);
+        if(auth.currentUser) return Promise.resolve(auth.currentUser);
+        return waitForAuthUser(timeoutMs);
       }
 
       async function googleSignIn(intent){
