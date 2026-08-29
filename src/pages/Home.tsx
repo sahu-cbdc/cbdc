@@ -1671,8 +1671,9 @@ function StaticShell() {
                   <h3>
                     {"রক্তদাতার তালিকা"}
                   </h3>
+                  {/* প্রথম render-এর সময়েই শেষ-দেখা RTDB snapshot (browser cache) থেকে
+                      গণনা বসে যায় — তাই কোনো "লোড হচ্ছে..." দেখাতে হয় না */}
                   <span id="resultCount" className="muted">
-                    {"লোড হচ্ছে..."}
                   </span>
                 </div>
                 <div className="donor-grid" id="donorResults">
@@ -5247,6 +5248,13 @@ function initPage() {
       })();
 
       setLogo();
+      /* ══ প্রথম ফ্রেমেই শেষ-দেখা ডেটা — RTDB-র প্রথম snapshot-এর অপেক্ষা নেই ══
+         store.ts module load-এই browser cache থেকে শেষ-দেখা snapshot restore
+         করে (window.CBDCShared), তাই initFirebase শেষ হওয়ার **আগেই** public
+         ডেটা আঁকা যায় — refresh/new page-এ কোনো "লোডিং" বা খালি তালিকা
+         দৃশ্যমান হয় না। এরপর initFirebase().then ও subscribe()-এ live RTDB
+         ডেটা দিয়ে একই জায়গা আবার আঁকা হয় (একই HTML, একই state)। */
+      try{ renderPublic(); renderGallery(); }catch(e){ console.warn("early render:", e && e.message); }
       if(window.CBDCShared)CBDCShared.subscribe(()=>{ renderPublic(); renderGallery(); });
       initFirebase().then(()=>{
         /* Home/root বুট-এ কোনো লগইন-গেট redirect নয় — ব্যবহারকারী Panel থেকে

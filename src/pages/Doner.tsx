@@ -1739,6 +1739,8 @@ function initPage() {
   let MY_APPLICATION_CLEANUP=false;
   let MY_APPLICATION_USER_READY=false;
   let MY_APPLICATION_REQUESTS_READY=false;
+  /* local snapshot-ই প্রথম paint দেওয়ার মতো আছে কি না (Auth-এর আগেই) */
+  let MY_APPLICATION_CACHE_READY=false;
   let MY_APPLICATION_USER_ROWS=[];
   let MY_APPLICATION_REQUEST_ROWS=[];
   let stopMyApplicationRequests=()=>{};
@@ -1752,6 +1754,9 @@ function initPage() {
       ["donations","incoming","mine","notifs","activity","sessions","donors"].forEach(k=>{
         if(Array.isArray(d[k]))RAW[k]=d[k];
       });
+      /* এই snapshot কোন UID-র — refresh/new page-এ একই user হলে প্রথম paint-এ
+         তার নিজের আবেদনই দেখানো হয় (RTDB snapshot আসলেই live দিয়ে replace)। */
+      RAW._uid=String(d._uid||"");
     }catch(e){}
     if(!RAW.sessions.length){
       RAW.sessions=[{id:"s1",name:thisDevice(),place:"এই ডিভাইস",last:"বর্তমানে সক্রিয়",cur:true}];
@@ -1790,6 +1795,18 @@ function initPage() {
   }
   loadData();
   lastPersistedRaw=JSON.parse(JSON.stringify(RAW));
+  /* ══ cache-first "আমার আবেদন" ══
+     local session uid (LS মিরর) == snapshot uid হলে আবেদন তালিকা Auth callback-এর
+     **আগেই** ready হয়ে থাকে — পেজ খোলার এক ফ্রেমেও "আবেদন লোড হচ্ছে…" দৃশ্যমান হয়
+     না। RTDB snapshot আসলেই একই তালিকা live ডেটা দিয়ে প্রতিস্থাপন করে। */
+  MY_APPLICATION_CACHE_READY=
+    String(RAW._uid||"")!==""&&String(RAW._uid)===String(STORE.account.uid||"")&&Array.isArray(RAW.mine);
+  if(MY_APPLICATION_CACHE_READY){
+    MY_APPLICATION_UID=String(RAW._uid);
+    MY_APPLICATION_USER_ROWS=applicationRows(RAW.mine);
+    MY_APPLICATION_USER_READY=true;
+    MY_APPLICATION_COUNT_READY=true;
+  }
   /* Approval controls are shared RTDB state. They are read live so a setting
      change never requires a page reload and never removes existing requests. */
   try{
@@ -1819,7 +1836,16 @@ function initPage() {
     STORE.noticeReads={};
     STORE.saved=[];
     RAW.donations=[];RAW.incoming=[];RAW.mine=[];RAW.notifs=[];RAW.activity=[];RAW.donors=[];
+    RAW._uid="";
     RAW.sessions=[{id:"s1",name:thisDevice(),place:"এই ডিভাইস",last:"বর্তমানে সক্রিয়",cur:true}];
+    /* পুরোনো user-এর আবেদন cache-flag-ও বাতিল — নতুন user এটা দেখবে না */
+    MY_APPLICATION_CACHE_READY=false;
+    MY_APPLICATION_UID="";
+    MY_APPLICATION_COUNT_READY=false;
+    MY_APPLICATION_USER_READY=false;
+    MY_APPLICATION_REQUESTS_READY=false;
+    MY_APPLICATION_USER_ROWS=[];
+    MY_APPLICATION_REQUEST_ROWS=[];
     try{localStorage.removeItem(LS);localStorage.removeItem(LS_DATA);}catch(e){}
   }
   /* বুটের সময়ই stale cache ধরে ফেলি: বর্তমান member uid-এর সাথে cache-এর uid না মিললে
@@ -5157,14 +5183,28 @@ function initPage() {
     uid=String(uid||"").trim();
     if(MY_APPLICATION_UID===uid)return;
     MY_APPLICATION_UID=uid;
+    RAW._uid=uid;
     MY_APPLICATION_COUNT_READY=false;
-    STORE.account.applicationCount=0;
+    /* LS-এ এই UID-র শেষ-দেখা count আছে — cache-first-এ সেটিই দেখানো হয় */
+    const cachedCount=Number(STORE.account.applicationCount)||0;
     MY_APPLICATION_USER_READY=false;
     MY_APPLICATION_REQUESTS_READY=false;
     MY_APPLICATION_USER_ROWS=[];
     MY_APPLICATION_REQUEST_ROWS=[];
+    /* refresh/new page-এ **একই** uid হলে নিজের শেষ-দেখা আবেদন snapshot-ই
+       প্রথম paint — "আবেদন লোড হচ্ছে…" দেখাতে হয় না। RTDB (users/{uid} +
+       requests) snapshot এলেই সেটি live ডেটা দিয়ে প্রতিস্থাপিত হয়। */
+    if(String(RAW._uid||"")===uid&&Array.isArray(RAW.mine)){
+      MY_APPLICATION_USER_ROWS=applicationRows(RAW.mine);
+      MY_APPLICATION_USER_READY=true;
+      MY_APPLICATION_COUNT_READY=true;
+      STORE.account.applicationCount=cachedCount;
+      mergeMyApplications();
+      return;
+    }
     /* Do not let a previous account's local cache paint this screen while the
        Firebase Auth user's own snapshot is being fetched. */
+    STORE.account.applicationCount=0;
     RAW.mine=[];
   }
   function setMyApplicationsFromUser(uid,row){
@@ -5192,10 +5232,13 @@ function initPage() {
     });
   }
   function myApplicationsAreLoading(){
+    /* একই UID-র local snapshot থাকলে Auth session restore-এর আগেও "লোড হচ্ছে…"
+       দেখানো হয় না — তালিকা তখনই আঁকা হয়; RTDB আসলে live দিয়ে replace করে। */
+    if(!AUTH_SESSION_READY)return !MY_APPLICATION_CACHE_READY;
     /* The private users/{uid} snapshot is the required source. The public
        requests listener is only an additional live source; a temporary
        listener/network issue must never leave this tab blocked forever. */
-    return !AUTH_SESSION_READY||!!MY_APPLICATION_UID&&!MY_APPLICATION_USER_READY;
+    return !!MY_APPLICATION_UID&&!MY_APPLICATION_USER_READY;
   }
   function firebaseCurrentUid(){
     try{
@@ -5446,6 +5489,7 @@ function initPage() {
           stopMyProfileListener();
           stopNoticeReads();
           MY_APPLICATION_UID="";
+          MY_APPLICATION_CACHE_READY=false;
           MY_APPLICATION_COUNT_READY=false;
           STORE.account.applicationCount=0;
           MY_APPLICATION_USER_READY=false;
@@ -5453,6 +5497,7 @@ function initPage() {
           MY_APPLICATION_USER_ROWS=[];
           MY_APPLICATION_REQUEST_ROWS=[];
           RAW.mine=[];
+          RAW._uid="";
           setTimeout(()=>{navigateToPage("home")},400);
           return;
         }

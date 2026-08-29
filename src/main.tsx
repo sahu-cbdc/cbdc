@@ -6,16 +6,19 @@
  * হবে (URL হিন্ট, শেষ-ভিজিট বা ডিফল্ট home)। পেজ বদলাতে
  * navigateToPage() (src/lib/router.ts) ব্যবহার করা হয়।
  */
-import { Component, Suspense, lazy, type ReactNode } from "react";
+import { Component, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import "./lib/router";
 import { resolveBootPage, navigateToPage } from "./lib/router";
 import Home from "./pages/Home";
+import Doner from "./pages/Doner";
+import Admin from "./pages/Admin";
+import Moderator from "./pages/Moderator";
 
-/* প্যানেলগুলো lazy-load — হোমপেজ দ্রুত খোলে, প্যানেল দরকার হলেই ডাউনলোড হয় */
-const Doner = lazy(() => import("./pages/Doner"));
-const Admin = lazy(() => import("./pages/Admin"));
-const Moderator = lazy(() => import("./pages/Moderator"));
+/* সব পেজ একই বান্ডলে **আগে থেকেই** থাকে — refresh/new page খুললে কোনো
+   "লোড হচ্ছে…" fallback/ফাঁকা পর্দা দৃশ্যমান হয় না; পেজ বদলে শুধু
+   navigateToPage() পুরো load করে এবং সংরক্ষিত cache থেকে প্রথম frame-ই
+   ডেটা আঁকা হয়। */
 
 const bootPage = resolveBootPage();
 
@@ -136,8 +139,6 @@ if (!rootEl) {
 }
 createRoot(rootEl).render(
   <ErrorBoundary>
-    <Suspense fallback={<div style={{ padding: "32px 16px", textAlign: "center" }}>লোড হচ্ছে…</div>}>
-      <ActivePage />
-    </Suspense>
+    <ActivePage />
   </ErrorBoundary>
 );

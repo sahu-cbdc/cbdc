@@ -19,6 +19,8 @@ import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage, getImgbbKey, saveImgbbKey } from "../lib/imgbb";
 import { serverDeleteEntity, deletionMessage, describeDeletionFailure, isAuthUid, type DeletionStep, type DeleteScope } from "../lib/accountDelete";
 import { noticeIsActive, noticeTarget } from "../lib/notice";
+import { restoreNodeSnapshot, saveNodeSnapshot, clearAllNodeSnapshots } from "../lib/nodeSnapshot";
+import { readCachedRole, rememberCachedRole } from "../lib/authx";
 
 /* ═══════════════════════════════════════════════════════════════════
    CSS — মূল admin.html-এর <style> ব্লক হুবহু কপি
@@ -2448,6 +2450,9 @@ function initPage() {
        • কোনো add/update/delete হলে listener শুধু সংশ্লিষ্ট অংশ realtime-এ
          আপডেট করে — পুরো ড্যাশবোর্ড reload/re-fetch হয় না।
        • readiness বদলালেই শুধু render — বারবার unnecessary re-render নয়। */
+  /* RTDB-প্রমাণিত (cache-নয়) ফ্ল্যাগ — backfill ইত্যাদি যেন কখনোই cache-only
+     ডেটা দিয়ে RTDB-তে না লেখে। */
+  let usersRtdbReady=false, adminsRtdbReady=false;
   const DATA_READY={donors:false,requests:false,queue:false,gallery:false,notices:false,
     accounts:false,users:false,admins:false,audit:false,messages:false,reports:false};
   const READY_KEYS=Object.keys(DATA_READY);
@@ -2490,6 +2495,11 @@ function initPage() {
   /* পুরোনো/ব্যাকফিল: ডোনার রেকর্ডে প্রোফাইল ছবি (ImgBB link) না থাকলে
      users/{uid}/photoURL থেকে এক-বার অনুলিপি — পাবলিক প্রোফাইলে সঠিক ছবি দেখাতে */
   function backfillDonorPhotos(){
+    /* শুধু RTDB-যাচাইকৃত ডেটা দিয়েই backfill — browser cache-র আগের snapshot
+       থেকে কখনোই RTDB-তে লেখা হয় না (cache শুধু first-paint-এর জন্য)। */
+    if(!usersRtdbReady||!adminsRtdbReady
+      ||!(window.CBDCShared&&typeof CBDCShared.isRtdbReady==="function")
+      ||!CBDCShared.isRtdbReady("donors"))return;
     const missing=DB.donors.filter(d=>!String(d.photo||"").trim()&&d.ownerUid);
     if(!missing.length)return;
     Promise.all(missing.map(d=>getRow(NODES.users,d.ownerUid).then(u=>{
@@ -2916,15 +2926,16 @@ function initPage() {
   }
   function watchAccounts(){
     stopAccountWatch();
-    const u=watchList(NODES.users,rows=>{markDataReady("users");
-      accountUsers=rows.map(x=>({...x,uid:x.uid||x.id}));refreshAccounts()});
+    const u=watchList(NODES.users,rows=>{markDataReady("users");usersRtdbReady=true;
+      accountUsers=rows.map(x=>({...x,uid:x.uid||x.id}));saveNodeSnapshot("users",rows);refreshAccounts()});
     stopAccountWatch=()=>u();
   }
   function watchTeam(){
     stopTeamWatch();
     stopTeamWatch=watchList(NODES.admins,(rows)=>{
-      markDataReady("admins");
+      markDataReady("admins");adminsRtdbReady=true;
       accountAdmins=rows.map(x=>({...x,uid:x.uid||x.id}));
+      saveNodeSnapshot("admins",rows);
       refreshAccounts();
     });
   }
@@ -2946,6 +2957,7 @@ function initPage() {
         .filter(x=>x.at).sort((a,b)=>b.at.localeCompare(a.at)).slice(0,300);
       if(JSON.stringify(list)===JSON.stringify(DB.audit))return;
       DB.audit=list;
+      saveNodeSnapshot("audit",list);
       try{if(!document.querySelector(".sheet")&&(SUB==="audit"||(CUR==="home"&&!SUB)))go(CUR,SUB,false,ARG)}catch(e){}
     });
   }
@@ -2961,6 +2973,7 @@ function initPage() {
         .filter(x=>x.name||x.text).sort((a,b)=>String(b.at).localeCompare(String(a.at)));
       if(JSON.stringify(list)===JSON.stringify(DB.messages))return;
       DB.messages=list;
+      saveNodeSnapshot("messages",list);
       try{paintTop();paintNav();
         if(!document.querySelector(".sheet")&&SUB==="inbox")go(CUR,SUB,false,ARG)}catch(e){}
     });
@@ -2982,10 +2995,35 @@ function initPage() {
         .filter(x=>x.text||x.type).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));
       if(JSON.stringify(list)===JSON.stringify(DB.reports))return;
       DB.reports=list;
+      saveNodeSnapshot("reports",list);
       try{paintTop();paintNav();
         if(!document.querySelector(".sheet")&&SUB==="users")renderSub("users")}catch(e){}
     });
   }
+
+  /* ══════ বুটে সংরক্ষিত RTDB snapshot → instant first paint ══════
+     refresh/নতুন পেজ খুললে এই panel-only node-গুলোর (users/admins/audit/
+     messages/reports) শেষ দেখা snapshot **লগইন হওয়া staff-এর কী-তে** restore
+     করা হয় — তাই কোনো স্কেলিটন/লোডিং দেখাতে হয় না। Live listener আসার সঙ্গে
+     সঙ্গে RTDB-এর বর্তমান ডেটা সেটি প্রতিস্থাপন করে। cache read-only —
+     কখনোই RTDB-তে লেখা হয় না। */
+  function restorePanelSnapshots(){
+    const usersRows=restoreNodeSnapshot("users");
+    if(usersRows){accountUsers=usersRows.map(x=>({...x,uid:x.uid||x.id}));DATA_READY.users=true;}
+    const adminsRows=restoreNodeSnapshot("admins");
+    if(adminsRows){accountAdmins=adminsRows.map(x=>({...x,uid:x.uid||x.id}));DATA_READY.admins=true;}
+    const auditRows=restoreNodeSnapshot("audit");
+    if(auditRows)DB.audit=auditRows;
+    const msgRows=restoreNodeSnapshot("messages");
+    if(msgRows)DB.messages=msgRows;
+    const repRows=restoreNodeSnapshot("reports");
+    if(repRows)DB.reports=repRows;
+    if(accountUsers.length||accountAdmins.length)refreshAccounts();
+    if(DATA_READY.users||DATA_READY.admins)lastReadySig=readySig();
+  }
+  /* সব module-scope ভেরিয়েবল (normRole ইত্যাদি) তৈরি হওয়ার পরে — যেখানে
+     paintFromCache()/restorePanelSnapshots() প্রথম render-এর ঠিক আগে চলে। */
+
   /* replaces the plain object created in the data block */
   ME=Object.assign(loadMe(),{role:ME.role||PANEL.role});
   if(!ROLES[ME.role])ME.role=PANEL.role;
@@ -4252,6 +4290,8 @@ function initPage() {
     try{
       /* the session ends; work data stays for the next person who logs in */
       localStorage.removeItem(ACC_LS);
+      /* এই UID-এর সংরক্ষিত staff snapshot-ও মুছে যায় — আর কেউ যেন না দেখে */
+      try{clearAllNodeSnapshots()}catch(e){}
       sessionStorage.clear();
     }catch(e){}
     try{(async()=>{try{const shared=initSharedFirebase();const {signOut}=await import("firebase/auth");if(shared.auth)await signOut(shared.auth)}catch(e){}})()}catch(e){}
@@ -5027,7 +5067,9 @@ function initPage() {
     admin:{label:"অ্যাডমিন",icon:"🛡️",desc:"Full Access — পুরো website ও Admin Panel control করবেন"}
   };
   const GRANTABLE=["user","mod","admin"];
-  const normRole=r=>{r=String(r||"user").toLowerCase();return r==="admin"?"admin":(r==="moderator"||r==="mod")?"mod":"user"};
+  /* function declaration — hoisted, তাই boot-এ snapshot restore/refreshAccounts
+     চাইলেও TDZ থাকে না (যেকোনো জায়গা থেকে নিরাপদ)। */
+  function normRole(r){r=String(r||"user").toLowerCase();return r==="admin"?"admin":(r==="moderator"||r==="mod")?"mod":"user"}
   const roleLabel=r=>(ROLE_META[normRole(r)]||{}).label||r;
   const roleIcon=r=>(ROLE_META[normRole(r)]||{}).icon||"🩸";
   const isStaff=r=>{r=normRole(r);return r&&r!=="user"};
@@ -6146,6 +6188,23 @@ function initPage() {
       go(RENDER[a]?a:"home",b||null,false);
       if(isEN())translateNode(document.body);
     };
+    /* ══ cached-role instant first paint ══
+       আগের সেশনে এই ব্রাউজারে এই UID-এর ভূমিকা "admin" নিশ্চিত থাকলে panel
+       **সঙ্গে সঙ্গে** আঁকা হয় — সংরক্ষিত ডেটা snapshot-ই প্রথম paint, তারপর
+       নিচের authorize() RTDB-তে role যাচাই করে (বদলে গেলে নিজের dashboard-এ
+       পাঠায়) এবং live listener-গুলো বর্তমান RTDB ডেটা দিয়ে আপডেট করে।
+       কোনো লোডিং/খালি পর্দা দৃশ্যমান হয় না। */
+    let earlyPainted=false;
+    const paintFromCache=()=>{
+      if(earlyPainted)return;
+      earlyPainted=true;
+      try{restorePanelSnapshots()}catch(e){}
+      try{proceed()}catch(e){console.warn("early paint:",e&&e.message)}
+    };
+    try{
+      const bootUid=String((getAuthInstance()&&getAuthInstance().currentUser&&getAuthInstance().currentUser.uid)||"").trim();
+      if(bootUid&&readCachedRole(bootUid)===PANEL.id)paintFromCache();
+    }catch(e){console.warn("early paint:",e&&e.message)}
     /* ══════════ Firebase Auth gate + role (Realtime Database `admins`) ══════════
        role শুধু ডাটাবেস থেকে আসে — RTDB-তে `admins/{uid}` রেকর্ড বদলালেই
        ব্যবহারকারীর প্যানেল বদলে যায়। ভুল প্যানেলে ঢুকলে (যেমন Doner এসে
@@ -6159,6 +6218,12 @@ function initPage() {
             navigateToPage("home");
             return;
           }
+          /* Firebase session restore-এর পরপরই (role-যাচাইয়ের আগেই) cached
+             role-মিলে গেলে সংরক্ষিত snapshot দিয়ে panel আঁকা হয় — তথাকথিত
+             "লোডিং" পর্দা কখনো দৃশ্যমান হয় না। */
+          try{
+            if(readCachedRole(user.uid)===PANEL.id)paintFromCache();
+          }catch(e){}
           const email=String(user.email||"").toLowerCase();
           let resolved={role:"donor",name:"",permissions:[],staff:null};
           try{
@@ -6167,6 +6232,8 @@ function initPage() {
 
           const target=panelForRole(resolved.role);          // doner | moderator | admin
           const here=PANEL.id;
+          /* যাচাই-সফল ভূমিকা সংরক্ষণ — পরের refresh/new page-এ instant paint */
+          try{rememberCachedRole(user.uid,target)}catch(e){}
           if(target!==here){
             /* এই প্যানেলে ঢোকার অনুমতি নেই — নিজের dashboard-এ পাঠানো হচ্ছে */
             navigateToPage(target);

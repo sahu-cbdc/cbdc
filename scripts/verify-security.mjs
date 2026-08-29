@@ -194,8 +194,10 @@ ok(rules.rules === undefined && rules[".read"] === undefined ? true : rules[".re
 /* ─────────── ৫. RTDB-ই single source of truth ─────────── */
 console.log("\n── ৫. Production data — RTDB-ই single source of truth ──");
 const store = read("src/lib/store.ts");
-ok(/CACHE_ENABLED/.test(store) && /DEV === true|MODE === "development"/.test(store),
-  "localStorage public cache শুধু dev-এ (production-এ RTDB-only)");
+ok(/const CACHE_ENABLED = true;/.test(store),
+  "first-paint cache সব environment-এ চালু (reload/new page-এ data আগে থেকেই থাকে)");
+ok(/isRtdbReady/.test(store) && /RTDB-কে final/.test(store),
+  "cache শুধু first paint-এর জন্য — RTDB-ই লেখার (write) উৎস");
 ok(/if \(!CACHE_ENABLED\) return s;/.test(store) && /if \(!CACHE_ENABLED\) return;/.test(store),
   "cache read/write দুটোতেই gating আছে");
 const seedBody = code("src/pages/Admin.tsx").match(/function seed\(\)\s*\{[\s\S]*?\n  \}/)?.[0] || "";

@@ -8,12 +8,15 @@
  *   - **Firebase Realtime Database** — donors / requests / queue / gallery /
  *     notices / accounts. Cloud Firestore is no longer used anywhere.
  *   - কোনো dummy / demo / seed data নেই — ডাটাবেস খালি থাকলে UI-ও খালি দেখায়।
- *   - Realtime Database-ই single source of truth। দ্রুত first paint-এর জন্য শুধু
- *     public nodes (donors/requests/gallery/notices)-এর short-lived browser cache
- *     পড়া হয়; RTDB snapshot এলেই সেটি live data দিয়ে replace হয়। Private/admin
- *     data (queue/accounts) browser cache-এ রাখা হয় না।
+ *   - Realtime Database-ই single source of truth। তবে **refresh/new page-এ কোনো
+ *     লোডিং দৃশ্যমান না হওয়ার জন্য** শেষ দেখা RTDB snapshot-এর একটি browser cache
+ *     থাকে — public ও private/admin (queue/accounts) দুটোই। প্রতিটি RTDB snapshot
+ *     এলেই cache নতুন live data দিয়ে প্রতিস্থাপিত হয়, তাই উৎস সবসময় RTDB-ই।
+ *   - Private/admin snapshot সবসময় auth UID-এর সাথে scoped হয় (`<uid>-কী`),
+ *     logout/UID-change-এ মুছে যায়; public data-র মতো কখনো অন্য session-এ
+ *     পড়া হয় না।
  *   - তাই কোথাও Add / Edit / Delete করলে সেটি সঙ্গে সঙ্গে **সব dashboard-এ**
- *     (Home, Doner, Admin, Moderator) live আপডেট হয়ে যায়।
+ *     (Home, Doner, Admin, Moderator) live আপডেট হয়ে যায় — কোনো reload নেই।
  *
  * The public API (`load`, `save`, `update`, `subscribe`, `clone`, and the
  * donor converters) is kept byte-for-byte compatible with the original so the
@@ -28,26 +31,18 @@ import { resolveAge } from "./age";
 const KEY = "cbdc.shared.v1"; // kept for API compatibility only
 const CHANNEL = "cbdc-sync";
 const CACHE_KEY = "cbdc.shared.rtdb.public-cache.v2";
-const CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 24; // 24 hours — just a fast first-paint cache
+const PRIVATE_CACHE_PREFIX = "cbdc.shared.rtdb.private-cache.v1.";
+const CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 7; // 7 days — last-known snapshot
 
 /**
- * Production-এ **Realtime Database-ই একমাত্র source of truth**।
- *
- * localStorage cache শুধু local development-এ (fast HMR/first paint) চালু থাকে;
- * production build-এ কোনো browser storage production data-এর উৎস হয় না —
- * সব তথ্য সরাসরি RTDB listener থেকে আসে। ফলে dev/demo cache ভুল বা পুরোনো
- * ডেটা দেখাতে পারে না, আর কোনো host-এ deploy করেই আচরণ একই থাকে।
+ * Realtime Database-ই একমাত্র source of truth; এই cache শুধু **first paint**-এর
+ * জন্য — রিলোড/নতুন পেজ খুললেই শেষ দেখা ডেটা (public + private/admin) আগে থেকে
+ * থাকবে, তাই কোথাও "লোড হচ্ছে…" দেখা যায় না। প্রতিটি RTDB snapshot-এ cache
+ * সাথে সাথে আপডেট হয়; private ক্যাশ auth UID-এর কী-তে থাকে এবং logout/UID-
+ * change-এ মুছে যায়। এটি কখনোই RTDB-র পরিবর্তে লেখার উৎস হয় না — কোনো
+ * লেখা (save/commit/panel persist) RTDB-কে final বলে।
  */
-/* শুধু DEV/MODE পড়া হয় (পুরো `import.meta.env` নয়) — তাই অন্য কোনো env মান
-   bundle-এ ঢোকে না। */
-const CACHE_ENABLED = (() => {
-  try {
-    const meta = (import.meta as any).env || {};
-    return meta.DEV === true || meta.MODE === "development";
-  } catch {
-    return false;
-  }
-})();
+const CACHE_ENABLED = true;
 
 /** The six collections that make up the shared aggregate state. */
 const COLLECTION_NAMES = ["donors", "requests", "queue", "gallery", "notices", "accounts"] as const;
@@ -59,6 +54,12 @@ type CollectionName = (typeof COLLECTION_NAMES)[number];
  * rejected once with permission_denied and never recovers until a full reload.
  */
 const PUBLIC_COLLECTIONS = new Set<CollectionName>(["donors", "requests", "gallery", "notices"]);
+const PRIVATE_COLLECTIONS = new Set<CollectionName>(["queue", "accounts"]);
+
+/** কোন node-এর ডেটা ব্যবহারযোগ্য — RTDB প্রথম snapshot এসেছে **বা** শেষ দেখা
+ *  snapshot-ই browser cache থেকে restore হয়েছে। read-only সংকেত; কোনো লেখা
+ *  এর ওপর নির্ভর করে না। */
+const cacheReady = new Set<CollectionName>();
 
 const clone = (v: any): any => {
   try {
@@ -97,11 +98,6 @@ function restorePublicCache(): any {
   const s = fresh();
   if (!CACHE_ENABLED) return s;
   try {
-    // The cache is only for public website first paint. Admin/Moderator/Doner
-    // panels call persist() during boot, so they must never treat browser cache
-    // as authoritative input and accidentally re-write stale records to RTDB.
-    const path = window.location.pathname || "/";
-    if (/\/(admin|moderator|doner)(?:\.|\/|$)/i.test(path)) return s;
     const raw = localStorage.getItem(CACHE_KEY);
     if (!raw) return s;
     const parsed = JSON.parse(raw);
@@ -112,6 +108,9 @@ function restorePublicCache(): any {
     }
     s.updatedAt = parsed.updatedAt || s.updatedAt;
     s.source = "rtdb-cache";
+    /* এই node-গুলোর শেষ দেখা ডেটা এখন হাতে আছে — UI "লোড হচ্ছে…" না দেখিয়ে
+       তা আঁকতে পারে; RTDB snapshot এলেই live data দিয়ে replace হয়। */
+    markCacheReady([...PUBLIC_COLLECTIONS]);
   } catch {
     /* localStorage may be unavailable; cache is only an optimisation */
   }
@@ -133,6 +132,61 @@ function persistPublicCache() {
   }
 }
 
+/** সার্কুলার ডেফিনিশন এড়াতে helper — কলের সময়ই সব ডিক্লেয়ার হয়ে থাকে। */
+function markCacheReady(names: CollectionName[]): void {
+  for (const n of names) cacheReady.add(n);
+}
+
+function currentAuthUidValue(): string {
+  try {
+    const auth = getAuthInstance();
+    return String(auth?.currentUser?.uid || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+/** এই UID-এর শেষ দেখা private/admin snapshot (queue/accounts) — auth-gated। */
+function restorePrivateCacheInto(s: any, uid: string): boolean {
+  if (!CACHE_ENABLED || !uid) return false;
+  try {
+    const raw = localStorage.getItem(PRIVATE_CACHE_PREFIX + uid);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    if (String(parsed?.uid || "") !== uid) return false;
+    const savedAt = Date.parse(parsed?.savedAt || "");
+    if (!Number.isFinite(savedAt) || Date.now() - savedAt > CACHE_MAX_AGE_MS) return false;
+    for (const k of PRIVATE_COLLECTIONS) {
+      if (Array.isArray(parsed[k])) s[k] = parsed[k];
+    }
+    s.updatedAt = parsed.updatedAt || s.updatedAt;
+    s.source = "rtdb-cache";
+    markCacheReady([...PRIVATE_COLLECTIONS]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** বর্তমান auth UID-এর private snapshot browser-এ সংরক্ষণ (শুধু staff-শেষ দেখা)। */
+function persistPrivateCache(): void {
+  if (!CACHE_ENABLED) return;
+  const uid = currentAuthUidValue();
+  if (!uid) return;
+  try {
+    const payload: Record<string, any> = {
+      version: 1,
+      uid,
+      updatedAt: cache.updatedAt || new Date().toISOString(),
+      savedAt: new Date().toISOString(),
+    };
+    for (const k of PRIVATE_COLLECTIONS) payload[k] = cache[k] || [];
+    localStorage.setItem(PRIVATE_CACHE_PREFIX + uid, JSON.stringify(payload));
+  } catch {
+    /* ignore quota/private-mode errors */
+  }
+}
+
 /** RTDB থেকে আসা মান JSON-নিরাপদ করা (numeric timestamp → ISO)। */
 function normalizeDoc(data: any): any {
   const fix = (v: any): any => {
@@ -147,10 +201,15 @@ function normalizeDoc(data: any): any {
 }
 
 // ── in-memory cache (fed by Realtime Database, mutated optimistically on write) ──
-// Public RTDB data is restored from a short-lived browser cache first so the
-// home page can paint useful content immediately, then live RTDB snapshots
-// replace it as soon as they arrive. Private/admin data is never persisted here.
-let cache: any = restorePublicCache();
+// Public + private (queue/accounts, auth-scoped) RTDB data is restored from the
+// last-known browser snapshot first so every page paints its content immediately
+// on refresh/new page; live RTDB snapshots replace it as soon as they arrive.
+let cache: any = (() => {
+  const s = restorePublicCache();
+  const uid = currentAuthUidValue();
+  if (uid) restorePrivateCacheInto(s, uid);
+  return s;
+})();
 
 // ── subscribers ──
 const subscribers = new Set<(state: any, meta?: any) => void>();
@@ -193,8 +252,16 @@ export function onNodeLoaded(cb: (name: string) => void): () => void {
   };
 }
 
-/** এই node-এর ডেটা অন্তত একবার এসেছে কি না। */
+/** এই node-এর ডেটা অন্তত একবার এসেছে কি না (RTDB snapshot **বা** browser cache-
+ *  restore)। UI "লোড হচ্ছে…"-এর বদলে শেষ দেখা ডেটা আঁকতে পারে। */
 export function isNodeLoaded(name: string): boolean {
+  const key = name as CollectionName;
+  return loadedNodes.has(key) || cacheReady.has(key);
+}
+
+/** শুধু RTDB থেকে সত্যিকারের snapshot এসেছে কি না — cache-নয়।
+ *  (cache-only ডেটা দিয়ে কখনো RTDB-তে লেখা হয় না।) */
+export function isRtdbReady(name: string): boolean {
   return loadedNodes.has(name as CollectionName);
 }
 
@@ -255,12 +322,15 @@ function startRealtimeSync() {
           loadedNodes.add(name);
           notifyNodeLoaded(name);
         }
+        markCacheReady([name]);
         // Skip no-op echoes (e.g. our own write coming back unchanged).
         if (JSON.stringify(items) === JSON.stringify(cache[name])) return;
         cache[name] = clone(items);
         cache.version = 1;
         cache.updatedAt = new Date().toISOString();
+        /* প্রতিটি live snapshot-এ browser cache আপডেট — তাই রিলোডে ডেটা আগেই থাকে */
         if (PUBLIC_COLLECTIONS.has(name)) persistPublicCache();
+        else if (PRIVATE_COLLECTIONS.has(name)) persistPrivateCache();
         notify({ source: "rtdb", node: name });
       });
       rtdbUnsubs.push(un);
@@ -285,8 +355,25 @@ function watchAuthForPrivateNodes() {
     authUnsub = onAuthStateChanged(auth, (user) => {
       const nextUid = user?.uid || null;
       if (nextUid === currentAuthUid && rtdbStarted) return;
+      const prevUid = currentAuthUid;
       currentAuthUid = nextUid;
       const cleared = !nextUid && clearPrivateCacheOnLogout();
+      if (nextUid) {
+        /* UID বদলালে সেই UID-র শেষ দেখা private snapshot-ই first paint */
+        const restored = restorePrivateCacheInto(cache, nextUid);
+        if (restored) notify({ source: "cache:restore-private", node: "private" });
+      } else {
+        /* logout — private cache আর "ready" নয় এবং সংরক্ষিত private snapshot
+           মুছে যায়, অন্য কেউ যেন এই ডিভাইসে সেটি না দেখে */
+        if (prevUid) {
+          try {
+            localStorage.removeItem(PRIVATE_CACHE_PREFIX + prevUid);
+          } catch {
+            /* ignore */
+          }
+        }
+        for (const n of PRIVATE_COLLECTIONS) cacheReady.delete(n);
+      }
       restartRealtimeSync({ source: nextUid ? "auth:login" : "auth:logout", privateCleared: cleared });
     });
   } catch (e) {
@@ -363,6 +450,7 @@ function makeNextState(state: any, source = "unknown"): { previous: any; next: a
 function publishOptimistic(next: any, source: string): void {
   cache = clean(clone(next));
   persistPublicCache();
+  persistPrivateCache();
   notify({ source });
   try {
     bc && bc.postMessage({ revision: next.revision, source });
@@ -534,6 +622,7 @@ const store = {
   subscribe,
   onNodeLoaded,
   isNodeLoaded,
+  isRtdbReady,
   clone,
   toAdminDonor,
   fromAdminDonor,

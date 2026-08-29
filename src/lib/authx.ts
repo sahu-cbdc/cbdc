@@ -506,13 +506,48 @@ export interface ResolvedRole {
   staff: Record<string, any> | null;
 }
 
-/** RTDB-র role লেখা অ্যাপের তিনটি role-এ মেলানো: admin / moderator / donor। */
+/** RTDB-র role লেখা অ্যাপের তিনটি role-এ মেলানো: admin / moderator / donor. */
 function normaliseRole(raw: unknown): AppRole | null {
   const r = String(raw || "").toLowerCase();
   if (r === "admin") return "admin";
   if (r === "moderator" || r === "mod") return "moderator";
   if (r === "donor" || r === "user" || r === "member") return "donor";
   return null;
+}
+
+/* ── cached role (UID-scoped) — instant panel first paint ──
+   RTDB-র যাচাই করা শেষ ভূমিকা এই ব্রাউজারে UID-কী-তে থাকে; panel refresh/
+   নতুন পেজে ভূমিকা-যাচাইয়ের অপেক্ষায় খালি পর্দা না দেখিয়ে **সঙ্গে সঙ্গে**
+   আঁকা যায়। এটি শুধু first-paint shortcut — authorize() সবসময় RTDB থেকে
+   আবার যাচাই করে (বদলে গেলে নিজের dashboard-এ পাঠায়)। */
+const ROLE_CACHE_PREFIX = "cbdc.role.";
+const ROLE_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 7;
+
+export function rememberCachedRole(uid: string | null | undefined, role: string): void {
+  try {
+    if (!uid) return;
+    localStorage.setItem(
+      ROLE_CACHE_PREFIX + uid,
+      JSON.stringify({ role, savedAt: new Date().toISOString() }),
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
+export function readCachedRole(uid: string | null | undefined): string {
+  try {
+    if (!uid) return "";
+    const raw = localStorage.getItem(ROLE_CACHE_PREFIX + uid);
+    if (!raw) return "";
+    const parsed = JSON.parse(raw);
+    const savedAt = Date.parse(parsed?.savedAt || "");
+    if (!Number.isFinite(savedAt) || Date.now() - savedAt > ROLE_CACHE_MAX_AGE_MS) return "";
+    const role = String(parsed?.role || "").toLowerCase();
+    return ["admin", "moderator", "doner"].includes(role) ? role : "";
+  } catch {
+    return "";
+  }
 }
 
 /**

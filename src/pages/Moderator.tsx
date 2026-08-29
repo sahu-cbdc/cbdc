@@ -8,9 +8,10 @@
  */
 import { useEffect } from "react";
 import "../lib/store";
-import { initFirebase as initSharedFirebase, NODES } from "../lib/firebase";
+import { initFirebase as initSharedFirebase, NODES, getAuthInstance } from "../lib/firebase";
 import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
-import { authErrorMessage, resolveUserRole, panelForRole } from "../lib/authx";
+import { authErrorMessage, resolveUserRole, panelForRole, readCachedRole, rememberCachedRole } from "../lib/authx";
+import { restoreNodeSnapshot, saveNodeSnapshot, clearAllNodeSnapshots } from "../lib/nodeSnapshot";
 import { getRow, setRow, updateRow, removeRow, watchList, watchRow, findBy, nowIso, nextDonorId, updatePaths, serverTime } from "../lib/rtdb";
 import { ageText, ageFromDob, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
@@ -2422,6 +2423,10 @@ function initPage() {
   /* পুরোনো/ব্যাকফিল: ডোনার রেকর্ডে প্রোফাইল ছবি (ImgBB link) না থাকলে
      users/{uid}/photoURL থেকে এক-বার অনুলিপি — পাবলিক প্রোফাইলে সঠিক ছবি দেখাতে */
   function backfillDonorPhotos(){
+    /* শুধু RTDB-যাচাইকৃত ডেটা দিয়েই backfill — browser cache-র আগের snapshot
+       থেকে কখনোই RTDB-তে লেখা হয় না (cache শুধু first-paint-এর জন্য)। */
+    if(!(window.CBDCShared&&typeof CBDCShared.isRtdbReady==="function")||
+       !CBDCShared.isRtdbReady("donors"))return;
     const missing=DB.donors.filter(d=>!String(d.photo||"").trim()&&d.ownerUid);
     if(!missing.length)return;
     Promise.all(missing.map(d=>getRow(NODES.users,d.ownerUid).then(u=>{
@@ -2807,6 +2812,7 @@ function initPage() {
         ||String(a.name).localeCompare(String(a.name),"bn"));
       if(JSON.stringify(t)===JSON.stringify(DB.team))return;
       DB.team=t;
+      saveNodeSnapshot("team",t);
       try{paintNav();
         if(!document.querySelector(".sheet")&&["team","access"].includes(SUB))go(CUR,SUB,false,ARG)}catch(e){}
     });
@@ -2828,6 +2834,7 @@ function initPage() {
         .filter(x=>x.at).sort((a,b)=>b.at.localeCompare(a.at)).slice(0,300);
       if(JSON.stringify(list)===JSON.stringify(DB.audit))return;
       DB.audit=list;
+      saveNodeSnapshot("audit",list);
       try{if(!document.querySelector(".sheet")&&(SUB==="audit"||(CUR==="home"&&!SUB)))go(CUR,SUB,false,ARG)}catch(e){}
     });
   }
@@ -2842,11 +2849,26 @@ function initPage() {
         .filter(x=>x.name||x.text).sort((a,b)=>String(b.at).localeCompare(String(a.at)));
       if(JSON.stringify(list)===JSON.stringify(DB.messages))return;
       DB.messages=list;
+      saveNodeSnapshot("messages",list);
       try{paintTop();paintNav();
         if(!document.querySelector(".sheet")&&SUB==="inbox")go(CUR,SUB,false,ARG)}catch(e){}
     });
   }
-  
+
+  /* ══════ বুটে সংরক্ষিত RTDB snapshot → instant first paint ══════
+     refresh/নতুন পেজ খুললে panel-only node-গুলোর (team/audit/messages) শেষ
+     দেখা snapshot staff-UID-কী-তে restore করা হয় — লোডিং/খালি তালিকা নয়।
+     Live listener আসলেই RTDB-র বর্তমান ডেটা দিয়ে প্রতিস্থাপন করে। */
+  function restorePanelSnapshots(){
+    const teamRows=restoreNodeSnapshot("team");
+    if(teamRows)DB.team=teamRows;
+    const auditRows=restoreNodeSnapshot("audit");
+    if(auditRows)DB.audit=auditRows;
+    const msgRows=restoreNodeSnapshot("messages");
+    if(msgRows)DB.messages=msgRows;
+  }
+  restorePanelSnapshots();
+
   /* replaces the plain object created in the data block */
   ME=Object.assign(loadMe(),{role:ME.role||PANEL.role});
   if(!ROLES[ME.role])ME.role=PANEL.role;
@@ -3878,6 +3900,8 @@ function initPage() {
     try{
       /* the session ends; work data stays for the next person who logs in */
       localStorage.removeItem(ACC_LS);
+      /* এই UID-এর সংরক্ষিত staff snapshot-ও মুছে যায় — আর কেউ যেন না দেখে */
+      try{clearAllNodeSnapshots()}catch(e){}
       sessionStorage.clear();
     }catch(e){}
     try{(async()=>{try{const shared=initSharedFirebase();const {signOut}=await import("firebase/auth");if(shared.auth)await signOut(shared.auth)}catch(e){}})()}catch(e){}
@@ -5031,6 +5055,22 @@ function initPage() {
       go(RENDER[a]?a:"home",b||null,false);
       if(isEN())translateNode(document.body);
     };
+    /* ══ cached-role instant first paint ══
+       আগের সেশনে এই ব্রাউজারে এই UID-এর ভূমিকা "moderator" নিশ্চিত থাকলে
+       panel **সঙ্গে সঙ্গে** আঁকা হয় — সংরক্ষিত ডেটা snapshot-ই প্রথম paint,
+       তারপর নিচের authorize() RTDB-তে role যাচাই করে (বদলে গেলে নিজের
+       dashboard-এ পাঠায়) এবং live listener-গুলো বর্তমান ডেটা দিয়ে আপডেট করে। */
+    let earlyPainted=false;
+    const paintFromCache=()=>{
+      if(earlyPainted)return;
+      earlyPainted=true;
+      try{restorePanelSnapshots()}catch(e){}
+      try{proceed()}catch(e){console.warn("early paint:",e&&e.message)}
+    };
+    try{
+      const bootUid=String((getAuthInstance()&&getAuthInstance().currentUser&&getAuthInstance().currentUser.uid)||"").trim();
+      if(bootUid&&readCachedRole(bootUid)===PANEL.id)paintFromCache();
+    }catch(e){console.warn("early paint:",e&&e.message)}
     /* ══════════ Firebase Auth gate + role (Realtime Database `admins`) ══════════
        role শুধু ডাটাবেস থেকে আসে — RTDB-তে `admins/{uid}` রেকর্ড বদলালেই
        ব্যবহারকারীর প্যানেল বদলে যায়। ভুল প্যানেলে ঢুকলে (যেমন Doner এসে
@@ -5044,6 +5084,12 @@ function initPage() {
             navigateToPage("home");
             return;
           }
+          /* Firebase session restore-এর পরপরই (role-যাচাইয়ের আগেই) cached
+             role-মিলে গেলে সংরক্ষিত snapshot দিয়ে panel আঁকা হয় — তথাকথিত
+             "লোডিং" পর্দা কখনো দৃশ্যমান হয় না। */
+          try{
+            if(readCachedRole(user.uid)===PANEL.id)paintFromCache();
+          }catch(e){}
           const email=String(user.email||"").toLowerCase();
           let resolved={role:"donor",name:"",permissions:[],staff:null};
           try{
@@ -5052,6 +5098,8 @@ function initPage() {
 
           const target=panelForRole(resolved.role);          // doner | moderator | admin
           const here=PANEL.id;
+          /* যাচাই-সফল ভূমিকা সংরক্ষণ — পরের refresh/new page-এ instant paint */
+          try{rememberCachedRole(user.uid,target)}catch(e){}
           if(target!==here){
             /* এই প্যানেলে ঢোকার অনুমতি নেই — নিজের dashboard-এ পাঠানো হচ্ছে */
             navigateToPage(target);
