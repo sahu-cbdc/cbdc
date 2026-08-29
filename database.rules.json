@@ -90,6 +90,15 @@
         }
       }
     },
+    "identityIndex": {
+      "email": {
+        ".read": "auth != null",
+        "$key": {
+          ".write": "auth != null && (!data.exists() || data.val() === auth.uid || (!newData.exists() && root.child('admins').child(auth.uid).exists()))",
+          ".validate": "newData.isString() && newData.val().length >= 20 && newData.val().length <= 64"
+        }
+      }
+    },
     "admins": {
       ".indexOn": [
         "email",

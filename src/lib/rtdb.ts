@@ -48,6 +48,52 @@ function db(): Database | null {
   return getRtdb();
 }
 
+/**
+ * RTDB Security Rules-এর কারণে read ব্লক হয়েছে কি না।
+ * SDK-তে error.code = "PERMISSION_DENIED" (v8-style) অথবা "database/permission-denied"
+ * (modular) — দুটোই ধরা হয়। Denied read আবার চেষ্টা করা নিরর্থক — ফলে অপ্রয়োজনীয়
+ * network round-trip ও দীর্ঘ loading এড়ানো যায়।
+ */
+export function isPermissionDenied(err: unknown): boolean {
+  try {
+    const anyErr = err as any;
+    const code = String(anyErr?.code || "").toLowerCase();
+    const msg = String(anyErr?.message || "").toLowerCase();
+    return (
+      code.includes("permission-denied") ||
+      code.includes("permission_denied") ||
+      msg.includes("permission_denied") ||
+      msg.includes("permission denied")
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `getRow`-এর মতোই একটি রেকর্ড পড়া, কিন্তু error গিলে ফেলে না —
+ * `{ row, denied }` ফেরত দেয়। এতে caller জানতে পারে রেকর্ড সত্যিই নেই,
+ * নাকি rules-এর কারণে পড়াই যায়নি (তখন পরবর্তী fallback query বাদ দেওয়া যায়)।
+ */
+export async function probeRow(
+  node: string,
+  id: string
+): Promise<{ row: Row | null; denied: boolean }> {
+  const d = db();
+  if (!d || !id) return { row: null, denied: false };
+  try {
+    const snap = await get(child(ref(d, node), String(id)));
+    const v = snap.val();
+    if (!v) return { row: null, denied: false };
+    const row =
+      typeof v === "object" ? ({ ...v, id: v.id || id } as Row) : ({ id, value: v } as Row);
+    return { row, denied: false };
+  } catch (e) {
+    console.warn("rtdb probeRow:", node, id, (e as Error)?.message);
+    return { row: null, denied: isPermissionDenied(e) };
+  }
+}
+
 /** Donor UID-এর serial counter node — `_meta/donorCounter/<year>`-এ ধারাবাহিক নম্বর। */
 export const DONOR_COUNTER_NODE = "_meta/donorCounter";
 
@@ -349,6 +395,12 @@ export async function findBy(
     const rows = snapToList(snap.val());
     return rows[0] || null;
   } catch (e) {
+    /* Rules-এ read ব্লক হলে fallback full-node read-ও অবশ্যই denied হবে —
+       নিরর্থক দ্বিতীয় round-trip এড়িয়ে সাথে সাথেই ফিরে আসি (দ্রুত loading)। */
+    if (isPermissionDenied(e)) {
+      console.warn("rtdb findBy denied:", node, field, (e as Error)?.message);
+      return null;
+    }
     // index না থাকলে RTDB warning দেয় — তখন client-side filter-এ fallback
     console.warn("rtdb findBy:", node, field, (e as Error)?.message);
     const all = await listOnce(node);
@@ -370,6 +422,8 @@ export function stripUndefined<T extends Record<string, any>>(obj: T): T {
 export default {
   listOnce,
   getRow,
+  probeRow,
+  isPermissionDenied,
   watchList,
   watchRow,
   addRow,

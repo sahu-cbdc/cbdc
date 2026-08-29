@@ -8,6 +8,8 @@
  */
 import { useEffect } from "react";
 import "../lib/store";
+import { claimEmailIdentity, lookupEmailOwner } from "../lib/identity";
+import { resolveLegacyAccount } from "../lib/accountDelete";
 import { initFirebase as initSharedFirebase, isFirebaseReady } from "../lib/firebase";
 import { waitForAuthUser } from "../lib/authState";
 import { navigateToPage, pagePath, appBase } from "../lib/router";
@@ -17,6 +19,7 @@ import {
   consumeGoogleRedirect,
   ensureUserProfile,
   onAuthUserChanged,
+  profileFromFirebaseUser,
   setGoogleIntent,
   setPendingGoogleProfile,
   getPendingGoogleProfile,
@@ -4472,13 +4475,15 @@ function initPage() {
          `admins/{uid}` থাকলে admin/moderator, না থাকলে সবসময় donor।
          যুক্তিটি এক জায়গায় (src/lib/authx.ts → resolveUserRole) রাখা,
          তাই Home / Doner / Admin / Moderator — সবাই একই নিয়ম মানে। */
-      async function resolveRole(emailOrUser, fallbackName){
+      async function resolveRole(emailOrUser, fallbackName, knownProfile){
         const u = typeof emailOrUser === "string"
           ? {email: emailOrUser, name: fallbackName || ""}
           : {...(emailOrUser||{}), name: (emailOrUser && emailOrUser.name) || fallbackName || ""};
         if(!fbReady) return {role: DEFAULT_ROLE, name: u.name || "", permissions: {}};
         try{
-          const r = await resolveUserRole(u);
+          /* knownProfile দিলে users/{uid} দ্বিতীয়বার পড়া হয় না — দ্রুত loading */
+          const opts = arguments.length > 2 ? {knownProfile: knownProfile || null} : {};
+          const r = await resolveUserRole(u, opts);
           return {role: r.role, name: r.name || u.name || "", permissions: r.permissions || {}};
         }catch(e){
           console.warn("role lookup:", e && e.message);
@@ -4510,24 +4515,30 @@ function initPage() {
       }
 
       /* --- Google প্রোফাইল স্টেট ---
-         Google থেকে শুধু email + profile picture নেওয়া হয় (এই uid-এর)।
-         নাম/মোবাইল/জন্ম তারিখ ওয়েবসাইটের ফর্ম থেকেই আসে। */
+         Google থেকে Name, Email, Photo URL ও UID নেওয়া হয় (এই uid-এর)।
+         Name ও Email Google account থেকে automatically বসে —
+         Email পরিবর্তনযোগ্য নয় (readonly)। মোবাইল/জন্ম তারিখ ইত্যাদি বাকি
+         তথ্য ওয়েবসাইটের ফর্ম থেকেই আসে। */
       let googleProfile = null;  // {uid,email,name,photo}
       function setSignupGoogleMode(profile){
         googleProfile = profile || null;
         setPendingGoogleProfile(profile || null);
         const chip = $("#signupGoogleChip"), emailInp = $("#suEmail"), emailNote = $("#suEmailNote");
+        const nameInp = $("#suName");
         const p1 = $("#suPassField"), p2 = $("#suPass2Field");
         if(profile){
           chip?.classList.remove("hidden");
           $("#sgAvatar").src = profile.photo || avatarData("পুরুষ");
-          $("#sgName").textContent = profile.email || "Google ব্যবহারকারী";
+          $("#sgName").textContent = profile.name || profile.email || "Google ব্যবহারকারী";
           $("#sgEmail").textContent = profile.email || "";
-          /* শুধু ইমেইল অটো-ফিল (readonly)। নাম Google displayName থেকে বসানো হয় না। */
+          /* Name — Google account-এর displayName থেকে automatically বসে।
+             (খালি থাকলে ব্যবহারকারী নিজে লিখতে পারবেন; আগে থেকে কিছু লেখা থাকলে তা রাখা হয়।) */
+          if(nameInp && profile.name && !String(nameInp.value || "").trim()) nameInp.value = profile.name;
+          /* Email — Google-এ যাচাইকৃত; পরিবর্তনযোগ্য নয় (readonly)। */
           emailInp.value = profile.email || "";
           emailInp.setAttribute("readonly", "readonly");
           emailNote?.classList.remove("hidden");
-          if(!$("#suUsername")?.value) $("#suUsername").value = suggestUsername("", profile.email);
+          if(!$("#suUsername")?.value) $("#suUsername").value = suggestUsername(profile.name || "", profile.email);
           [p1, p2].forEach(f => f && f.classList.add("hidden"));
           $("#suPassword").required = false; $("#suPassword2").required = false;
         } else {
@@ -4562,13 +4573,16 @@ function initPage() {
         }
         const res = await googleSignInWithFallback(auth, intent === "signup" ? "signup" : "login");
         if(!res) return null;
-        /* Firebase Auth session যাচাই — সফল সাইন-ইনের পরে currentUser বসতে হবে */
-        const sessionUser = await awaitAuthUser();
+        /* Firebase Auth session যাচাই — popup সফল হলে currentUser সাথে সাথেই বসে,
+           তাই এই অপেক্ষা সাধারণত ০ মিলিসেকেন্ড; শুধু ব্যতিক্রমী ব্রাউজারের জন্য। */
+        const sessionUser = await awaitAuthUser(2500);
         const u = sessionUser || res.user;
         if(!u || !u.uid){
           throw Object.assign(new Error("session"),{code:"auth/internal-error"});
         }
-        const profile = {uid:u.uid, email:u.email || "", name:u.displayName || "", photo:u.photoURL || ""};
+        /* Google থেকে Name, Email, Photo URL ও UID — displayName/photoURL খালি হলে
+           providerData থেকে পড়া হয় (src/lib/authx.ts → profileFromFirebaseUser)। */
+        const profile = profileFromFirebaseUser(u);
         setPendingGoogleProfile(profile);
         return profile;
       }
@@ -4682,30 +4696,92 @@ function initPage() {
            ২. আগে থেকে একই Google account / email-এ অ্যাকাউন্ট থাকলে নতুন
               duplicate অ্যাকাউন্ট তৈরি হয় না — existing অ্যাকাউন্টেই লগইন হয়
               এবং সরাসরি নির্ধারিত dashboard-এ যায়,
-           ৩. একদম নতুন Google হলে বিদ্যমান registration flow-এর ফর্মে যায়। */
+           ৩. একদম নতুন Google হলে বিদ্যমান registration flow-এর ফর্মে যায়।
+         দ্রুততা: RTDB read একসাথে (parallel) পাঠানো হয় ও একই ডেটা দ্বিতীয়বার পড়া হয় না —
+         তাই Google account select-এর পর অপ্রয়োজনীয় দীর্ঘ loading হয় না। */
       async function continueGoogleAuth(p, intent){
         showAppLoading(); /* সফল/ব্যর্থ — দুই ক্ষেত্রেই পরিষ্কার অবস্থা দেখানো হয় */
         try{
-          const {role, name, permissions} = await resolveRole({uid:p.uid, email:p.email, name:p.name});
+          /* uid দিয়ে প্রোফাইল + email দিয়ে legacy খোঁজা — দুটোই একসাথে শুরু হয় */
+          const memberByUidP = findUserByUid(p.uid);
+          const memberByEmailP = findUserByEmail(p.email);
+          const member = (await memberByUidP) || (await memberByEmailP);
+          /* existing হিসেবে তখনই পুনর্ব্যবহার হবে যখন রেকর্ডটি ঠিক এই Google uid-এরই
+             (legacy email-ম্যাচ হলে ensureUserProfile নিজে fresh read করবে) */
+          const ownMember = member && String(member.id || "") === String(p.uid) ? member : null;
+          /* role নির্ধারণ — ইতিমধ্যে পড়া প্রোফাইল পুনর্ব্যবহার হয় (duplicate read নেই) */
+          const {role, name, permissions} = await resolveRole({uid:p.uid, email:p.email, name:p.name}, p.name, ownMember);
           if(role === "admin" || role === "moderator"){
             if(p.uid){
-              try{ await ensureUserProfile({uid:p.uid, email:p.email, name:name || p.name, photo:p.photo}, {provider:"google"}); }
+              try{ await ensureUserProfile({uid:p.uid, email:p.email, name:name || p.name, photo:p.photo}, {provider:"google", existing:ownMember}); }
               catch(e){ console.warn("profile upsert:", e&&e.message); }
             }
             hideAppModal();
             finishLogin({email:p.email, name: name || p.name, role, permissions, photo:p.photo, uid:p.uid});
             return;
           }
-          /* একই অ্যাকাউন্ট, ডুপ্লিকেট নয় — আগে UID দিয়ে, তারপর email দিয়ে খোঁজা হয় */
-          const member = (await findUserByUid(p.uid)) || (await findUserByEmail(p.email));
+          /* ── Legacy duplicate যাচাই: ইমেইলটি identityIndex-এ অন্য UID দাবি করে
+             থাকলে duplicate অ্যাকাউন্ট তৈরি না করে পুরোনো রেকর্ড এই UID-এ
+             নিরাপদে মেলানোর চেষ্টা হয় (server-secure endpoint)। ── */
+          if(!ownMember){
+            /* ইমেইল দিয়ে পাওয়া রেকর্ড ভিন্ন uid-এর হলেও এটি legacy conflict */
+            const legacyByEmail = member && String(member.id || "") !== String(p.uid) ? member : null;
+            const owner = legacyByEmail ? p.uid : await lookupEmailOwner(p.email);
+            if(legacyByEmail || (owner && owner !== p.uid)){
+              const merged = await resolveLegacyAccount().catch(() => null);
+              const mergedOk = !!(merged && merged.ok && merged.merged);
+              if(mergedOk){
+                /* পুরোনো রেকর্ড এই uid-এ মিলে গেছে — এবার স্বাভাবিক লগইন */
+                try{
+                  const fresh = await findUserByUid(p.uid);
+                  if(fresh && isProfileComplete(fresh)){
+                    const photo = photoForUid(fresh, p.photo);
+                    try{
+                      await ensureUserProfile({
+                        uid:p.uid, email:p.email, name:fresh.name || p.name, photo,
+                        phone:fresh.phone, dob:fresh.dob, gender:fresh.gender, area:fresh.area,
+                        district:fresh.district, username:fresh.username
+                      }, {provider:"google", existing:fresh});
+                    }catch(e){ console.warn("profile upsert:", e&&e.message); }
+                    hideAppModal();
+                    finishFromRtdb(p, fresh, {role: DEFAULT_ROLE, name: fresh.name, permissions:{}});
+                    return;
+                  }
+                }catch(e){ console.warn("post-merge login:", e&&e.message); }
+                /* মিলেছে কিন্তু প্রোফাইল অসম্পূর্ণ → স্বাভাবিক নিবন্ধন ধাপে
+                   (পুরোনো রেকর্ড ইতিমধ্যেই এই uid-এ মিলে গেছে — এখন লেখা নিরাপদ) */
+                hideAppModal();
+                setSignupGoogleMode(p);
+                prefillSignupFromProfile(null);
+                showView("signup");
+                const _formCardM = document.querySelector("#view-signup .form-card");
+                if(_formCardM){ _formCardM.classList.add("auth-card"); _formCardM.style.margin = "0 auto"; }
+                showMessage($("#signupMessage"),
+                  "আপনার পুরোনো রেকর্ড এই অ্যাকাউন্টে মিলিয়ে দেওয়া হয়েছে। বাকি তথ্য পূরণ করে সংরক্ষণ করুন।",
+                  "error");
+                return;
+              }
+              if(!(merged && merged.ok && merged.merged)){
+                hideAppModal();
+                showView("login");
+                showMessage($("#loginMessage"),
+                  merged && merged.unconfigured
+                    ? "এই ইমেইলে আগের একটি অ্যাকাউন্ট রেকর্ড আছে (ভিন্ন UID) — ডুপ্লিকেট তৈরি বন্ধ রাখা হয়েছে। অ্যাডমিন প্যানেলে 'ডুপ্লিকেট যাচাই ও পরিষ্কার' চালালে রেকর্ডটি স্বয়ংক্রিয়ভাবে মিলে যাবে।"
+                    : "এই ইমেইলে আগের একটি অ্যাকাউন্ট রেকর্ড আছে (ভিন্ন UID) — ডুপ্লিকেট তৈরি বন্ধ রাখা হয়েছে এবং রেকর্ড মেলানো যায়নি। অনুগ্রহ করে পরে আবার চেষ্টা করুন বা অ্যাডমিনের সাথে যোগাযোগ করুন।",
+                  "error");
+                return;
+              }
+            }
+          }
+          /* একই অ্যাকাউন্ট, ডুপ্লিকেট নয় — আগে থেকে প্রোফাইল থাকলে সরাসরি লগইন */
           if(member && isProfileComplete(member)){
             const photo = photoForUid(member, p.photo);
             try{
               await ensureUserProfile({
-                uid:p.uid, email:p.email, name:member.name, photo,
+                uid:p.uid, email:p.email, name:member.name || p.name, photo,
                 phone:member.phone, dob:member.dob, gender:member.gender, area:member.area,
                 district:member.district, username:member.username
-              }, {provider:"google"});
+              }, {provider:"google", existing:ownMember});
             }catch(e){ console.warn("profile upsert:", e&&e.message); }
             hideAppModal();
             finishFromRtdb(p, member, {role: DEFAULT_ROLE, name: member.name, permissions:{}});
@@ -4977,6 +5053,35 @@ function initPage() {
           if(!uid) throw new Error("অ্যাকাউন্ট তৈরি করা যায়নি।");
           signupUid = uid;
 
+          /* ── ইমেইল ইউনিকনেস (ডুপ্লিকেট প্রতিরোধের চূড়ান্ত স্তর) ──
+             identityIndex-এ ইমেইলটি atomic দাবি করা হয়: প্রথম UID-ই পায়।
+             অন্য UID আগে দাবি করলে প্রথমে পুরোনো (legacy) রেকর্ড এই UID-এ
+             মেলানোর চেষ্টা হয় (server-secure); তবু দাবি না পেলে duplicate
+             অ্যাকাউন্ট তৈরি এখানেই বন্ধ। */
+          let claim = await claimEmailIdentity(o.email, uid);
+          if(!claim.claimed && claim.ownerUid && claim.ownerUid !== uid){
+            const merged = await resolveLegacyAccount().catch(() => null);
+            if(merged && merged.ok && merged.merged){
+              claim = await claimEmailIdentity(o.email, uid);
+            }
+            if(!claim.claimed){
+              if(!isGoogle && signupUid){
+                /* auth account তৈরি হয়ে গেছে — রেখে দেওয়া হয়, পরে ঐ ইমেইলেই
+                   লগইন/রিসেট করা যাবে; নতুন প্রোফাইল তৈরি করা হয় না। */
+                try{ const {signOut} = await import("firebase/auth"); if(auth && auth.currentUser) await signOut(auth); }catch(_e){}
+              }
+              hideAppModal();
+              message.className = "";
+              showMessage($("#signupMessage"),
+                (merged && merged.unconfigured)
+                  ? "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে — একই ইমেইলে দ্বিতীয় অ্যাকাউন্ট তৈরি করা যায় না। অ্যাডমিন প্যানেলে 'ডুপ্লিকেট যাচাই ও পরিষ্কার' চালালে পুরোনো রেকর্ড মিলে যাবে।"
+                  : "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে — একই ইমেইলে দ্বিতীয় অ্যাকাউন্ট তৈরি করা যায় না। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।",
+                "error");
+              setFieldError($("#suEmail"), "এই ইমেইলে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।");
+              return;
+            }
+          }
+
           const existingProfile = await getRow(NODES.users, uid);
           const photoURL = photoForUid(existingProfile, googleProfile ? (googleProfile.photo||"") : "");
           /* ১) ওয়েবসাইট অ্যাকাউন্ট — RTDB `users/{uid}` (সাথে সাথেই সক্রিয়)।
@@ -5005,7 +5110,7 @@ function initPage() {
               uid, email:o.email, name:o.name, photo:photoURL,
               phone:o.phone, dob:o.dob, gender:o.gender, area:o.area,
               district:o.district, username:o.username, address:o.address
-            }, {provider: isGoogle ? "google" : "password"});
+            }, {provider: isGoogle ? "google" : "password", existing: existingProfile});
           } else {
             /* নতুন Account-এ Donor UID তৈরি হয় না — শুধু account record।
                Donor UID কেবল "রক্তদাতা হিসেবে যুক্ত হন" → Admin Approve হলে নির্ধারিত হয়। */
@@ -5016,15 +5121,48 @@ function initPage() {
             });
           }
 
+          /* Google দিয়ে অ্যাকাউন্ট তৈরি হলে Name ও Photo URL Firebase Auth প্রোফাইলেও
+             সংরক্ষণ করা হয় (Email/UID ইতিমধ্যেই Auth-এ থাকে)। */
+          if(isGoogle && auth && auth.currentUser && auth.currentUser.uid === uid){
+            try{
+              const {updateProfile} = await import("firebase/auth");
+              const authPatch = {displayName: o.name};
+              if(googleProfile && googleProfile.photo) authPatch.photoURL = googleProfile.photo;
+              await updateProfile(auth.currentUser, authPatch);
+            }catch(e){ console.warn("auth profile update:", e && e.message); }
+          }
+
           form.reset();
           clearFormErrors(form);
           $("#suAgree").checked = false;
-          setSignupGoogleMode(null);
           message.className = "hidden"; message.textContent = "";
-          /* Email/Password ও Google — দুটোতেই একই সফল flow:
+          const gp = googleProfile;
+          setSignupGoogleMode(null);
+
+          /* ── Google: authentication ইতিমধ্যেই সফল — সরাসরি পরবর্তী ধাপে ──
+             Google সেশন জীবিত থাকলে আবার লগইনে বাধ্য করা হয় না;
+             অ্যাকাউন্ট তৈরির সাথে সাথেই নিজ প্যানেলে (Doner) প্রবেশ করানো হয়। */
+          if(isGoogle && auth && auth.currentUser && auth.currentUser.uid === uid){
+            setPendingGoogleProfile(null);
+            hideAppModal();
+            toast("অ্যাকাউন্ট তৈরি হয়েছে — স্বাগতম, " + (o.name || "ব্যবহারকারী") + "!");
+            finishLogin({
+              email: o.email,
+              name: o.name,
+              role: DEFAULT_ROLE,
+              permissions: {},
+              photo: photoURL || (gp ? gp.photo : ""),
+              uid,
+              phone: o.phone, dob: o.dob, gender: o.gender, area: o.area,
+              username: o.username, address: o.address,
+              photoSource: photoURL ? (gp && gp.photo === photoURL ? "google" : "upload") : "none"
+            });
+            return;
+          }
+
+          /* Email/Password — সফল flow:
              Firebase Auth + RTDB Save → Success Popup → Auto Hide → Login Page →
-             Email Auto-Fill → ব্যবহারকারী নিজে লগইন করবে।
-             (Google সেশন থাকলেও signOut করা হয় — ইউজার নিজে লগইন করবে।) */
+             Email Auto-Fill → ব্যবহারকারী নিজে লগইন করবে। */
           try{
             const {signOut} = await import("firebase/auth");
             if(auth && auth.currentUser) await signOut(auth);

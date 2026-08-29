@@ -3688,14 +3688,24 @@ function initPage() {
     let approvedDonorId="", approvedDonor=null, approvedDonation=null, approvedRequest=null, approvedGroup=null;
     try{
       if(q.kind==="donor"&&ok){
+        /* ── ডুপ্লিকেট প্রতিরোধ: একই অ্যাকাউন্টের (ownerUid) ডোনার রেকর্ড আগেই
+           থাকলে নতুন ডোনার আইডি তৈরি না করে সেটিকেই অনুমোদিত/আপডেট করা হয় —
+           তালিকায় একই Account কখনো দুইবার আসে না। ── */
+        let reuseDonor=null;
+        if(q.ownerUid){
+          try{ reuseDonor=await findBy(NODES.donors,"ownerUid",q.ownerUid); }catch(_e){ reuseDonor=null; }
+        }
         approvedDonorId=String(q.donorId||"");
+        if(reuseDonor&&reuseDonor.id)approvedDonorId=String(reuseDonor.id);
         if(!approvedDonorId)approvedDonorId=await nextDonorId();
         const at=nowIso(), count=q.last?1:0;
         approvedDonor={id:approvedDonorId,donorId:approvedDonorId,uid:q.ownerUid||"",ownerUid:q.ownerUid||"",
           name:q.name||"",bloodGroup:q.group||"",group:q.group||"",area:q.area||"",phone:q.phone||"",
           whatsapp:q.whatsapp||q.phone||"",gender:q.gender||"",dob:q.dob||"",lastDonationDate:q.last||"",
-          status:"approved",available:true,verified:true,suspended:false,joined:at,photo:q.photo||"",
-          donations:count,totalDonations:count,createdAt:at,updatedAt:at};
+          status:"approved",available:true,verified:true,suspended:false,joined:(reuseDonor&&reuseDonor.joined)||at,photo:q.photo||"",
+          donations:reuseDonor?Number(reuseDonor.donations)||0:count,
+          totalDonations:reuseDonor?Number(reuseDonor.totalDonations)||0:count,
+          createdAt:(reuseDonor&&reuseDonor.createdAt)||at,updatedAt:at};
         paths[`donors/${approvedDonorId}`]=approvedDonor;
         if(q.ownerUid){
           paths[`users/${q.ownerUid}/donorStatus`]="approved";
@@ -3994,6 +4004,15 @@ function initPage() {
       if(dobVal&&!isValidDob(dobVal))return toast("সঠিক জন্ম তারিখ দিন","er");
       const o={name:n,group:s.q("#f_g").value,area:s.q("#f_a").value,phone:p,
         dob:dobVal,gender:s.q("#f_s").value,last:s.q("#f_l").value};
+      /* ── ডুপ্লিকেট প্রতিরোধ: একই মোবাইল নম্বরে ডোনার আগেই থাকলে সতর্ক করা হয় —
+         নিশ্চিত করলেই নতুন এন্ট্রি যোগ হয় (তালিকায় অবাঞ্ছিত duplicate এড়াতে)। ── */
+      const dupDigits=(v)=>{let d=String(v||"").replace(/\D/g,"");if(d.startsWith("880")&&d.length>11)d="0"+d.slice(3);return d;};
+      const dupExisting=(!id && DB.donors.find(x=>dupDigits(x.phone)===dupDigits(p)));
+      if(dupExisting){
+        const goAhead=await confirmS({title:"ডুপ্লিকেট যাচাই", ok:"যোগ করুন",
+          desc:`এই মোবাইল নম্বরে ইতিমধ্যে একজন ডোনার আছে — "${dupExisting.name||"অজানা"}"। একই নম্বরে আরেকটি এন্ট্রি যোগ করবেন?`});
+        if(!goAhead)return;
+      }
       if(id){Object.assign(d,o);logAudit("ডোনার তথ্য সম্পাদনা",id,"donor")}
       else{
         let newId="";

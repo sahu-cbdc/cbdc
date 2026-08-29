@@ -17,7 +17,7 @@ import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERR
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage, getImgbbKey, saveImgbbKey } from "../lib/imgbb";
-import { serverDeleteEntity, deletionMessage, describeDeletionFailure, isAuthUid, type DeletionStep, type DeleteScope } from "../lib/accountDelete";
+import { serverDeleteEntity, deletionMessage, bulkDeletionMessage, describeDeletionFailure, isAuthUid, runDedupeScan, type DeletionStep, type DeleteScope } from "../lib/accountDelete";
 import { noticeIsActive, noticeTarget } from "../lib/notice";
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -4061,14 +4061,24 @@ function initPage() {
     let approvedDonorId="", approvedDonor=null, approvedDonation=null, approvedRequest=null, approvedGroup=null;
     try{
       if(q.kind==="donor"&&ok){
+        /* ── ডুপ্লিকেট প্রতিরোধ: একই অ্যাকাউন্টের (ownerUid) ডোনার রেকর্ড আগেই
+           থাকলে নতুন ডোনার আইডি তৈরি না করে সেটিকেই অনুমোদিত/আপডেট করা হয় —
+           তালিকায় একই Account কখনো দুইবার আসে না। ── */
+        let reuseDonor=null;
+        if(q.ownerUid){
+          try{ reuseDonor=await findBy(NODES.donors,"ownerUid",q.ownerUid); }catch(_e){ reuseDonor=null; }
+        }
         approvedDonorId=String(q.donorId||"");
+        if(reuseDonor&&reuseDonor.id)approvedDonorId=String(reuseDonor.id);
         if(!approvedDonorId)approvedDonorId=await nextDonorId();
         const at=nowIso(), count=q.last?1:0;
         approvedDonor={id:approvedDonorId,donorId:approvedDonorId,uid:q.ownerUid||"",ownerUid:q.ownerUid||"",
           name:q.name||"",bloodGroup:q.group||"",group:q.group||"",area:q.area||"",phone:q.phone||"",
           whatsapp:q.whatsapp||q.phone||"",gender:q.gender||"",dob:q.dob||"",lastDonationDate:q.last||"",
-          status:"approved",available:true,verified:true,suspended:false,joined:at,photo:q.photo||"",
-          donations:count,totalDonations:count,createdAt:at,updatedAt:at};
+          status:"approved",available:true,verified:true,suspended:false,joined:(reuseDonor&&reuseDonor.joined)||at,photo:q.photo||"",
+          donations:reuseDonor?Number(reuseDonor.donations)||0:count,
+          totalDonations:reuseDonor?Number(reuseDonor.totalDonations)||0:count,
+          createdAt:(reuseDonor&&reuseDonor.createdAt)||at,updatedAt:at};
         paths[`donors/${approvedDonorId}`]=approvedDonor;
         if(q.ownerUid){
           paths[`users/${q.ownerUid}/donorStatus`]="approved";
@@ -4370,6 +4380,15 @@ function initPage() {
       if(dobVal&&!isValidDob(dobVal))return toast("সঠিক জন্ম তারিখ দিন","er");
       const o={name:n,group:s.q("#f_g").value,area:s.q("#f_a").value,phone:p,
         dob:dobVal,gender:s.q("#f_s").value,last:s.q("#f_l").value};
+      /* ── ডুপ্লিকেট প্রতিরোধ: একই মোবাইল নম্বরে ডোনার আগেই থাকলে সতর্ক করা হয় —
+         নিশ্চিত করলেই নতুন এন্ট্রি যোগ হয় (তালিকায় অবাঞ্ছিত duplicate এড়াতে)। ── */
+      const dupDigits=(v)=>{let d=String(v||"").replace(/\D/g,"");if(d.startsWith("880")&&d.length>11)d="0"+d.slice(3);return d;};
+      const dupExisting=(!id && DB.donors.find(x=>dupDigits(x.phone)===dupDigits(p)));
+      if(dupExisting){
+        const goAhead=await confirmS({title:"ডুপ্লিকেট যাচাই", ok:"যোগ করুন",
+          desc:`এই মোবাইল নম্বরে ইতিমধ্যে একজন ডোনার আছে — "${dupExisting.name||"অজানা"}"। একই নম্বরে আরেকটি এন্ট্রি যোগ করবেন?`});
+        if(!goAhead)return;
+      }
       if(id){Object.assign(d,o);logAudit("ডোনার তথ্য সম্পাদনা",id,"donor")}
       else{
         let newId="";
@@ -4551,8 +4570,8 @@ function initPage() {
           <input type="checkbox" id="tall" ${allChecked?"checked":""} style="width:17px;height:17px;accent-color:var(--grn)">
           সব নির্বাচন করুন</label>
         <span class="mut" style="font-size:.75rem">${bn(rows.length)} জন ডোনার</span>
-        <button class="btn red sm" id="tdel" ${selCount?"":"disabled"}
-          style="margin-left:auto">${SI.trash(14)} ডিলিট করুন${selCount?" ("+bn(selCount)+")":""}</button>
+        <button class="btn red sm" id="tdel" ${selCount?"":"disabled"}>${SI.trash(14)} ডিলিট করুন${selCount?" ("+bn(selCount)+")":""}</button>
+        <button class="btn gh sm" id="tdedupe" style="margin-left:auto">${SI.shield(14)} ডুপ্লিকেট যাচাই</button>
       </div>`
     +(rows.length
       ?`<div class="card pad0">${rows.map(({d,username,photo})=>`<div class="prow" style="cursor:pointer" data-row="${esc(d.id)}">
@@ -4585,6 +4604,62 @@ function initPage() {
     /* কার্ড/পঙ্‌ক্তির অন্য যেকোনো অংশ → বিদ্যমান প্রোফাইল ভিউ (দেখুন বাটন নেই) */
     el.querySelectorAll("[data-row]").forEach(x=>x.onclick=()=>openDonor(x.dataset.row));
     $("#tdel").onclick=()=>bulkDeleteEntities(scope,[...sel]);
+    $("#tdedupe").onclick=()=>openDedupe();
+  }
+
+  /* ══════════ ডুপ্লিকেট যাচাই ও নিরাপদে পরিষ্কার (legacy cleanup) ══════════
+     সার্ভার-নিরাপদ স্ক্যান: একই ইমেইলে একাধিক অ্যাকাউন্ট রেকর্ড, একই অ্যাকাউন্টের
+     একাধিক ডোনার আইডি ও ইমেইল-সূচি (identityIndex) backfill — প্রথমে preview,
+     অ্যাডমিন নিশ্চিত করলে এক atomic write-এ মেলানো/মোছা হয়। ফল live listener-এই
+     সব প্যানেলে realtime দেখা যায় — reload লাগে না। */
+  async function openDedupe(){
+    let sh=null;
+    try{
+      sh=sheet("ডুপ্লিকেট যাচাই",`<p class="mut" style="font-size:.84rem">ডেটাবেস স্ক্যান হচ্ছে — একই ইমেইলের অ্যাকাউন্ট, একই অ্যাকাউন্টের একাধিক ডোনার আইডি ও ইমেইল-সূচি পরীক্ষা করা হচ্ছে… কিছুই বদলানো হবে না যতক্ষণ না আপনি নিশ্চিত করেন।</p>`,
+        `<button class="btn gh" data-close>বন্ধ করুন</button>`);
+      const rep=await runDedupeScan(false);
+      if(!rep.ok){
+        sh.close();
+        uiAlert(rep.error||"স্ক্যান করা যায়নি।",{type:"error",title:"ব্যর্থ হয়েছে"});
+        return;
+      }
+      const fixable=rep.groups.filter(g=>g.kind!=="donor-phone");
+      const listHtml=rep.groups.length?`<div style="display:flex;flex-direction:column;gap:8px">${rep.groups.map(g=>{
+        const label=g.kind==="user-email"?"অ্যাকাউন্ট (একই ইমেইল)":g.kind==="donor-owner"?"ডোনার আইডি (একই অ্যাকাউন্ট)":"ফোন নম্বর (ম্যানুয়াল পর্যালোচনা)";
+        const rem=g.remove.map(r=>esc(r.name||r.id)+(r.email?` (${esc(r.email)})`:"")).join(", ");
+        return `<div class="card" style="padding:10px 12px">
+          <b style="font-size:.86rem">${label}</b>
+          <div style="font-size:.78rem" class="mut">রাখা হবে: <b>${esc(g.keep.name||g.keep.id)}</b>${g.keep.email?` · ${esc(g.keep.email)}`:""}</div>
+          <div style="font-size:.78rem" class="mut">মুছে/মেলানো হবে: ${rem||"—"}${g.filledFields.length?` · পূরণ হবে: ${bn(g.filledFields.length)} ফিল্ড`:""}</div>
+        </div>`;
+      }).join("")}</div>`:`<p style="font-size:.86rem">✓ কোনো duplicate পাওয়া যায়নি — সব অ্যাকাউন্ট ও ডোনার আইডি ইউনিক।</p>`;
+      const notesHtml=rep.notes.length?`<div style="margin-top:10px">${rep.notes.map(n=>`<p class="mut" style="font-size:.75rem">• ${esc(n)}</p>`).join("")}</div>`:"";
+      const indexNote=rep.scanned.emailsIndexed?`<p class="mut" style="font-size:.75rem;margin-top:8px">ইমেইল-সূচিতে ${bn(rep.scanned.emailsIndexed)}টি অ্যাকাউন্ট যোগ হবে (ভবিষ্যতে duplicate সনাক্তকরণে সহায়ক)।</p>`:"";
+      const body=`<p class="mut" style="font-size:.78rem">স্ক্যান সম্পন্ন — অ্যাকাউন্ট: ${bn(rep.scanned.users)}, ডোনার আইডি: ${bn(rep.scanned.donors)}</p>
+        <div style="margin-top:10px">${listHtml}</div>${notesHtml}${indexNote}`;
+      const footer=fixable.length
+        ?`<button class="btn gh" data-close>বাতিল</button><button class="btn red" id="dd_apply">নিরাপদে পরিষ্কার করুন</button>`
+        :`<button class="btn" data-close>ঠিক আছে</button>`;
+      sh.close();
+      const sh2=sheet("ডুপ্লিকেট যাচাই — ফলাফল",body,footer);
+      const applyBtn=sh2.q("#dd_apply");
+      if(applyBtn)applyBtn.onclick=async()=>{
+        applyBtn.disabled=true;applyBtn.innerHTML="পরিষ্কার করা হচ্ছে…";
+        const rep2=await runDedupeScan(true).catch(e=>({ok:false,error:e&&e.message}));
+        if(!rep2.ok){
+          applyBtn.disabled=false;applyBtn.innerHTML="নিরাপদে পরিষ্কার করুন";
+          uiAlert(rep2.error||"পরিষ্কার করা যায়নি।",{type:"error",title:"ব্যর্থ হয়েছে"});
+          return;
+        }
+        sh2.close();
+        toast(`পরিষ্কার সম্পন্ন — ${bn(rep2.changedPaths)}টি রেকর্ড আপডেট হয়েছে`,"ok");
+        renderSub("team");renderSub("donorid");
+      };
+    }catch(e){
+      console.warn("dedupe:",e&&e.message);
+      try{sh&&sh.close();}catch(_e){}
+      uiAlert("স্ক্যান করা যায়নি — আবার চেষ্টা করুন।",{type:"error",title:"ব্যর্থ হয়েছে"});
+    }
   }
 
   /* ---------- ডোনার ব্যবস্থাপনা — শুধু অ্যাকাউন্ট-ওয়ালা ডোনার ---------- */
@@ -4600,8 +4675,9 @@ function initPage() {
   /* ---------- ডোনার আইডি ব্যবস্থাপনা — সব ডোনার আইডি (অ্যাকাউন্ট ছাড়াও) ----------
      Someone with a Donor ID is anyone who has a `donors/{donorId}` record;
      having a Website/Firebase অ্যাকাউন্ট প্রয়োজন হয় না। একই কার্ড-ডিজাইন;
-     ডিলিট scope "donor" — শুধু Donor ID ও ডোনার-সম্পর্কিত রেকর্ড মোছে,
-     অ্যাকাউন্ট (users/accounts/admins) অক্ষত থাকে। */
+     ডিলিট scope "donor" — Donor ID ও ডোনার-সম্পর্কিত রেকর্ড মোছে এবং
+     একই ব্যক্তির (সার্ভারে যাচাইকৃত) লগইন অ্যাকাউন্ট (Firebase Authentication)
+     যুক্ত থাকলে সেটিও মোছে। আলাদা/অমিল অ্যাকাউন্ট কখনোই স্পর্শ হয় না। */
   SUBP.donorid=el=>{
     if(!dataReady("donors")){el.innerHTML=skelRows(4);return}
     const rows=donorManageRows(true);
@@ -4613,18 +4689,22 @@ function initPage() {
   /* ══════════ নিরাপদ সার্ভার-ভিত্তিক ডিলিট (একক + bulk) ══════════
      ব্রাউজার আর নিজে কিছু মোছে না — লগইন করা অ্যাডমিনের Firebase ID token
      নিয়ে secure server endpoint (`<base>api/admin/delete`)-এ অনুরোধ পাঠায়;
-     সেখানে token + অ্যাডমিন role যাচাই করে শুধু নির্ধারিত entity-র RTDB
-     রেকর্ড মোছা হয় (src/lib/accountDelete.ts → server/deleteApi.ts)।
+     সেখানে token + অ্যাডমিন role যাচাই করে নির্ধারিত entity-র RTDB রেকর্ড
+     এবং **সংশ্লিষ্ট Firebase Authentication লগইন অ্যাকাউন্ট** মোছা হয়
+     (src/lib/accountDelete.ts → server/deleteApi.ts + server/authAdmin.ts)।
 
-       • **দুটি স্বাধীন entity**:
-           scope "account" → users/{uid} · admins/{uid} · accounts/*
-                             (ডোনার আইডি অক্ষত)
-           scope "donor"   → donors/{donorId} · members/* · queue/*
-                             (অ্যাকাউন্ট অক্ষত)
-       • ভুল identity দিলে সার্ভার কিছুই মোছা না; প্রতিটি path মোছার আগে
-         read করে যাচাই করা হয়।
-       • সফল হলে RTDB বদলায় → existing live listener-ই তালিকা ও পরিসংখ্যান
-         আপডেট করে — কোনো page reload/full reload/loading লাগে না। */
+       • scope "account" → users/{uid} · admins/{uid} · accounts/* + লগইন
+                           (ডোনার আইডি অক্ষত)
+         scope "donor"   → donors/{donorId} · members/* · queue/* এবং
+                           **যুক্ত থাকলে** সংশ্লিষ্ট অ্যাকাউন্ট + লগইন
+       • "ভুল account কখনো মুছবে না": লিংকড uid শুধুই সার্ভারে ডোনার রেকর্ড
+         থেকে পড়া হয়; ক্লায়েন্টের uid মালিকানার সাথে না মিললে কিছুই মোছা
+         হয় না; লগইন ডিলিট ব্যর্থ হলেও কিছুই মোছা হয় না।
+       • লগইন ডিলিট server-side secret (service account) দিয়ে — client-এ
+         কোনো private key নেই।
+       • সফল হলে RTDB বদলায় → existing live listener-ই Admin panel ও Main
+         Website — দুই জায়গার তালিকা/পরিসংখ্যান একসাথে realtime-এ আপডেট
+         করে — কোনো page reload/full reload/loading লাগে না। */
 
   /** একজন ডোনারের একটি entity (অ্যাকাউন্ট বা ডোনার আইডি) — সার্ভার দিয়ে। */
   async function deleteOneEntity(d,scope){
@@ -4636,7 +4716,8 @@ function initPage() {
     if(result.ok){
       await logAudit(scope==="account"?"অ্যাকাউন্ট মুছে ফেলা":"ডোনার আইডি মুছে ফেলা",
         `${result.name||result.donorId||result.uid} · ${result.donorId||"—"}${result.uid?" · "+result.uid:""}`,"donor");
-      /* Auth account রয়ে গেলে (server-এ private key নেই) সেটি লুকানো হয় না */
+      /* লগইন অ্যাকাউন্ট কোনো কারণে মোছা না হলে (secret কনফিগার নেই ইত্যাদি)
+         সার্ভারের স্পষ্ট warning-টি লুকানো হয় না — অ্যাডমিন জানতে পারবেন। */
       (result.warnings||[]).forEach(w=>toast(w,""));
       return result;
     }
@@ -4653,8 +4734,8 @@ function initPage() {
     const names=list.slice(0,3).map(d=>d.name).join(", ")+(list.length>3?" সহ "+bn(list.length)+" জন":"");
     if(!await confirmS({title:list.length>1?`নির্বাচিত ${entity}গুলো মুছবেন?`:`${entity} মুছবেন?`,
       desc:isAccount
-        ?`${names}-এর Website/Firebase অ্যাকাউন্ট (users/accounts/admins রেকর্ড) মুছে যাবে — ডোনার আইডি ও পাবলিক ডোনার তথ্য অক্ষত থাকবে। এটি ফেরানো যাবে না।`
-        :`${names}-এর ডোনার আইডি ও ডোনার-সম্পর্কিত রেকর্ড (members/queue) মুছে যাবে — অ্যাকাউন্ট (যদি থাকে) অক্ষত থাকবে। এটি ফেরানো যাবে না।`,
+        ?`${names}-এর Website/Firebase অ্যাকাউন্ট (users/accounts/admins রেকর্ড) এবং তার লগইন অ্যাকাউন্ট (Firebase Authentication) মুছে যাবে — ডোনার আইডি ও পাবলিক ডোনার তথ্য অক্ষত থাকবে। এটি ফেরানো যাবে না।`
+        :`${names}-এর ডোনার আইডি ও ডোনার-সম্পর্কিত রেকর্ড (members/queue) মুছে যাবে; একই ব্যক্তির লগইন অ্যাকাউন্ট (Firebase Authentication) যুক্ত থাকলে সেটিও মুছে যাবে। আলাদা/অমিল অ্যাকাউন্ট কখনোই মোছা হবে না। এটি ফেরানো যাবে না।`,
       ok:"হ্যাঁ, মুছুন",danger:true}))return;
     const done=[],failed=[];
     for(const d of list){
@@ -4667,17 +4748,14 @@ function initPage() {
           failed:[{id:"server",label:"নিরাপদ সার্ভার অনুরোধ",ok:false,error:(e&&e.message)||"অজানা সমস্যা"}],
           steps:[],removed:0,references:{},warnings:[],error:(e&&e.message)||"অজানা সমস্যা"}
       });
-      if(result.ok){done.push(d);toast("মুছে ফেলা হচ্ছে… ("+bn(done.length)+"/"+bn(list.length)+")","")}
+      if(result.ok){done.push(result);toast("মুছে ফেলা হচ্ছে… ("+bn(done.length)+"/"+bn(list.length)+")","")}
       else failed.push(`${result.name||result.donorId||d.id}: ${deletionMessage(result)}`);
     }
-    /* সবকিছু সফল হলেই success — আংশিক হলে কী কী বাকি আছে তা জানানো হয় */
+    /* সবকিছু সফল হলেই success — আংশিক হলে কী কী বাকি আছে তা জানানো হয়।
+       সারসংক্ষেপে লগইন (Firebase Authentication) অংশের প্রকৃত অবস্থা বলা হয়। */
     if(!failed.length){
       (isAccount?teamSel:donorIdSel).clear();
-      toast(isAccount
-        ?(list.length>1?"নির্বাচিত অ্যাকাউন্টগুলো মুছে ফেলা হয়েছে — ডোনার আইডি অক্ষত"
-          :"অ্যাকাউন্ট মুছে ফেলা হয়েছে — ডোনার আইডি অক্ষত আছে")
-        :(list.length>1?"নির্বাচিত ডোনার আইডিগুলো মুছে ফেলা হয়েছে — অ্যাকাউন্ট অক্ষত"
-          :"ডোনার আইডি মুছে ফেলা হয়েছে — অ্যাকাউন্ট অক্ষত আছে"),"ok");
+      toast(bulkDeletionMessage(done),"ok");
     }else{
       toast((done.length?bn(done.length)+" জন মুছে গেছে — ":"")+failed.slice(0,2).join(" | ")
         +(failed.length>2?" | আরও "+bn(failed.length-2)+" জন":""),"er");
@@ -4980,9 +5058,10 @@ function initPage() {
           logAudit("প্রোফাইল রপ্তানি",d.id,"data");toast("ফাইল নামছে","ok")}
         if(m==="del"){
           if(!await confirmS({title:"ডোনার আইডি স্থায়ীভাবে মুছবেন?",
-            desc:"এই ডোনার আইডি ও ডোনার-সম্পর্কিত রেকর্ড মুছে যাবে — অ্যাকাউন্ট (যদি থাকে) অক্ষত থাকবে। সাধারণত স্থগিত করাই ভালো — মুছলে ফেরানো যায় না।",
+            desc:"এই ডোনার আইডি ও ডোনার-সম্পর্কিত রেকর্ড মুছে যাবে; একই ব্যক্তির লগইন অ্যাকাউন্ট (Firebase Authentication) যুক্ত থাকলে সেটিও মুছে যাবে। আলাদা/অমিল অ্যাকাউন্ট কখনোই মোছা হবে না। সাধারণত স্থগিত করাই ভালো — মুছলে ফেরানো যায় না।",
             ok:"মুছে ফেলুন",danger:true}))return;
-          /* নিরাপদ সার্ভার ডিলিট — শুধু Donor ID (scope "donor"); অ্যাকাউন্ট অক্ষত */
+          /* নিরাপদ সার্ভার ডিলিট (scope "donor") — সংশ্লিষ্ট লগইন অ্যাকাউন্টও
+             সার্ভারে যাচাই হয়ে মোছা হয়; আলাদা/অমিল অ্যাকাউন্ট স্পর্শ হয় না */
           const delResult=await deleteOneEntity(d,"donor").catch(e=>{
             console.warn("server delete:",d.id,e&&e.message);
             toast(describeDeletionFailure(d.name||d.id,
@@ -4990,8 +5069,9 @@ function initPage() {
             return {ok:false} as ReturnType<typeof deleteOneEntity> extends Promise<infer R>?R:never;
           });
           if(!delResult||!delResult.ok)return;
+          (delResult.warnings||[]).forEach(w=>toast(w,""));
           /* live listener-ই তালিকা ও পরিসংখ্যান আপডেট করে — কোনো reload নয় */
-          go(CUR,"donors");toast("ডোনার আইডি মুছে ফেলা হয়েছে — অ্যাকাউন্ট অক্ষত আছে","ok")}
+          go(CUR,"donors");toast(deletionMessage(delResult),"ok")}
       });
     }
   }
@@ -5180,11 +5260,11 @@ function initPage() {
     });
   }
 
-  /* সম্পূর্ণ অ্যাকাউন্ট ডিলিট — Realtime Database-এর সকল সংশ্লিষ্ট তথ্য
-     (Donor ID, UID, প্রোফাইল, অ্যাকাউন্ট, আবেদন) একই routine দিয়ে মোছা হয়
-     (src/lib/accountDelete.ts)। Firebase Authentication account শুধু নিজের
-     ক্ষেত্রে client SDK দিয়ে মোছা যায়; অন্য কারও হলে warning সহ জানানো হয়
-     (Cloud Function/Admin SDK ছাড়া ব্রাউজার থেকে তা সম্ভব নয়)। */
+  /* সম্পূর্ণ অ্যাকাউন্ট ডিলিট — Realtime Database-এর অ্যাকাউন্ট রেকর্ড
+     (users/admins/accounts) **এবং সংশ্লিষ্ট Firebase Authentication লগইন
+     অ্যাকাউন্ট** নিরাপদ server endpoint দিয়ে মোছা হয় (src/lib/accountDelete.ts
+     → server/deleteApi.ts + server/authAdmin.ts)। লগইন ডিলিট server-side
+     secret দিয়ে হয় — client-এ কোনো private key নেই। ডোনার আইডি অক্ষত থাকে। */
   async function deleteManagedAccount(uid){
     if(!can("access.manage")||String(uid)===String(ME.uid)){toast("নিজের অ্যাকাউন্ট মুছতে পারবেন না","er");return false}
     const a=DB.accounts.find(x=>String(x.uid)===String(uid));
@@ -5193,7 +5273,7 @@ function initPage() {
       toast("অ্যাকাউন্টের UID সঠিক নয় — ভুল তথ্য দিয়ে কিছু মোছা হবে না","er");return false;
     }
     if(!await confirmS({title:"অ্যাকাউন্ট মুছবেন?",
-      desc:`${a.name||a.email||uid}-এর Website/Firebase অ্যাকাউন্ট (users/accounts/admins রেকর্ড) স্থায়ীভাবে মুছে যাবে — ডোনার আইডি ও পাবলিক ডোনার তথ্য অক্ষত থাকবে। এটি ফেরানো যাবে না।`,
+      desc:`${a.name||a.email||uid}-এর Website/Firebase অ্যাকাউন্ট (users/accounts/admins রেকর্ড) এবং লগইন অ্যাকাউন্ট (Firebase Authentication) স্থায়ীভাবে মুছে যাবে — ডোনার আইডি ও পাবলিক ডোনার তথ্য অক্ষত থাকবে। এটি ফেরানো যাবে না।`,
       ok:"অ্যাকাউন্ট মুছুন",danger:true}))return false;
     try{
       /* Account ও Donor ID দুটি স্বাধীন entity — শুধু অ্যাকাউন্ট মোছা হয়
@@ -5203,9 +5283,9 @@ function initPage() {
         toast(`${a.name||a.email||uid}: ${deletionMessage(result)}`,"er");
         return false;
       }
-      await logAudit("অ্যাকাউন্ট মুছে ফেলা",`${a.name||a.email||uid} — ডোনার আইডি অক্ষত`,"access");
+      await logAudit("অ্যাকাউন্ট মুছে ফেলা",`${a.name||a.email||uid} — লগইন সহ (ডোনার আইডি অক্ষত)`,"access");
       (result.warnings||[]).forEach(w=>toast(w,""));
-      toast("অ্যাকাউন্ট মুছে ফেলা হয়েছে — ডোনার আইডি অক্ষত আছে","ok");
+      toast(deletionMessage(result),"ok");
       return true;
     }catch(e){
       console.warn("account deletion:",e&&e.message);

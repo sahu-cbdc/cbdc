@@ -9,6 +9,7 @@
 import { useEffect } from "react";
 import "../lib/store";
 import { initFirebase as initSharedFirebase, NODES } from "../lib/firebase";
+import { releaseEmailIdentity } from "../lib/identity";
 import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
 import {
   authErrorMessage,
@@ -3490,7 +3491,11 @@ function initPage() {
            (কোনো feature বন্ধ হয় না, ভুল অনুমতির চেষ্টাও হয় না)। */
         if(APPROVAL_SETTINGS.donorApproval===false && await isStaffUser(uid)){
           const district=a.district||districtOfArea(a.area);
-          const donorId=await nextDonorId();
+          /* ── ডুপ্লিকেট প্রতিরোধ: এই অ্যাকাউন্টের (uid) ডোনার রেকর্ড আগেই থাকলে
+             নতুন ডোনার আইডি তৈরি না করে সেটিকেই অনুমোদিত/আপডেট করা হয়। ── */
+          let existingOwn=null;
+          try{ existingOwn=await findBy(NODES.donors,"ownerUid",uid); }catch(_e){ existingOwn=null; }
+          const donorId=(existingOwn&&existingOwn.id)?String(existingOwn.id):await nextDonorId();
           const at=nowIso();
           await updatePaths({
             [`users/${uid}/name`]:a.name,[`users/${uid}/gender`]:a.gender,[`users/${uid}/dob`]:a.dob,
@@ -3501,8 +3506,12 @@ function initPage() {
             [`users/${uid}/available`]:true,[`users/${uid}/appliedAt`]:at,
             [`donors/${donorId}`]:{id:donorId,donorId,uid,ownerUid:uid,name:a.name,gender:a.gender,
               dob:a.dob,area:a.area,district,phone:a.phone,whatsapp:d.whatsapp,bloodGroup:d.bloodGroup,
-              lastDonationDate:d.lastDonation,donations:0,totalDonations:0,status:"approved",
-              available:true,verified:true,suspended:false,joined:at,createdAt:at,updatedAt:at}
+              lastDonationDate:d.lastDonation,
+              donations:(existingOwn&&Number(existingOwn.donations))||0,
+              totalDonations:(existingOwn&&Number(existingOwn.totalDonations))||0,
+              status:"approved",
+              available:true,verified:true,suspended:false,joined:(existingOwn&&existingOwn.joined)||at,
+              createdAt:(existingOwn&&existingOwn.createdAt)||at,updatedAt:at}
           });
           d.status="approved";d.is=true;d.donorId=donorId;
           await save();
@@ -4616,6 +4625,15 @@ function initPage() {
 
     // admins/{uid} — রোল রেকর্ড (যদি থাকে)
     try{ const staff=await getRow(NODES.admins, uid); if(staff) paths[`admins/${uid}`]=null; }catch(e){}
+
+    /* identityIndex/email — এই ইমেইলের দাবি ছাড়া হয়, যাতে ইমেইলটি ভবিষ্যতে
+       আবার নিবন্ধনযোগ্য থাকে (duplicate-প্রতিরোধী সূচি আটকে রাখে না)। */
+    try{
+      if(releaseEmailIdentity){
+        const claimEmail = String((userProfile&&userProfile.email)||user.email||"").trim();
+        if(claimEmail) await releaseEmailIdentity(claimEmail, uid);
+      }
+    }catch(e){ console.warn("identity release:", e&&e.message); }
 
     /* ৩. RTDB সব একসাথে atomic মুছুন — এখানে সফল হলে তবেই Auth account delete হবে */
     if(Object.keys(paths).length) await updatePaths(paths);

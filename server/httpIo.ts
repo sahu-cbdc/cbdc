@@ -1,22 +1,27 @@
 /**
- * CBDC — server deletion endpoint-এর HTTP I/O (Cloudflare Worker + Vite dev)
+ * CBDC — server deletion/merge endpoint-এর HTTP I/O (Cloudflare Worker + Vite dev)
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * `server/deleteApi.ts`-এর `DeleteIo`-এর বাস্তব বাস্তবায়ন:
+ * `server/deleteApi.ts` / `server/dedupeApi.ts` / `server/resolveLegacy.ts`-এর
+ * I/O বাস্তবায়ন:
  *
  *   • **Firebase Identity Toolkit** (`accounts:lookup`) — client-এর ID token
- *     যাচাই। শুধু public web API key লাগে (client bundle-এ থাকা একই মান) —
- *     কোনো private key/service-account নেই।
- *   • **Realtime Database REST** — প্রতিটি read/write client-এর ID token দিয়ে
- *     (`?auth=<idToken>`), তাই **RTDB Security Rules-ই** দ্বিতীয় স্তরের সুরক্ষা:
- *     শুধু অ্যাডমিনদের নোড/লেখার অনুমতি আছে। deleteApi-র ভূমিকা যাচাইয়ের পরে
- *     production-এ এটাই চূড়ান্ত gate।
+ *     যাচাই। শুধু public web API key লাগে (client bundle-এ থাকা একই মান)।
+ *   • **Realtime Database REST** — admin-স্কোপের কাজে (delete/dedupe) caller-এর
+ *     **অ্যাডমিন ID token** (`?auth=<idToken>`) — তাই RTDB Security Rules-ই
+ *     চূড়ান্ত gate।
+ *   • **Privileged RTDB REST** (legacy-merge) — সাধারণ ব্যবহারকারীর নিজের ইমেইলের
+ *     পুরোনো রেকর্ড মেলাতে সার্ভারের service-account access token
+ *     (`?access_token=`) লাগে — সেটি **শুধুই সার্ভারের secret**, ক্লায়েন্টে কখনো
+ *     যায় না। secret না থাকলে স্পষ্ট বার্তায় ব্যর্থ হয় (কিছুই ভাঙে না)।
  *
- * কোনো Firebase Admin SDK / service-account JSON / private key এই রিপো-র
- * কোথাও নেই — এটাই এই ডিজাইনের মূল নিরাপত্তা প্রতিশ্রুতি।
+ * কোনো Firebase Admin SDK / service-account JSON এই repo-তে commit হয় না —
+ * Worker secret (`wrangler secret put`) বা dev `.env`-এ থাকে।
  */
 
 import { ApiError, type DeleteIo } from "./deleteApi";
+import type { ResolveLegacyIo } from "./resolveLegacy";
+import { createAuthDeleter, parseServiceAccount, fetchGoogleAccessToken, type ServiceAccount } from "./authAdmin";
 
 const IDENTITY_TOOLKIT = "https://identitytoolkit.googleapis.com/v1/accounts:lookup";
 
@@ -24,17 +29,24 @@ const IDENTITY_TOOLKIT = "https://identitytoolkit.googleapis.com/v1/accounts:loo
 const DEFAULT_FIREBASE_API_KEY = "AIzaSyBxUlGig2NtQLf6tZMRwK6xxzjScNIqbrM";
 const DEFAULT_FIREBASE_DATABASE_URL =
   "https://chokbazarbloodclub-69d5f-default-rtdb.firebaseio.com";
+/** public project id — client config-এর মতোই; service account-এর project_id থাকলে এটি override হয়। */
+const DEFAULT_FIREBASE_PROJECT_ID = "chokbazarbloodclub-69d5f";
 
 type HttpEnv = {
   FIREBASE_API_KEY?: string;
   FIREBASE_DATABASE_URL?: string;
+  /** 🔐 শুধুই সার্ভারের secret — service-account JSON (অথবা base64)।
+      Worker: `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT`;
+      dev: `.env` → `FIREBASE_SERVICE_ACCOUNT=...`। ক্লায়েন্টে কখনো যায় না। */
+  FIREBASE_SERVICE_ACCOUNT?: string;
+  FIREBASE_PROJECT_ID?: string;
 };
 
 async function verifyIdentityLookup(
   idToken: string,
   apiKey: string,
   fetchImpl: typeof fetch,
-): Promise<{ uid: string } | null> {
+): Promise<{ uid: string; email: string } | null> {
   const url = `${IDENTITY_TOOLKIT}?key=${encodeURIComponent(apiKey)}`;
   const res = await fetchImpl(url, {
     method: "POST",
@@ -45,7 +57,7 @@ async function verifyIdentityLookup(
   const data = (await res.json().catch(() => null)) as any;
   const user = data?.users?.[0];
   const uid = String(user?.localId ?? user?.uid ?? "").trim();
-  return uid ? { uid } : null;
+  return uid ? { uid, email: String(user?.email ?? "").trim() } : null;
 }
 
 /** RTDB REST — GET; ৪০৩ হলে অ্যাডমিন নয় (rules) বোঝায়। */
@@ -72,7 +84,7 @@ async function restGet(
 async function restApply(
   base: string,
   token: string,
-  paths: Record<string, null>,
+  paths: Record<string, unknown>,
   fetchImpl: typeof fetch,
 ): Promise<boolean> {
   const list = Object.keys(paths);
@@ -112,6 +124,70 @@ export function makeHttpIo(env: HttpEnv, idToken: string, fetchImpl: typeof fetc
     verifyToken: (token: string) => verifyIdentityLookup(token, apiKey, fetchImpl),
     get: (path: string) => restGet(base, idToken, path, fetchImpl),
     list: (node: string) => restGet(base, idToken, node, fetchImpl),
-    apply: (paths: Record<string, null>) => restApply(base, idToken, paths, fetchImpl),
+    apply: (paths: Record<string, unknown>) => restApply(base, idToken, paths, fetchImpl),
+    /* 🔐 লগইন (Firebase Authentication) অ্যাকাউন্ট মোছা — শুধু server-side secret;
+       secret না থাকলে "unconfigured" (RTDB ডিলিট তখনও নিরাপদে চলে, warning সহ)। */
+    deleteAuthUser: createAuthDeleter(env as Record<string, unknown>, DEFAULT_FIREBASE_PROJECT_ID, fetchImpl),
   };
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Privileged I/O (legacy-merge) — service-account access token, শুধু সার্ভারে
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+function privUrl(base: string, path: string, sa: ServiceAccount, fetchImpl: typeof fetch): Promise<string> {
+  return fetchGoogleAccessToken(sa, fetchImpl).then(
+    (token) => `${base}/${path}.json?access_token=${encodeURIComponent(token)}`,
+  );
+}
+
+/**
+ * `ResolveLegacyIo` — caller যাচাই public API key দিয়ে, ডেটা অ্যাক্সেস
+ * service-account token দিয়ে। secret না থাকলে প্রতিটি অপারেশন স্পষ্ট বার্তায়
+ * ব্যর্থ হয় (ক্লায়েন্ট তখন duplicate না বানিয়ে অ্যাডমিন dedupe-এর নির্দেশনা দেখায়)।
+ */
+export function makePrivilegedIo(env: HttpEnv, apiKey?: string, fetchImpl: typeof fetch = fetch) {
+  /* public web API key (client bundle-এ থাকা একই মান) — শুধু caller-যাচাইয়ে;
+     ডেটা অ্যাক্সেসে ব্যবহৃত হয় service-account token (আলাদা secret)। */
+  const webKey = String(apiKey || env.FIREBASE_API_KEY || DEFAULT_FIREBASE_API_KEY).trim();
+  const base = String(env.FIREBASE_DATABASE_URL || DEFAULT_FIREBASE_DATABASE_URL)
+    .trim()
+    .replace(/\/+$/, "");
+  const sa = parseServiceAccount((env as Record<string, unknown>).FIREBASE_SERVICE_ACCOUNT);
+
+  const io: ResolveLegacyIo & { configured: boolean } = {
+    configured: !!sa,
+    verifyCaller: (token) => verifyIdentityLookup(token, webKey, fetchImpl),
+    get: async (path) => {
+      if (!sa) throw new ApiError(503, UNCONFIGURED_MSG);
+      const url = await privUrl(base, path, sa, fetchImpl);
+      const res = await fetchImpl(url, { method: "GET" }).catch(() => null);
+      if (!res) throw new ApiError(502, "Realtime Database-এ সংযোগ করা যায়নি।");
+      if (!res.ok) throw new ApiError(502, `Realtime Database read ব্যর্থ (${res.status})`);
+      return await res.json().catch(() => null);
+    },
+    list: (node) => io.get(node),
+    apply: async (paths) => {
+      if (!sa) return false;
+      const list = Object.keys(paths);
+      if (!list.length) return true;
+      try {
+        const url = await privUrl(base, "", sa, fetchImpl);
+        const res = await fetchImpl(url, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(paths),
+        }).catch(() => null);
+        return !!(res && res.ok);
+      } catch {
+        return false;
+      }
+    },
+  };
+  return io;
+}
+
+const UNCONFIGURED_MSG =
+  "সার্ভারে service-account secret (FIREBASE_SERVICE_ACCOUNT) কনফিগার করা নেই — " +
+  "পুরোনো রেকর্ড স্বয়ংক্রিয়ভাবে মেলানো সম্ভব নয়। অ্যাডমিন প্যানেলের " +
+  "'ডুপ্লিকেট যাচাই ও পরিষ্কার' ব্যবহার করুন।";

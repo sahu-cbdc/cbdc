@@ -28,6 +28,141 @@
 
 import { getAuthInstance } from "./firebase";
 import { appBase } from "./router";
+import { toBanglaDigits } from "./age";
+
+/* ═══════════════════════════════════════════════════════════════════
+   Duplicate প্রতিরোধ — legacy মেলানো ও অ্যাডমিন স্ক্যান
+   ═══════════════════════════════════════════════════════════════════ */
+
+/**
+ * Google লগইনে ইমেইলের পুরোনো (legacy) users রেকর্ড অন্য UID-এ থাকলে
+ * duplicate না বানিয়ে সেটি বর্তমান UID-এ নিরাপদে মেলানো — সার্ভারের
+ * secure endpoint-এ (নিজের ইমেইলের রেকর্ডই শুধু মেলানো যায়)।
+ */
+export async function resolveLegacyAccount(): Promise<{
+  ok: boolean;
+  merged: boolean;
+  uid: string;
+  email: string;
+  profile?: Record<string, any>;
+  donorId?: string;
+  /** merge সম্ভব নয় (সার্ভার কনফিগারেশন নেই) — duplicate তৈরি করা যাবে না */
+  unconfigured?: boolean;
+  error?: string;
+}> {
+  try {
+    const auth = getAuthInstance();
+    const user = (auth?.currentUser ?? null) as any;
+    if (!user || typeof user.getIdToken !== "function") {
+      return { ok: false, merged: false, uid: "", email: "", error: "লগইন করা নেই।" };
+    }
+    const token = await user.getIdToken();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    let res: Response | null = null;
+    try {
+      res = await fetch(`${appBase()}api/account/resolve-legacy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({}),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data || data.ok === false) {
+      const message = String((data && data.error) || `সার্ভার অনুরোধ ব্যর্থ (HTTP ${res ? res.status : "—"})`);
+      return {
+        ok: false, merged: false, uid: "", email: "",
+        unconfigured: res.status === 503 || /কনফিগার/i.test(message),
+        error: message,
+      };
+    }
+    return {
+      ok: true,
+      merged: data.merged === true,
+      uid: String(data.uid || ""),
+      email: String(data.email || ""),
+      profile: (data.profile && typeof data.profile === "object") ? data.profile : undefined,
+      donorId: data.donorId ? String(data.donorId) : undefined,
+    };
+  } catch (e) {
+    const message = (e as Error)?.message || "পুরোনো রেকর্ড মেলানো যায়নি।";
+    return {
+      ok: false, merged: false, uid: "", email: "",
+      unconfigured: /কনফিগার/i.test(message),
+      error: message.includes("abort") ? "অনুরোধের সময়সীমা পেরিয়ে গেছে।" : message,
+    };
+  }
+}
+
+export type DedupeGroupInfo = {
+  kind: "user-email" | "donor-owner" | "donor-phone";
+  key: string;
+  keep: { id: string; name: string; email?: string; donorId?: string; uid?: string };
+  remove: Array<{ id: string; name: string; email?: string; uid?: string }>;
+  filledFields: string[];
+};
+
+export type DedupeReportInfo = {
+  ok: boolean;
+  applied: boolean;
+  scanned: { users: number; donors: number; emailsIndexed: number };
+  groups: DedupeGroupInfo[];
+  notes: string[];
+  changedPaths: number;
+  error?: string;
+};
+
+/**
+ * অ্যাডমিন duplicate স্ক্যান — প্রথমে preview (apply:false), নিশ্চিত হলে
+ * apply:true। সার্ভারে অ্যাডমিন যাচাই হয়; ফল RTDB-তে লেখা হলে live
+ * listener-ই সব প্যানেলে realtime আপডেট করে।
+ */
+export async function runDedupeScan(apply: boolean): Promise<DedupeReportInfo> {
+  const fail = (error: string): DedupeReportInfo => ({
+    ok: false, applied: false, scanned: { users: 0, donors: 0, emailsIndexed: 0 },
+    groups: [], notes: [], changedPaths: 0, error,
+  });
+  try {
+    const auth = getAuthInstance();
+    const user = (auth?.currentUser ?? null) as any;
+    if (!user || typeof user.getIdToken !== "function") return fail("লগইন করা নেই — অ্যাডমিন হিসেবে লগইন করুন।");
+    const token = await user.getIdToken();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30000);
+    let res: Response | null = null;
+    try {
+      res = await fetch(`${appBase()}api/admin/dedupe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ apply }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data || data.ok === false) {
+      return fail(String((data && data.error) || `সার্ভার অনুরোধ ব্যর্থ (HTTP ${res ? res.status : "—"})`));
+    }
+    return {
+      ok: true,
+      applied: data.applied === true,
+      scanned: {
+        users: Number(data.scanned?.users) || 0,
+        donors: Number(data.scanned?.donors) || 0,
+        emailsIndexed: Number(data.scanned?.emailsIndexed) || 0,
+      },
+      groups: Array.isArray(data.groups) ? data.groups : [],
+      notes: Array.isArray(data.notes) ? data.notes.map(String) : [],
+      changedPaths: Number(data.changedPaths) || 0,
+    };
+  } catch (e) {
+    return fail((e as Error)?.message || "স্ক্যান করা যায়নি।");
+  }
+}
 
 /** দুটি স্বাধীন entity — Account ও Donor ID। */
 export type DeleteScope = "account" | "donor";
@@ -50,8 +185,10 @@ export type DonorDeletionResult = {
   name: string;
   /** Realtime Database অংশ */
   rtdb: "ok" | "failed" | "skipped";
-  /** Firebase Authentication অংশ — সার্ভারে private key নেই, ফলে skipped */
+  /** সংশ্লিষ্ট লগইন (Firebase Authentication) অংশ — সার্ভারের secret দিয়ে মোছা হয় */
   auth: "deleted" | "missing" | "failed" | "skipped";
+  /** যে uid-এর লগইন অ্যাকাউন্ট মোছা/বাদ হলো (খালি = লিংকড অ্যাকাউন্ট নেই) */
+  authUid?: string;
   /** সার্ভার endpoint-এর অবস্থা */
   server: "ok" | "failed" | "not-possible";
   steps: DeletionStep[];
@@ -168,7 +305,12 @@ function normalize(data: any, scope: DeleteScope, donorId: string, uid: string, 
     uid: String(data.uid || uid),
     name: String(data.name || name),
     rtdb: data.rtdb === "ok" ? "ok" : data.rtdb === "failed" ? "failed" : "skipped",
-    auth: data.auth === "deleted" ? "deleted" : data.auth === "failed" ? "failed" : "skipped",
+    auth:
+      data.auth === "deleted" ? "deleted"
+      : data.auth === "failed" ? "failed"
+      : data.auth === "missing" ? "missing"
+      : "skipped",
+    authUid: String(data.authUid || ""),
     server: data.server === "ok" ? "ok" : "failed",
     steps: Array.isArray(data.steps) ? data.steps : [],
     failed,
@@ -203,17 +345,63 @@ function clientFailure(scope: DeleteScope, donorId: string, uid: string, name: s
    বার্তা — সাফল্য/ব্যর্থতা (ডোনার আইডি ও অ্যাকাউন্ট আলাদা)
    ═══════════════════════════════════════════════════════════════════ */
 
-/** একক entity — সাফল্য বা ব্যর্থতার বাংলা বার্তা। */
+/**
+ * একক entity — সাফল্য বা ব্যর্থতার বাংলা বার্তা।
+ * সাফল্যে জানানো হয় লগইন (Firebase Authentication) অংশের অবস্থাসহ:
+ *   deleted  → লগইন অ্যাকাউন্টসহ সম্পূর্ণ মুছেছে
+ *   missing  → মুছেছে; সংশ্লিষ্ট কোনো লগইন ছিলই না
+ *   skipped  → মুছেছে; লগইন মোছা হয়নি (সার্ভারে secret কনফিগার নেই / নিজের রেকর্ড)
+ *   failed   → সাফল্য নয় — নিচের ব্যর্থতার শাখায় যায়
+ */
 export function deletionMessage(result: DonorDeletionResult): string {
   const isAccount = result.scope === "account";
   if (result.ok) {
+    const authPart =
+      result.auth === "deleted"
+        ? "লগইন অ্যাকাউন্ট (Firebase Authentication) সহ সম্পূর্ণ মুছে গেছে"
+        : result.auth === "missing"
+          ? "সংশ্লিষ্ট কোনো লগইন অ্যাকাউন্ট ছিল না — তাই কোনো লগইন মোছা হয়নি"
+          : result.auth === "failed"
+            ? "লগইন অ্যাকাউন্ট মোছা যায়নি"
+            : "লগইন অ্যাকাউন্ট মোছা হয়নি — সার্ভার কনফিগারেশন প্রয়োজন";
     return isAccount
-      ? "অ্যাকাউন্ট সফলভাবে মুছে ফেলা হয়েছে — ডোনার আইডি অক্ষত আছে"
-      : "ডোনার আইডি সফলভাবে মুছে ফেলা হয়েছে — অ্যাকাউন্ট অক্ষত আছে";
+      ? `অ্যাকাউন্ট সফলভাবে মুছে ফেলা হয়েছে — ${authPart}; ডোনার আইডি অক্ষত আছে`
+      : `ডোনার আইডি সফলভাবে মুছে ফেলা হয়েছে — ${authPart}`;
   }
   if (result.error) return result.error;
   const detail = result.failed.find((f) => f.error)?.error;
   return `${isAccount ? "অ্যাকাউন্ট" : "ডোনার আইডি"} মুছে ফেলা যায়নি${detail ? ` — ${detail}` : "।"}`;
+}
+
+/**
+ * একাধিক (bulk) সফল entity-র বাংলা সারসংক্ষেপ — লগইন অ্যাকাউন্ট অংশের
+ * অবস্থা অনুযায়ী সঠিক বার্তা (কোনো মিথ্যে সাফল্য নয়)।
+ */
+export function bulkDeletionMessage(results: DonorDeletionResult[]): string {
+  const n = Math.max(1, results.length);
+  const isAccount = results[0]?.scope === "account";
+  const what = isAccount ? "অ্যাকাউন্ট" : "ডোনার আইডি";
+  const title = n > 1 ? `নির্বাচিত ${toBanglaDigits(n)}টি ${what} মুছে ফেলা হয়েছে` : `${what} মুছে ফেলা হয়েছে`;
+  const deleted = results.filter((r) => r.auth === "deleted").length;
+  const missing = results.filter((r) => r.auth === "missing").length;
+  const skipped = results.filter((r) => r.auth === "skipped").length;
+  let authTxt: string;
+  if (deleted && !skipped) {
+    authTxt = isAccount
+      ? " — লগইন (Firebase Authentication) সহ; ডোনার আইডি অক্ষত আছে"
+      : " — সংশ্লিষ্ট লগইন অ্যাকাউন্টসহ (Firebase Authentication)";
+  } else if (!deleted && missing && !skipped) {
+    authTxt = isAccount
+      ? " — সংশ্লিষ্ট কোনো লগইন অ্যাকাউন্ট ছিল না; ডোনার আইডি অক্ষত আছে"
+      : " — সংশ্লিষ্ট কোনো লগইন অ্যাকাউন্ট ছিল না";
+  } else if (skipped && deleted) {
+    authTxt = ` — ${toBanglaDigits(deleted)} জনের লগইন মুছেছে, ${toBanglaDigits(skipped)} জনের মোছা হয়নি (সার্ভার কনফিগারেশন দেখুন)`;
+  } else if (skipped) {
+    authTxt = " — লগইন অ্যাকাউন্ট মোছা হয়নি (সার্ভার কনফিগারেশন দেখুন)";
+  } else {
+    authTxt = "";
+  }
+  return title + authTxt;
 }
 
 /** পুরোনো API-র সাথে সামঞ্জস্য — ব্যর্থতার সারসংক্ষেপ। */

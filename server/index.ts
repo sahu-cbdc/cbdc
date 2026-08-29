@@ -19,7 +19,9 @@
  */
 
 import { handleAdminEntityDelete, type ServerDeleteResult } from "./deleteApi";
-import { makeHttpIo } from "./httpIo";
+import { handleAdminDedupe } from "./dedupeApi";
+import { handleResolveLegacy } from "./resolveLegacy";
+import { makeHttpIo, makePrivilegedIo } from "./httpIo";
 
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -35,9 +37,12 @@ function jsonResponse(payload: unknown, status = 200): Response {
 export default {
   async fetch(request: Request, env: any): Promise<Response> {
     const url = new URL(request.url);
-    const isApi = url.pathname.replace(/\/+$/, "").endsWith("/api/admin/delete");
+    const path = url.pathname.replace(/\/+$/, "");
+    const isDelete = path.endsWith("/api/admin/delete");
+    const isDedupe = path.endsWith("/api/admin/dedupe");
+    const isResolve = path.endsWith("/api/account/resolve-legacy");
 
-    if (!isApi) {
+    if (!isDelete && !isDedupe && !isResolve) {
       /* static assets (Vite build) — SPA fallback সহ */
       return env.ASSETS && typeof env.ASSETS.fetch === "function"
         ? env.ASSETS.fetch(request)
@@ -58,10 +63,23 @@ export default {
     }
 
     try {
-      const result: ServerDeleteResult = await handleAdminEntityDelete(
-        { ...body, idToken },
-        makeHttpIo(env, idToken),
-      );
+      if (isDelete) {
+        const result: ServerDeleteResult = await handleAdminEntityDelete(
+          { ...body, idToken },
+          makeHttpIo(env, idToken),
+        );
+        return jsonResponse(result);
+      }
+      if (isDedupe) {
+        const result = await handleAdminDedupe(
+          { apply: body.apply === true, idToken },
+          makeHttpIo(env, idToken),
+        );
+        return jsonResponse(result);
+      }
+      /* legacy-merge — সাধারণ (লগইন করা) ব্যবহারকারীর নিজের পুরোনো রেকর্ড */
+      const privileged = makePrivilegedIo(env);
+      const result = await handleResolveLegacy({ idToken }, privileged);
       return jsonResponse(result);
     } catch (e) {
       const status = Number((e as any)?.status) || 500;
