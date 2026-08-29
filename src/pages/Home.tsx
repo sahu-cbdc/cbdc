@@ -5019,37 +5019,34 @@ function initPage() {
           form.reset();
           clearFormErrors(form);
           $("#suAgree").checked = false;
-          const _wasGoogle = isGoogle;
           setSignupGoogleMode(null);
           message.className = "hidden"; message.textContent = "";
-          if(_wasGoogle){
-            // Google দিয়ে প্রথমবার — সরাসরি Doner Panel (কোনো error নয়, clean form থেকে)
-            hideAppModal();
-            setPendingGoogleProfile(null);
-            const rr2 = await resolveRole({uid, email:o.email, name:o.name});
-            finishLogin({email:o.email, name:o.name, role:rr2.role, permissions:rr2.permissions, photo:photoURL, uid});
-          } else {
-            // Manual account creation: সরাসরি Doner Panel নয় — Login পেজে নিয়ে যাওয়া + 3s popup
-            try{
-              const {signOut} = await import("firebase/auth");
-              if(auth && auth.currentUser) await signOut(auth);
-            }catch(e){}
-            setPendingGoogleProfile(null);
-            /* Login ফর্মে ইমেইল আগে থেকেই বসিয়ে রাখি — popup বন্ধ হলে যেন ব্যবহারকারী
-               সহজেই লগইন করতে পারে। */
-            const _loginEmail = document.getElementById("username");
-            if(_loginEmail) _loginEmail.value = o.email || "";
-            /* শুধু ১টি popup: loading popup-এর ভেতরেই text বদলে ছোট success দেখাই —
-               Login পেজে আলাদা success message আর দেখানো হয় না। */
-            const _loginMsg = document.getElementById("loginMessage");
-            if(_loginMsg){ _loginMsg.className = "hidden"; _loginMsg.textContent = ""; }
-            showView("login");
-            try{
-              showAppMessage("অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে। অনুগ্রহ করে ইউজারনেম অথবা ইমেইল এবং পাসওয়ার্ড দিয়ে লগইন করুন।", false, "অ্যাকাউন্ট তৈরি হয়েছে!");
-              /* popup ৩ সেকেন্ড পর নিজে থেকে বন্ধ হবে — Login পেজটি ইতিমধ্যে তার পেছনে আছে */
-              setTimeout(()=>{ try{ hideAppModal(); }catch(e){} }, 3000);
-            }catch(e){ hideAppModal(); toast("অ্যাকাউন্ট তৈরি হয়েছে — এখন লগইন করুন"); }
-          }
+          /* Email/Password ও Google — দুটোতেই একই সফল flow:
+             Firebase Auth + RTDB Save → Success Popup → Auto Hide → Login Page →
+             Email Auto-Fill → ব্যবহারকারী নিজে লগইন করবে।
+             (Google সেশন থাকলেও signOut করা হয় — ইউজার নিজে লগইন করবে।) */
+          try{
+            const {signOut} = await import("firebase/auth");
+            if(auth && auth.currentUser) await signOut(auth);
+          }catch(e){}
+          setPendingGoogleProfile(null);
+          /* Login ফর্মে শুধু ইমেইল auto-fill — পাসওয়ার্ড কখনো auto-fill/save হয় না। */
+          const _loginEmail = document.getElementById("username");
+          if(_loginEmail) _loginEmail.value = o.email || "";
+          const _loginMsg = document.getElementById("loginMessage");
+          if(_loginMsg){ _loginMsg.className = "hidden"; _loginMsg.textContent = ""; }
+          showView("login");
+          try{
+            showAppMessage(
+              isGoogle
+                ? "অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে। লগইন পেজে 'Google দিয়ে লগইন করুন' চেপে প্রবেশ করুন।"
+                : "অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে। অনুগ্রহ করে ইউজারনেম অথবা ইমেইল এবং পাসওয়ার্ড দিয়ে লগইন করুন।",
+              false,
+              "অ্যাকাউন্ট তৈরি হয়েছে!"
+            );
+            /* popup ৩ সেকেন্ড পর নিজে থেকে বন্ধ হবে — Login পেজটি ইতিমধ্যে তার পেছনে আছে */
+            setTimeout(()=>{ try{ hideAppModal(); }catch(e){} }, 3000);
+          }catch(e){ hideAppModal(); toast("অ্যাকাউন্ট তৈরি হয়েছে — এখন লগইন করুন"); }
         }catch(err){
           hideAppModal();
           /* আসল error code/message কনসোলে — UI-তে কখনো raw Firebase টেক্সট নয়। */
