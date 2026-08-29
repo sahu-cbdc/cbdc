@@ -17,6 +17,7 @@
  */
 
 import { ApiError, type DeleteIo } from "./deleteApi";
+import { createAuthDeleter } from "./authAdmin";
 
 const IDENTITY_TOOLKIT = "https://identitytoolkit.googleapis.com/v1/accounts:lookup";
 
@@ -24,10 +25,17 @@ const IDENTITY_TOOLKIT = "https://identitytoolkit.googleapis.com/v1/accounts:loo
 const DEFAULT_FIREBASE_API_KEY = "AIzaSyBxUlGig2NtQLf6tZMRwK6xxzjScNIqbrM";
 const DEFAULT_FIREBASE_DATABASE_URL =
   "https://chokbazarbloodclub-69d5f-default-rtdb.firebaseio.com";
+/** public project id — client config-এর মতোই; service account-এর project_id থাকলে এটি override হয়। */
+const DEFAULT_FIREBASE_PROJECT_ID = "chokbazarbloodclub-69d5f";
 
 type HttpEnv = {
   FIREBASE_API_KEY?: string;
   FIREBASE_DATABASE_URL?: string;
+  /** 🔐 শুধুই সার্ভারের secret — service-account JSON (অথবা base64)।
+      Worker: `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT`;
+      dev: `.env` → `FIREBASE_SERVICE_ACCOUNT=...`। ক্লায়েন্টে কখনো যায় না। */
+  FIREBASE_SERVICE_ACCOUNT?: string;
+  FIREBASE_PROJECT_ID?: string;
 };
 
 async function verifyIdentityLookup(
@@ -113,5 +121,8 @@ export function makeHttpIo(env: HttpEnv, idToken: string, fetchImpl: typeof fetc
     get: (path: string) => restGet(base, idToken, path, fetchImpl),
     list: (node: string) => restGet(base, idToken, node, fetchImpl),
     apply: (paths: Record<string, null>) => restApply(base, idToken, paths, fetchImpl),
+    /* 🔐 লগইন (Firebase Authentication) অ্যাকাউন্ট মোছা — শুধু server-side secret;
+       secret না থাকলে "unconfigured" (RTDB ডিলিট তখনও নিরাপদে চলে, warning সহ)। */
+    deleteAuthUser: createAuthDeleter(env as Record<string, unknown>, DEFAULT_FIREBASE_PROJECT_ID, fetchImpl),
   };
 }

@@ -28,6 +28,7 @@
 
 import { getAuthInstance } from "./firebase";
 import { appBase } from "./router";
+import { toBanglaDigits } from "./age";
 
 /** দুটি স্বাধীন entity — Account ও Donor ID। */
 export type DeleteScope = "account" | "donor";
@@ -50,8 +51,10 @@ export type DonorDeletionResult = {
   name: string;
   /** Realtime Database অংশ */
   rtdb: "ok" | "failed" | "skipped";
-  /** Firebase Authentication অংশ — সার্ভারে private key নেই, ফলে skipped */
+  /** সংশ্লিষ্ট লগইন (Firebase Authentication) অংশ — সার্ভারের secret দিয়ে মোছা হয় */
   auth: "deleted" | "missing" | "failed" | "skipped";
+  /** যে uid-এর লগইন অ্যাকাউন্ট মোছা/বাদ হলো (খালি = লিংকড অ্যাকাউন্ট নেই) */
+  authUid?: string;
   /** সার্ভার endpoint-এর অবস্থা */
   server: "ok" | "failed" | "not-possible";
   steps: DeletionStep[];
@@ -168,7 +171,12 @@ function normalize(data: any, scope: DeleteScope, donorId: string, uid: string, 
     uid: String(data.uid || uid),
     name: String(data.name || name),
     rtdb: data.rtdb === "ok" ? "ok" : data.rtdb === "failed" ? "failed" : "skipped",
-    auth: data.auth === "deleted" ? "deleted" : data.auth === "failed" ? "failed" : "skipped",
+    auth:
+      data.auth === "deleted" ? "deleted"
+      : data.auth === "failed" ? "failed"
+      : data.auth === "missing" ? "missing"
+      : "skipped",
+    authUid: String(data.authUid || ""),
     server: data.server === "ok" ? "ok" : "failed",
     steps: Array.isArray(data.steps) ? data.steps : [],
     failed,
@@ -203,17 +211,63 @@ function clientFailure(scope: DeleteScope, donorId: string, uid: string, name: s
    বার্তা — সাফল্য/ব্যর্থতা (ডোনার আইডি ও অ্যাকাউন্ট আলাদা)
    ═══════════════════════════════════════════════════════════════════ */
 
-/** একক entity — সাফল্য বা ব্যর্থতার বাংলা বার্তা। */
+/**
+ * একক entity — সাফল্য বা ব্যর্থতার বাংলা বার্তা।
+ * সাফল্যে জানানো হয় লগইন (Firebase Authentication) অংশের অবস্থাসহ:
+ *   deleted  → লগইন অ্যাকাউন্টসহ সম্পূর্ণ মুছেছে
+ *   missing  → মুছেছে; সংশ্লিষ্ট কোনো লগইন ছিলই না
+ *   skipped  → মুছেছে; লগইন মোছা হয়নি (সার্ভারে secret কনফিগার নেই / নিজের রেকর্ড)
+ *   failed   → সাফল্য নয় — নিচের ব্যর্থতার শাখায় যায়
+ */
 export function deletionMessage(result: DonorDeletionResult): string {
   const isAccount = result.scope === "account";
   if (result.ok) {
+    const authPart =
+      result.auth === "deleted"
+        ? "লগইন অ্যাকাউন্ট (Firebase Authentication) সহ সম্পূর্ণ মুছে গেছে"
+        : result.auth === "missing"
+          ? "সংশ্লিষ্ট কোনো লগইন অ্যাকাউন্ট ছিল না — তাই কোনো লগইন মোছা হয়নি"
+          : result.auth === "failed"
+            ? "লগইন অ্যাকাউন্ট মোছা যায়নি"
+            : "লগইন অ্যাকাউন্ট মোছা হয়নি — সার্ভার কনফিগারেশন প্রয়োজন";
     return isAccount
-      ? "অ্যাকাউন্ট সফলভাবে মুছে ফেলা হয়েছে — ডোনার আইডি অক্ষত আছে"
-      : "ডোনার আইডি সফলভাবে মুছে ফেলা হয়েছে — অ্যাকাউন্ট অক্ষত আছে";
+      ? `অ্যাকাউন্ট সফলভাবে মুছে ফেলা হয়েছে — ${authPart}; ডোনার আইডি অক্ষত আছে`
+      : `ডোনার আইডি সফলভাবে মুছে ফেলা হয়েছে — ${authPart}`;
   }
   if (result.error) return result.error;
   const detail = result.failed.find((f) => f.error)?.error;
   return `${isAccount ? "অ্যাকাউন্ট" : "ডোনার আইডি"} মুছে ফেলা যায়নি${detail ? ` — ${detail}` : "।"}`;
+}
+
+/**
+ * একাধিক (bulk) সফল entity-র বাংলা সারসংক্ষেপ — লগইন অ্যাকাউন্ট অংশের
+ * অবস্থা অনুযায়ী সঠিক বার্তা (কোনো মিথ্যে সাফল্য নয়)।
+ */
+export function bulkDeletionMessage(results: DonorDeletionResult[]): string {
+  const n = Math.max(1, results.length);
+  const isAccount = results[0]?.scope === "account";
+  const what = isAccount ? "অ্যাকাউন্ট" : "ডোনার আইডি";
+  const title = n > 1 ? `নির্বাচিত ${toBanglaDigits(n)}টি ${what} মুছে ফেলা হয়েছে` : `${what} মুছে ফেলা হয়েছে`;
+  const deleted = results.filter((r) => r.auth === "deleted").length;
+  const missing = results.filter((r) => r.auth === "missing").length;
+  const skipped = results.filter((r) => r.auth === "skipped").length;
+  let authTxt: string;
+  if (deleted && !skipped) {
+    authTxt = isAccount
+      ? " — লগইন (Firebase Authentication) সহ; ডোনার আইডি অক্ষত আছে"
+      : " — সংশ্লিষ্ট লগইন অ্যাকাউন্টসহ (Firebase Authentication)";
+  } else if (!deleted && missing && !skipped) {
+    authTxt = isAccount
+      ? " — সংশ্লিষ্ট কোনো লগইন অ্যাকাউন্ট ছিল না; ডোনার আইডি অক্ষত আছে"
+      : " — সংশ্লিষ্ট কোনো লগইন অ্যাকাউন্ট ছিল না";
+  } else if (skipped && deleted) {
+    authTxt = ` — ${toBanglaDigits(deleted)} জনের লগইন মুছেছে, ${toBanglaDigits(skipped)} জনের মোছা হয়নি (সার্ভার কনফিগারেশন দেখুন)`;
+  } else if (skipped) {
+    authTxt = " — লগইন অ্যাকাউন্ট মোছা হয়নি (সার্ভার কনফিগারেশন দেখুন)";
+  } else {
+    authTxt = "";
+  }
+  return title + authTxt;
 }
 
 /** পুরোনো API-র সাথে সামঞ্জস্য — ব্যর্থতার সারসংক্ষেপ। */

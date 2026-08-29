@@ -201,9 +201,17 @@ function cbdcDeleteApi(): Plugin {
             try {
               if (oversized) throw new Error("payload too large");
               const payload = JSON.parse(body || "{}");
+              /* 🔐 Firebase Authentication (লগইন) অ্যাকাউন্ট ডিলিটের server-side
+                 secret — শুধু dev-এ process.env/.env থেকে; client bundle-এ কখনো যায় না। */
               const result = await handleAdminEntityDelete(
                 { ...payload, idToken },
-                makeHttpIo({}, idToken),
+                makeHttpIo(
+                  {
+                    FIREBASE_SERVICE_ACCOUNT: process.env.FIREBASE_SERVICE_ACCOUNT || "",
+                    FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID || "",
+                  },
+                  idToken,
+                ),
               );
               send(res, 200, result);
             } catch (e) {

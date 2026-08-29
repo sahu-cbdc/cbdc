@@ -44,14 +44,19 @@ Hosting-এর জন্য `firebase.json`-এ rewrite (`** → /index.html`) �
 > 🔒 **নিরাপদ সার্ভার-সাইড ডিলিট** — Admin panel-এর ডোনার/অ্যাকাউন্ট ডিলিট
 > আর ব্রাউজার থেকে হয় না: client শুধু লগইন করা অ্যাডমিনের Firebase ID token-সহ
 > `POST api/admin/delete`-এ অনুরোধ পাঠায়। এই endpoint-টি **Cloudflare Worker**
-> (`server/index.ts`; `wrangler.jsonc`-এর `main`) অথবা `vite dev`-এ থাকে —
-> কোনো private key/Admin SDK নেই (শুধু public API key + RTDB Security Rules)।
-> তাই ডিলিট ফিচার চালাতে Worker-এ deploy করুন:
+> (`server/index.ts`; `wrangler.jsonc`-এর `main`) অথবা `vite dev`-এ থাকে।
+> ডিলিটে RTDB রেকর্ডের পাশাপাশি **সংশ্লিষ্ট Firebase Authentication (লগইন)
+> অ্যাকাউন্টও** মোছা হয় — তার জন্য একটি **server secret** লাগে (client-এ কোনো
+> private key নেই, repo-তেও নয়):
 >
 > ```bash
+> npx wrangler secret put FIREBASE_SERVICE_ACCOUNT   # service-account JSON
 > npm run build && npx wrangler deploy
 > ```
 >
+> নিরাপত্তা: লগইন অ্যাকাউন্ট মোছা হয় **ঠিক যাচাইকৃত লিংকড uid-টিই** — Donor ID
+> ও Account আলাদা/অমিল হলে সার্ভার কিছুই মোছে না। secret না দেওয়া থাকলে RTDB
+> ডিলিট চলে, লগইন মোছা হয় না — তখন UI-তে স্পষ্ট বাংলা warning দেখানো হয়।
 > শুধু static host (Firebase Hosting, Netlify, GitHub Pages …)-এ ডিলিট করলে
 > স্পষ্ট ত্রুটি বার্তা দেখানো হয় এবং কোনো ডেটা মোছা হয় না।
 
@@ -212,9 +217,10 @@ RTDB-এর পুরোনো URL/reference-ও update/remove হয়।
 - RTDB Security Rules: `users`/`admins`/`accounts`/`queue`/`audit`/`messages`/`reports`/`members`
   — সব private node-এ auth + staff/owner check; public read শুধু `donors`/`requests`/`gallery`/
   `notices`/`settings` (পাবলিক ওয়েবসাইটের জন্য)
-- ডোনার ডিলিট: RTDB-এর সব সংশ্লিষ্ট তথ্য সম্পূর্ণ মোছা হয়; Firebase Authentication account
-  নিজের হলে client SDK দিয়ে মোছা যায়, অন্য কারও হলে Firebase নিরাপত্তা নিয়মে তা ব্রাউজার থেকে
-  সম্ভব নয় — সেক্ষেত্রে স্পষ্ট warning দেখানো হয় (কোনো মিথ্যে সাফল্য নয়)
+- ডোনার/অ্যাকাউন্ট ডিলিট: RTDB-এর সব সংশ্লিষ্ট তথ্য **এবং সংশ্লিষ্ট Firebase Authentication
+  (লগইন) অ্যাকাউন্ট** নিরাপদ server endpoint দিয়ে মোছা হয় (server-side service-account
+  secret — client-এ কোনো private key নেই)। Donor ID ও Account আলাদা হলে ভুল অ্যাকাউন্ট
+  কখনো মোছা হয় না; লগইন ডিলিট ব্যর্থ হলে কিছুই মোছা হয় না (স্পষ্ট বাংলা বার্তা)
 - localStorage production data-এর উৎস নয় — RTDB-ই single source of truth (cache শুধু `vite dev`-এ)
 
 **Host-independent:** কোনো host-নির্দিষ্ট path/URL নেই। Root deploy-এ ডিফল্ট `base: "/"`;
