@@ -1,0 +1,289 @@
+/**
+ * CBDC — পুরোনো duplicate শনাক্ত ও নিরাপদে পরিষ্কার (শুধু অ্যাডমিন)
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *  `POST <base>api/admin/dedupe` — দুই ধাপে চলে:
+ *    ১. **Preview** (apply:false) — সব কিছু স্ক্যান করে শুধু রিপোর্ট দেয়, কিছুই
+ *       লেখে না। সাথে প্রতিটি অ্যাকাউন্টের ইমেইল identityIndex-এ **backfill** করে
+ *       (শুধু খালি দাবিগুলো) — যাতে ভবিষ্যতের signup/Google-login-এ পুরোনো
+ *       ইমেইলও ধরা পড়ে।
+ *    ২. **Apply** (apply:true) — নিশ্চিত করলে একই স্ক্যান থেকে তৈরি path-গুলো
+ *       এক atomic multi-path লেখায় মেলিয়ে/মুছে দেয়।
+ *
+ *  স্ক্যান কভারেজ:
+ *    • `users` — একই ইমেইলে একাধিক রেকর্ড (পুরোনো push-key যুগের legacy twin)।
+ *      ক্যানোনিকাল = Auth-UID-keyed রেকর্ড, নইলে সর্বশেষ updatedAt/createdAt;
+ *      ক্যানোনিকালের ফাঁকা field যমজ থেকে পূরণ হয়, যমজ মুছে যায়, সূচি → ক্যানোনিকাল।
+ *    • `donors` — একই ownerUid-এ একাধিক রেকর্ড (বারবার অনুমোদন/আবেদনের ফল)।
+ *      ক্যানোনিকাল = users/{owner}.donorId যেটাকে নির্দেশ করে, নইলে পুরোনোতম;
+ *      ফাঁকা field পূরণ হয়, বাকিগুলো মোছে যায়।
+ *    • রিপোর্ট-অনলি: ownerUid-বিহীন ডোনার রেকর্ডের একই phone (অটো-পরিবর্তন নয়)।
+ *
+ *  নিরাপত্তা: caller-এর Firebase ID token যাচাই + `admins/{uid}/role==='admin'`
+ *  — তারপর সব read/write **অ্যাডমিনের নিজের token-ই** (RTDB rules) দিয়ে হয়;
+ *  কোনো service-account/private key এখানে লাগে না। কোনো গ্রুপ খালি বা অস্পষ্ট
+ *  হলে সেটি স্পর্শ করা হয় না।
+ */
+
+import { ApiError, isAuthUid, type DeleteIo } from "./deleteApi";
+import { emailIndexPath } from "./identityKey";
+
+export type DedupeIo = {
+  verifyToken(idToken: string): Promise<{ uid: string } | null>;
+  get(path: string): Promise<unknown>;
+  list(node: string): Promise<Record<string, any> | null>;
+  apply(paths: Record<string, unknown>): Promise<boolean>;
+};
+
+export type DedupeGroup = {
+  /** কোন ধরনের duplicate — অ্যাকাউন্ট ইমেইল না ডোনার ownerUid */
+  kind: "user-email" | "donor-owner" | "donor-phone";
+  /** গ্রুপ-চিহ্নিতকারী (ইমেইল / ownerUid / phone) */
+  key: string;
+  /** যেটি রাখা হবে */
+  keep: { id: string; name: string; email?: string; donorId?: string; uid?: string };
+  /** যেগুলো মুছে/মেলানো হবে */
+  remove: Array<{ id: string; name: string; email?: string; uid?: string }>;
+  /** ক্যানোনিকালে কপি হওয়া ফিল্ড (শুধু ফাঁকাগুলো) */
+  filledFields: string[];
+};
+
+export type DedupeReport = {
+  ok: boolean;
+  applied: boolean;
+  scanned: { users: number; donors: number; emailsIndexed: number };
+  groups: DedupeGroup[];
+  /** যেগুলো স্বয়ংক্রিয়ভাবে বদলানো হয়নি — অ্যাডমিনের নজরে রাখা ভালো */
+  notes: string[];
+  /** apply হলে মোট পরিবর্তিত path */
+  changedPaths: number;
+  error?: string;
+};
+
+/** ইমেইল normalize — users.email তুলনার একমাত্র নিয়ম। */
+function normEmail(v: unknown): string {
+  return String(v ?? "").trim().toLowerCase();
+}
+function normPhone(v: unknown): string {
+  let d = String(v ?? "").replace(/\D/g, "");
+  /* +880XXXXXXXXXX → 0XXXXXXXXXX (বাংলাদেশ কান্ট্রি-কোড স্বাভাবিকীকরণ) */
+  if (d.startsWith("880") && d.length > 11) d = "0" + d.slice(3);
+  return d;
+}
+function nameOf(row: any): string {
+  return String(row?.name ?? row?.email ?? "").trim();
+}
+function tsOf(row: any): number {
+  const raw = row?.updatedAt || row?.createdAt || row?.joined || "";
+  const t = Date.parse(String(raw));
+  return Number.isFinite(t) ? t : 0;
+}
+
+/** scalar ফিল্ড যেগুলো ক্যানোনিকালে ফাঁকা থাকলে যমজ থেকে কপি হয় */
+const USER_FILL_FIELDS = [
+  "name", "username", "phone", "dob", "gender", "area", "district", "address",
+  "photoURL", "provider", "bloodGroup", "donorId", "donorStatus", "whatsapp",
+  "lastDonation", "health", "cardTheme",
+] as const;
+const DONOR_FILL_FIELDS = [
+  "name", "bloodGroup", "group", "gender", "dob", "phone", "whatsapp", "area",
+  "district", "photo", "lastDonationDate", "address", "occupation",
+] as const;
+
+/** রেকর্ডটি Auth-UID-keyed কি না (ক্যানোনিকাল নির্বাচনের প্রথম শর্ত)। */
+function uidKeyed(id: string): boolean {
+  return isAuthUid(id);
+}
+
+/** ইমেইল → সূচি-কী (identityKey-এর মিরর; স্ক্যান তুলনায় ব্যবহৃত)। */
+function emailIndexKey(email: unknown): string {
+  return String(email ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[#.$/\[\]\\]/g, "_")
+    .slice(0, 190);
+}
+
+export async function handleAdminDedupe(
+  input: { apply?: boolean; idToken?: string } | null | undefined,
+  io: DedupeIo,
+): Promise<DedupeReport> {
+  const idToken = String(input?.idToken ?? "").trim();
+  if (!idToken) throw new ApiError(401, "অনুমোদন প্রয়োজন — লগইন করে আবার চেষ্টা করুন।");
+  const caller = await io.verifyToken(idToken).catch(() => null);
+  if (!caller || !caller.uid) throw new ApiError(401, "টোকেন যাচাই ব্যর্থ হয়েছে — আবার লগইন করুন।");
+  const me = (await io.get(`admins/${caller.uid}`).catch(() => null)) as any;
+  const role = String((me && me.role) || "").toLowerCase();
+  const status = String((me && me.status) || "active").toLowerCase();
+  if (role !== "admin" || status === "disabled") {
+    throw new ApiError(403, "শুধু অ্যাডমিন এই কাজ করতে পারেন।");
+  }
+  const apply = input?.apply === true;
+
+  const userRows = (await io.list("users").catch(() => null)) || {};
+  const donorRows = (await io.list("donors").catch(() => null)) || {};
+  const indexRows = (await io.list("identityIndex/email").catch(() => null)) || {};
+
+  const paths: Record<string, unknown> = {};
+  const groups: DedupeGroup[] = [];
+  const notes: string[] = [];
+  /* বর্তমান সূচি: encoded-key → uid (পরে backfill/repoin-এ ব্যবহৃত) */
+  const claimedBy = new Map<string, string>();
+  for (const [key, val] of Object.entries(indexRows)) {
+    if (typeof val === "string" && val) claimedBy.set(key, val);
+  }
+
+  /* ── ১. users — একই ইমেইলে একাধিক রেকর্ড ── */
+  const byEmail = new Map<string, Array<[string, any]>>();
+  for (const [id, row] of Object.entries(userRows as Record<string, any>)) {
+    const email = normEmail(row?.email);
+    if (!email) continue;
+    const list = byEmail.get(email) || [];
+    list.push([id, row]);
+    byEmail.set(email, list);
+  }
+  for (const [email, entries] of byEmail) {
+    if (entries.length < 2) continue;
+    /* ক্যানোনিকাল: Auth-UID-keyed > নতুন updatedAt */
+    const sorted = [...entries].sort((a, b) => {
+      const ua = uidKeyed(a[0]) ? 1 : 0;
+      const ub = uidKeyed(b[0]) ? 1 : 0;
+      if (ua !== ub) return ub - ua;
+      return tsOf(b[1]) - tsOf(a[1]);
+    });
+    const [keepId, keepRow] = sorted[0];
+    const twins = sorted.slice(1);
+    const filled: string[] = [];
+    for (const [tid, trow] of twins) {
+      for (const f of USER_FILL_FIELDS) {
+        const cur = String((keepRow as any)?.[f] ?? "").trim();
+        const alt = String(trow?.[f] ?? "").trim();
+        if (!cur && alt) {
+          paths[`users/${keepId}/${f}`] = alt;
+          filled.push(f);
+        }
+      }
+      paths[`users/${tid}`] = null;
+      /* যমজের দাবি করা সূচি-এন্ট্রি (থাকলে) ক্যানোনিকালে ঘুরিয়ে দিই */
+      const twinEmail = normEmail(trow?.email);
+      if (twinEmail && claimedBy.get(emailIndexKey(twinEmail)) === tid) {
+        paths[emailIndexPath(twinEmail)] = keepId;
+      }
+    }
+    paths[emailIndexPath(email)] = keepId;
+    groups.push({
+      kind: "user-email",
+      key: email,
+      keep: { id: keepId, name: nameOf(keepRow), email: normEmail(keepRow?.email), uid: keepId },
+      remove: twins.map(([id, r]) => ({ id, name: nameOf(r), email: normEmail(r?.email), uid: id })),
+      filledFields: [...new Set(filled)],
+    });
+  }
+
+  /* ── ২. donors — একই ownerUid-এ একাধিক রেকর্ড ── */
+  const byOwner = new Map<string, Array<[string, any]>>();
+  const ownerlessByPhone = new Map<string, Array<[string, any]>>();
+  for (const [id, row] of Object.entries(donorRows as Record<string, any>)) {
+    const owner = String(row?.ownerUid || row?.uid || "").trim();
+    if (owner && isAuthUid(owner)) {
+      const list = byOwner.get(owner) || [];
+      list.push([id, row]);
+      byOwner.set(owner, list);
+    } else {
+      const ph = normPhone(row?.phone);
+      if (ph.length >= 11) {
+        const list = ownerlessByPhone.get(ph) || [];
+        list.push([id, row]);
+        ownerlessByPhone.set(ph, list);
+      }
+    }
+  }
+  for (const [owner, entries] of byOwner) {
+    if (entries.length < 2) continue;
+    /* ক্যানোনিকাল: users/{owner}.donorId যেটাকে নির্দেশ করে > পুরোনো createdAt */
+    let linkedId = "";
+    try {
+      const u = (await io.get(`users/${owner}`).catch(() => null)) as any;
+      linkedId = String(u?.donorId || "").trim();
+    } catch { /* ignore */ }
+    const sorted = [...entries].sort((a, b) => {
+      const la = a[0] === linkedId ? 1 : 0;
+      const lb = b[0] === linkedId ? 1 : 0;
+      if (la !== lb) return lb - la;
+      return tsOf(a[1]) - tsOf(b[1]);
+    });
+    const [keepId, keepRow] = sorted[0];
+    const extras = sorted.slice(1);
+    const filled: string[] = [];
+    for (const [eid, erow] of extras) {
+      for (const f of DONOR_FILL_FIELDS) {
+        const cur = String((keepRow as any)?.[f] ?? "").trim();
+        const alt = String(erow?.[f] ?? "").trim();
+        if (!cur && alt) {
+          paths[`donors/${keepId}/${f}`] = alt;
+          filled.push(f);
+        }
+      }
+      /* দান-সংখ্যা/মোট ক্যানোনিকালে যোগ হয় (রেকর্ড মুছে গেলে হারায় না) —
+         অ্যাপে donations ও totalDonations সবসময় সমান রাখা হয়। */
+      const sumDon = (Number(keepRow?.donations) || 0) + (Number(erow?.donations) || 0);
+      if (sumDon > 0) {
+        paths[`donors/${keepId}/donations`] = sumDon;
+        paths[`donors/${keepId}/totalDonations`] = sumDon;
+      }
+      paths[`donors/${eid}`] = null;
+    }
+    /* users/{owner} যদি অন্য donorId দেখায় → ক্যানোনিকালে ঘুরিয়ে দিই */
+    if (linkedId && linkedId !== keepId) paths[`users/${owner}/donorId`] = keepId;
+    groups.push({
+      kind: "donor-owner",
+      key: owner,
+      keep: { id: keepId, name: nameOf(keepRow), donorId: keepId, uid: owner },
+      remove: extras.map(([id, r]) => ({ id, name: nameOf(r), uid: owner })),
+      filledFields: [...new Set(filled)],
+    });
+  }
+
+  /* ── ৩. ownerUid-বিহীন ডোনারের একই phone — শুধু রিপোর্ট (অটো মোছা হয় না) ── */
+  for (const [ph, entries] of ownerlessByPhone) {
+    if (entries.length < 2) continue;
+    groups.push({
+      kind: "donor-phone",
+      key: ph,
+      keep: { id: entries[0][0], name: nameOf(entries[0][1]) },
+      remove: entries.slice(1).map(([id, r]) => ({ id, name: nameOf(r) })),
+      filledFields: [],
+    });
+    notes.push(
+      `একই মোবাইল নম্বরে (${ph}) ownerUid-বিহীন ${entries.length}টি ডোনার রেকর্ড — নিশ্চিত হয়ে ম্যানুয়ালি মেলান (স্বয়ংক্রিয়ভাবে বদলায়নি)।`,
+    );
+  }
+
+  /* ── ৪. identityIndex backfill — প্রতিটি অ্যাকাউন্টের ইমেইল দাবি (খালি থাকলে) ── */
+  let emailsIndexed = 0;
+  for (const [id, row] of Object.entries(userRows as Record<string, any>)) {
+    const email = normEmail(row?.email);
+    if (!email) continue;
+    const key = emailIndexKey(email);
+    const existing = claimedBy.get(key);
+    if (existing && existing !== id) {
+      /* অন্য uid দাবি করেছে — এই রেকর্ডটি সম্ভবত duplicate; উপরের গ্রুপেই মেলা হবে */
+      continue;
+    }
+    if (!existing) {
+      paths[emailIndexPath(email)] = id;
+      emailsIndexed++;
+    }
+  }
+
+  const scanned = { users: Object.keys(userRows).length, donors: Object.keys(donorRows).length, emailsIndexed };
+  if (!apply) {
+    return { ok: true, applied: false, scanned, groups, notes, changedPaths: 0 };
+  }
+  if (!Object.keys(paths).length) {
+    return { ok: true, applied: true, scanned, groups, notes, changedPaths: 0 };
+  }
+  const okApply = await io.apply(paths).catch(() => false);
+  if (!okApply) throw new ApiError(500, "পরিষ্কার করা যায়নি (Realtime Database লেখা ব্যর্থ) — কিছু বদলায়নি।");
+  return { ok: true, applied: true, scanned, groups, notes, changedPaths: Object.keys(paths).length };
+}

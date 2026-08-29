@@ -17,7 +17,7 @@ import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERR
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage, getImgbbKey, saveImgbbKey } from "../lib/imgbb";
-import { serverDeleteEntity, deletionMessage, bulkDeletionMessage, describeDeletionFailure, isAuthUid, type DeletionStep, type DeleteScope } from "../lib/accountDelete";
+import { serverDeleteEntity, deletionMessage, bulkDeletionMessage, describeDeletionFailure, isAuthUid, runDedupeScan, type DeletionStep, type DeleteScope } from "../lib/accountDelete";
 import { noticeIsActive, noticeTarget } from "../lib/notice";
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -4061,14 +4061,24 @@ function initPage() {
     let approvedDonorId="", approvedDonor=null, approvedDonation=null, approvedRequest=null, approvedGroup=null;
     try{
       if(q.kind==="donor"&&ok){
+        /* ── ডুপ্লিকেট প্রতিরোধ: একই অ্যাকাউন্টের (ownerUid) ডোনার রেকর্ড আগেই
+           থাকলে নতুন ডোনার আইডি তৈরি না করে সেটিকেই অনুমোদিত/আপডেট করা হয় —
+           তালিকায় একই Account কখনো দুইবার আসে না। ── */
+        let reuseDonor=null;
+        if(q.ownerUid){
+          try{ reuseDonor=await findBy(NODES.donors,"ownerUid",q.ownerUid); }catch(_e){ reuseDonor=null; }
+        }
         approvedDonorId=String(q.donorId||"");
+        if(reuseDonor&&reuseDonor.id)approvedDonorId=String(reuseDonor.id);
         if(!approvedDonorId)approvedDonorId=await nextDonorId();
         const at=nowIso(), count=q.last?1:0;
         approvedDonor={id:approvedDonorId,donorId:approvedDonorId,uid:q.ownerUid||"",ownerUid:q.ownerUid||"",
           name:q.name||"",bloodGroup:q.group||"",group:q.group||"",area:q.area||"",phone:q.phone||"",
           whatsapp:q.whatsapp||q.phone||"",gender:q.gender||"",dob:q.dob||"",lastDonationDate:q.last||"",
-          status:"approved",available:true,verified:true,suspended:false,joined:at,photo:q.photo||"",
-          donations:count,totalDonations:count,createdAt:at,updatedAt:at};
+          status:"approved",available:true,verified:true,suspended:false,joined:(reuseDonor&&reuseDonor.joined)||at,photo:q.photo||"",
+          donations:reuseDonor?Number(reuseDonor.donations)||0:count,
+          totalDonations:reuseDonor?Number(reuseDonor.totalDonations)||0:count,
+          createdAt:(reuseDonor&&reuseDonor.createdAt)||at,updatedAt:at};
         paths[`donors/${approvedDonorId}`]=approvedDonor;
         if(q.ownerUid){
           paths[`users/${q.ownerUid}/donorStatus`]="approved";
@@ -4370,6 +4380,15 @@ function initPage() {
       if(dobVal&&!isValidDob(dobVal))return toast("সঠিক জন্ম তারিখ দিন","er");
       const o={name:n,group:s.q("#f_g").value,area:s.q("#f_a").value,phone:p,
         dob:dobVal,gender:s.q("#f_s").value,last:s.q("#f_l").value};
+      /* ── ডুপ্লিকেট প্রতিরোধ: একই মোবাইল নম্বরে ডোনার আগেই থাকলে সতর্ক করা হয় —
+         নিশ্চিত করলেই নতুন এন্ট্রি যোগ হয় (তালিকায় অবাঞ্ছিত duplicate এড়াতে)। ── */
+      const dupDigits=(v)=>{let d=String(v||"").replace(/\D/g,"");if(d.startsWith("880")&&d.length>11)d="0"+d.slice(3);return d;};
+      const dupExisting=(!id && DB.donors.find(x=>dupDigits(x.phone)===dupDigits(p)));
+      if(dupExisting){
+        const goAhead=await confirmS({title:"ডুপ্লিকেট যাচাই", ok:"যোগ করুন",
+          desc:`এই মোবাইল নম্বরে ইতিমধ্যে একজন ডোনার আছে — "${dupExisting.name||"অজানা"}"। একই নম্বরে আরেকটি এন্ট্রি যোগ করবেন?`});
+        if(!goAhead)return;
+      }
       if(id){Object.assign(d,o);logAudit("ডোনার তথ্য সম্পাদনা",id,"donor")}
       else{
         let newId="";
@@ -4551,8 +4570,8 @@ function initPage() {
           <input type="checkbox" id="tall" ${allChecked?"checked":""} style="width:17px;height:17px;accent-color:var(--grn)">
           সব নির্বাচন করুন</label>
         <span class="mut" style="font-size:.75rem">${bn(rows.length)} জন ডোনার</span>
-        <button class="btn red sm" id="tdel" ${selCount?"":"disabled"}
-          style="margin-left:auto">${SI.trash(14)} ডিলিট করুন${selCount?" ("+bn(selCount)+")":""}</button>
+        <button class="btn red sm" id="tdel" ${selCount?"":"disabled"}>${SI.trash(14)} ডিলিট করুন${selCount?" ("+bn(selCount)+")":""}</button>
+        <button class="btn gh sm" id="tdedupe" style="margin-left:auto">${SI.shield(14)} ডুপ্লিকেট যাচাই</button>
       </div>`
     +(rows.length
       ?`<div class="card pad0">${rows.map(({d,username,photo})=>`<div class="prow" style="cursor:pointer" data-row="${esc(d.id)}">
@@ -4585,6 +4604,62 @@ function initPage() {
     /* কার্ড/পঙ্‌ক্তির অন্য যেকোনো অংশ → বিদ্যমান প্রোফাইল ভিউ (দেখুন বাটন নেই) */
     el.querySelectorAll("[data-row]").forEach(x=>x.onclick=()=>openDonor(x.dataset.row));
     $("#tdel").onclick=()=>bulkDeleteEntities(scope,[...sel]);
+    $("#tdedupe").onclick=()=>openDedupe();
+  }
+
+  /* ══════════ ডুপ্লিকেট যাচাই ও নিরাপদে পরিষ্কার (legacy cleanup) ══════════
+     সার্ভার-নিরাপদ স্ক্যান: একই ইমেইলে একাধিক অ্যাকাউন্ট রেকর্ড, একই অ্যাকাউন্টের
+     একাধিক ডোনার আইডি ও ইমেইল-সূচি (identityIndex) backfill — প্রথমে preview,
+     অ্যাডমিন নিশ্চিত করলে এক atomic write-এ মেলানো/মোছা হয়। ফল live listener-এই
+     সব প্যানেলে realtime দেখা যায় — reload লাগে না। */
+  async function openDedupe(){
+    let sh=null;
+    try{
+      sh=sheet("ডুপ্লিকেট যাচাই",`<p class="mut" style="font-size:.84rem">ডেটাবেস স্ক্যান হচ্ছে — একই ইমেইলের অ্যাকাউন্ট, একই অ্যাকাউন্টের একাধিক ডোনার আইডি ও ইমেইল-সূচি পরীক্ষা করা হচ্ছে… কিছুই বদলানো হবে না যতক্ষণ না আপনি নিশ্চিত করেন।</p>`,
+        `<button class="btn gh" data-close>বন্ধ করুন</button>`);
+      const rep=await runDedupeScan(false);
+      if(!rep.ok){
+        sh.close();
+        uiAlert(rep.error||"স্ক্যান করা যায়নি।",{type:"error",title:"ব্যর্থ হয়েছে"});
+        return;
+      }
+      const fixable=rep.groups.filter(g=>g.kind!=="donor-phone");
+      const listHtml=rep.groups.length?`<div style="display:flex;flex-direction:column;gap:8px">${rep.groups.map(g=>{
+        const label=g.kind==="user-email"?"অ্যাকাউন্ট (একই ইমেইল)":g.kind==="donor-owner"?"ডোনার আইডি (একই অ্যাকাউন্ট)":"ফোন নম্বর (ম্যানুয়াল পর্যালোচনা)";
+        const rem=g.remove.map(r=>esc(r.name||r.id)+(r.email?` (${esc(r.email)})`:"")).join(", ");
+        return `<div class="card" style="padding:10px 12px">
+          <b style="font-size:.86rem">${label}</b>
+          <div style="font-size:.78rem" class="mut">রাখা হবে: <b>${esc(g.keep.name||g.keep.id)}</b>${g.keep.email?` · ${esc(g.keep.email)}`:""}</div>
+          <div style="font-size:.78rem" class="mut">মুছে/মেলানো হবে: ${rem||"—"}${g.filledFields.length?` · পূরণ হবে: ${bn(g.filledFields.length)} ফিল্ড`:""}</div>
+        </div>`;
+      }).join("")}</div>`:`<p style="font-size:.86rem">✓ কোনো duplicate পাওয়া যায়নি — সব অ্যাকাউন্ট ও ডোনার আইডি ইউনিক।</p>`;
+      const notesHtml=rep.notes.length?`<div style="margin-top:10px">${rep.notes.map(n=>`<p class="mut" style="font-size:.75rem">• ${esc(n)}</p>`).join("")}</div>`:"";
+      const indexNote=rep.scanned.emailsIndexed?`<p class="mut" style="font-size:.75rem;margin-top:8px">ইমেইল-সূচিতে ${bn(rep.scanned.emailsIndexed)}টি অ্যাকাউন্ট যোগ হবে (ভবিষ্যতে duplicate সনাক্তকরণে সহায়ক)।</p>`:"";
+      const body=`<p class="mut" style="font-size:.78rem">স্ক্যান সম্পন্ন — অ্যাকাউন্ট: ${bn(rep.scanned.users)}, ডোনার আইডি: ${bn(rep.scanned.donors)}</p>
+        <div style="margin-top:10px">${listHtml}</div>${notesHtml}${indexNote}`;
+      const footer=fixable.length
+        ?`<button class="btn gh" data-close>বাতিল</button><button class="btn red" id="dd_apply">নিরাপদে পরিষ্কার করুন</button>`
+        :`<button class="btn" data-close>ঠিক আছে</button>`;
+      sh.close();
+      const sh2=sheet("ডুপ্লিকেট যাচাই — ফলাফল",body,footer);
+      const applyBtn=sh2.q("#dd_apply");
+      if(applyBtn)applyBtn.onclick=async()=>{
+        applyBtn.disabled=true;applyBtn.innerHTML="পরিষ্কার করা হচ্ছে…";
+        const rep2=await runDedupeScan(true).catch(e=>({ok:false,error:e&&e.message}));
+        if(!rep2.ok){
+          applyBtn.disabled=false;applyBtn.innerHTML="নিরাপদে পরিষ্কার করুন";
+          uiAlert(rep2.error||"পরিষ্কার করা যায়নি।",{type:"error",title:"ব্যর্থ হয়েছে"});
+          return;
+        }
+        sh2.close();
+        toast(`পরিষ্কার সম্পন্ন — ${bn(rep2.changedPaths)}টি রেকর্ড আপডেট হয়েছে`,"ok");
+        renderSub("team");renderSub("donorid");
+      };
+    }catch(e){
+      console.warn("dedupe:",e&&e.message);
+      try{sh&&sh.close();}catch(_e){}
+      uiAlert("স্ক্যান করা যায়নি — আবার চেষ্টা করুন।",{type:"error",title:"ব্যর্থ হয়েছে"});
+    }
   }
 
   /* ---------- ডোনার ব্যবস্থাপনা — শুধু অ্যাকাউন্ট-ওয়ালা ডোনার ---------- */

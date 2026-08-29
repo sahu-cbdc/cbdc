@@ -60,6 +60,30 @@ Hosting-এর জন্য `firebase.json`-এ rewrite (`** → /index.html`) �
 > শুধু static host (Firebase Hosting, Netlify, GitHub Pages …)-এ ডিলিট করলে
 > স্পষ্ট ত্রুটি বার্তা দেখানো হয় এবং কোনো ডেটা মোছা হয় না।
 
+> 🛡️ **Duplicate অ্যাকাউন্ট/ডোনার প্রতিরোধ (একই Account/Email একবারই)** —
+> Firebase UID-ই Account ও Donor রেকর্ডের primary ID। ইমেইলের uniqueness
+> নিশ্চিত হয় RTDB-তে `identityIndex/email/<key> = <uid>` atomic claim দিয়ে
+> (`src/lib/identity.ts`; rules: `database.rules.json → identityIndex` —
+> **প্রথম UID-ই ইমেইল পায়**, অন্য কেউ দাবি/overwrite করতে পারে না):
+>
+> - **Signup** — auth account তৈরির পর, RTDB লেখার **আগে** claim; অন্য UID-এর
+>   দাবি থাকলে নতুন প্রোফাইল তৈরিই বন্ধ (স্পষ্ট বাংলা বার্তা)।
+> - **Google লগইন** — ইমেইলের পুরোনো (legacy) রেকর্ড অন্য UID-এ থাকলে
+>   duplicate না বানিয়ে `POST api/account/resolve-legacy` (server-secure,
+>   service-account secret লাগে) রেকর্ডটি বর্তমান UID-এ মিলিয়ে দেয়।
+> - **Donor তৈরি** — Admin/Moderator approval ও staff fast-path-এ আগে
+>   `donors`-এ একই `ownerUid` খোঁজা হয়; থাকলে সেই ডোনার আইডিই পুনর্ব্যবহৃত হয়।
+> - **Delete** — Account/Donor মুছলে ইমেইলের দাবিও মুক্ত হয় (ইমেইল আবার
+>   ব্যবহারযোগ্য)।
+> - **পুরোনো duplicate পরিষ্কার** — Admin panel-এর "ডুপ্লিকেট যাচাই" বাটন
+>   (`POST api/admin/dedupe`, শুধু অ্যাডমিন) একই ইমেইলের একাধিক users রেকর্ড /
+>   একই অ্যাকাউন্টের একাধিক ডোনার আইডি খুঁজে preview দেখায়; নিশ্চিত করলে এক
+>   atomic write-এ নিরাপদে মিলিয়ে দেয় ও সূচি backfill করে। ফল live
+>   listener-এই realtime দেখা যায়।
+>
+> প্রয়োজনীয় একবারের ধাপ: `firebase deploy --only database` (identityIndex rules
+> প্রকাশের জন্য)।
+
 > ⚠️ **`_redirects` ফাইল এখানে নেই** — Cloudflare Workers-এর static-asset engine
 > `/* → /index.html 200`-টাইপ `_redirects` rule-কে infinite-loop হিসেবে নাকচ করে
 > দেয় (`Invalid _redirects configuration: Infinite loop detected`)। Workers-এ

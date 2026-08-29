@@ -28,6 +28,8 @@
  * dev middleware, verification harness) একই logic চালানো যায়।
  */
 
+import { emailIndexPath } from "./identityKey";
+
 export type DeleteScope = "account" | "donor";
 
 /** Firebase Authentication IO-এর ফলাফল (server/authAdmin.ts থেকে)। */
@@ -230,6 +232,10 @@ async function deleteAccountEntity(
   if (!Object.keys(paths).length) {
     throw new ApiError(404, "এই UID-এর কোনো অ্যাকাউন্ট রেকর্ড পাওয়া যায়নি — কিছু মোছা হয়নি।");
   }
+  /* ইমেইলের identityIndex দাবিও ছাড়া হয় — ইমেইলটি ভবিষ্যতে আবার
+     নিবন্ধনযোগ্য থাকে (duplicate রোধের সূচি আটকে রাখে না)। */
+  const deletedEmail = String(userRow?.email || adminRow?.email || "").trim().toLowerCase();
+  if (deletedEmail) paths[emailIndexPath(deletedEmail)] = null;
 
   /* ১) আগে লগইন অ্যাকাউন্ট (Firebase Authentication) — ঠিক এই uid-টিই।
         ব্যর্থ হলে কিছুই মোছা হয় না (রেকর্ড ছাড়া "অগভর্নড" লগইন রেখে দেওয়া
@@ -374,12 +380,15 @@ async function deleteDonorIdEntity(
           : { id: "auth", label: "সংশ্লিষ্ট লগইন অ্যাকাউন্ট (Firebase Authentication)", ok: true, skipped: true, error: authOutcome === "missing" ? "আগেই ছিল না" : "সার্ভার কনফিগারেশন প্রয়োজন" },
       );
 
-      /* ২) লিংকড অ্যাকাউন্ট রেকর্ড — শুধু এই uid-এরগুলোই। */
+      /* ২) লিংকড অ্যাকাউন্ট রেকর্ড — শুধু এই uid-এরগুলোই; সাথে ইমেইলের
+            identityIndex দাবিও ছাড়া হয় (ইমেইল ভবিষ্যতে পুনঃব্যবহারযোগ্য)। */
       if (userRow) paths[`users/${uid}`] = null;
       if (adminRow) paths[`admins/${uid}`] = null;
       for (const [id, row] of Object.entries(accountRows)) {
         if (accountOf(row, uid)) paths[`accounts/${id}`] = null;
       }
+      const linkedEmail = String(userRow?.email || adminRow?.email || "").trim().toLowerCase();
+      if (linkedEmail) paths[emailIndexPath(linkedEmail)] = null;
     }
   }
 

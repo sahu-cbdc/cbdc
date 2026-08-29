@@ -96,6 +96,13 @@ function pkcs8FromPem(pem: string): Uint8Array {
 type CachedToken = { token: string; expiresAt: number };
 const tokenCache = new Map<string, CachedToken>();
 
+export async function fetchGoogleAccessToken(
+  sa: ServiceAccount,
+  fetchImpl: typeof fetch,
+): Promise<string> {
+  return fetchAccessToken(sa, fetchImpl);
+}
+
 async function fetchAccessToken(
   sa: ServiceAccount,
   fetchImpl: typeof fetch,

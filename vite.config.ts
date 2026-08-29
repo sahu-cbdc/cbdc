@@ -4,7 +4,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { handleAdminEntityDelete } from "./server/deleteApi";
-import { makeHttpIo } from "./server/httpIo";
+import { handleAdminDedupe } from "./server/dedupeApi";
+import { handleResolveLegacy } from "./server/resolveLegacy";
+import { makeHttpIo, makePrivilegedIo } from "./server/httpIo";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Admin Panel → "ওয়েবসাইট" সেটিংস ↔ Main Website-এর src/config/site.ts
@@ -167,7 +169,11 @@ function cbdcDeleteApi(): Plugin {
       if (server.config.command !== "serve") return;
       server.middlewares.use((req, res, next) => {
         const url = (req.url || "").split("?")[0];
-        if (!url.replace(/\/+$/, "").endsWith("/api/admin/delete")) return next();
+        const apiPath = url.replace(/\/+$/, "");
+        const isDeleteApi = apiPath.endsWith("/api/admin/delete");
+        const isDedupeApi = apiPath.endsWith("/api/admin/dedupe");
+        const isResolveApi = apiPath.endsWith("/api/account/resolve-legacy");
+        if (!isDeleteApi && !isDedupeApi && !isResolveApi) return next();
         /* same-origin যাচাই — cross-site থেকে token-সহ delete বন্ধ */
         const host = String(req.headers.host || "").split(":")[0];
         const origin = String(req.headers.origin || req.headers.referer || "");
@@ -201,18 +207,30 @@ function cbdcDeleteApi(): Plugin {
             try {
               if (oversized) throw new Error("payload too large");
               const payload = JSON.parse(body || "{}");
-              /* 🔐 Firebase Authentication (লগইন) অ্যাকাউন্ট ডিলিটের server-side
-                 secret — শুধু dev-এ process.env/.env থেকে; client bundle-এ কখনো যায় না। */
-              const result = await handleAdminEntityDelete(
-                { ...payload, idToken },
-                makeHttpIo(
-                  {
-                    FIREBASE_SERVICE_ACCOUNT: process.env.FIREBASE_SERVICE_ACCOUNT || "",
-                    FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID || "",
-                  },
-                  idToken,
-                ),
-              );
+              /* 🔐 Firebase Authentication (লগইন) ডিলিট ও legacy-merge-এর
+                 server-side secret — শুধু dev-এ process.env/.env থেকে;
+                 client bundle-এ কখনো যায় না। */
+              const serverEnv = {
+                FIREBASE_SERVICE_ACCOUNT: process.env.FIREBASE_SERVICE_ACCOUNT || "",
+                FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID || "",
+              };
+              let result: unknown;
+              if (isDedupeApi) {
+                result = await handleAdminDedupe(
+                  { apply: payload.apply === true, idToken },
+                  makeHttpIo(serverEnv, idToken),
+                );
+              } else if (isResolveApi) {
+                result = await handleResolveLegacy(
+                  { idToken },
+                  makePrivilegedIo(serverEnv, ""),
+                );
+              } else {
+                result = await handleAdminEntityDelete(
+                  { ...payload, idToken },
+                  makeHttpIo(serverEnv, idToken),
+                );
+              }
               send(res, 200, result);
             } catch (e) {
               const status = Number((e as any)?.status) || 500;

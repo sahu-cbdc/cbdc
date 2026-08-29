@@ -8,6 +8,8 @@
  */
 import { useEffect } from "react";
 import "../lib/store";
+import { claimEmailIdentity, lookupEmailOwner } from "../lib/identity";
+import { resolveLegacyAccount } from "../lib/accountDelete";
 import { initFirebase as initSharedFirebase, isFirebaseReady } from "../lib/firebase";
 import { waitForAuthUser } from "../lib/authState";
 import { navigateToPage, pagePath, appBase } from "../lib/router";
@@ -4718,6 +4720,59 @@ function initPage() {
             finishLogin({email:p.email, name: name || p.name, role, permissions, photo:p.photo, uid:p.uid});
             return;
           }
+          /* ── Legacy duplicate যাচাই: ইমেইলটি identityIndex-এ অন্য UID দাবি করে
+             থাকলে duplicate অ্যাকাউন্ট তৈরি না করে পুরোনো রেকর্ড এই UID-এ
+             নিরাপদে মেলানোর চেষ্টা হয় (server-secure endpoint)। ── */
+          if(!ownMember){
+            /* ইমেইল দিয়ে পাওয়া রেকর্ড ভিন্ন uid-এর হলেও এটি legacy conflict */
+            const legacyByEmail = member && String(member.id || "") !== String(p.uid) ? member : null;
+            const owner = legacyByEmail ? p.uid : await lookupEmailOwner(p.email);
+            if(legacyByEmail || (owner && owner !== p.uid)){
+              const merged = await resolveLegacyAccount().catch(() => null);
+              const mergedOk = !!(merged && merged.ok && merged.merged);
+              if(mergedOk){
+                /* পুরোনো রেকর্ড এই uid-এ মিলে গেছে — এবার স্বাভাবিক লগইন */
+                try{
+                  const fresh = await findUserByUid(p.uid);
+                  if(fresh && isProfileComplete(fresh)){
+                    const photo = photoForUid(fresh, p.photo);
+                    try{
+                      await ensureUserProfile({
+                        uid:p.uid, email:p.email, name:fresh.name || p.name, photo,
+                        phone:fresh.phone, dob:fresh.dob, gender:fresh.gender, area:fresh.area,
+                        district:fresh.district, username:fresh.username
+                      }, {provider:"google", existing:fresh});
+                    }catch(e){ console.warn("profile upsert:", e&&e.message); }
+                    hideAppModal();
+                    finishFromRtdb(p, fresh, {role: DEFAULT_ROLE, name: fresh.name, permissions:{}});
+                    return;
+                  }
+                }catch(e){ console.warn("post-merge login:", e&&e.message); }
+                /* মিলেছে কিন্তু প্রোফাইল অসম্পূর্ণ → স্বাভাবিক নিবন্ধন ধাপে
+                   (পুরোনো রেকর্ড ইতিমধ্যেই এই uid-এ মিলে গেছে — এখন লেখা নিরাপদ) */
+                hideAppModal();
+                setSignupGoogleMode(p);
+                prefillSignupFromProfile(null);
+                showView("signup");
+                const _formCardM = document.querySelector("#view-signup .form-card");
+                if(_formCardM){ _formCardM.classList.add("auth-card"); _formCardM.style.margin = "0 auto"; }
+                showMessage($("#signupMessage"),
+                  "আপনার পুরোনো রেকর্ড এই অ্যাকাউন্টে মিলিয়ে দেওয়া হয়েছে। বাকি তথ্য পূরণ করে সংরক্ষণ করুন।",
+                  "error");
+                return;
+              }
+              if(!(merged && merged.ok && merged.merged)){
+                hideAppModal();
+                showView("login");
+                showMessage($("#loginMessage"),
+                  merged && merged.unconfigured
+                    ? "এই ইমেইলে আগের একটি অ্যাকাউন্ট রেকর্ড আছে (ভিন্ন UID) — ডুপ্লিকেট তৈরি বন্ধ রাখা হয়েছে। অ্যাডমিন প্যানেলে 'ডুপ্লিকেট যাচাই ও পরিষ্কার' চালালে রেকর্ডটি স্বয়ংক্রিয়ভাবে মিলে যাবে।"
+                    : "এই ইমেইলে আগের একটি অ্যাকাউন্ট রেকর্ড আছে (ভিন্ন UID) — ডুপ্লিকেট তৈরি বন্ধ রাখা হয়েছে এবং রেকর্ড মেলানো যায়নি। অনুগ্রহ করে পরে আবার চেষ্টা করুন বা অ্যাডমিনের সাথে যোগাযোগ করুন।",
+                  "error");
+                return;
+              }
+            }
+          }
           /* একই অ্যাকাউন্ট, ডুপ্লিকেট নয় — আগে থেকে প্রোফাইল থাকলে সরাসরি লগইন */
           if(member && isProfileComplete(member)){
             const photo = photoForUid(member, p.photo);
@@ -4997,6 +5052,35 @@ function initPage() {
           }
           if(!uid) throw new Error("অ্যাকাউন্ট তৈরি করা যায়নি।");
           signupUid = uid;
+
+          /* ── ইমেইল ইউনিকনেস (ডুপ্লিকেট প্রতিরোধের চূড়ান্ত স্তর) ──
+             identityIndex-এ ইমেইলটি atomic দাবি করা হয়: প্রথম UID-ই পায়।
+             অন্য UID আগে দাবি করলে প্রথমে পুরোনো (legacy) রেকর্ড এই UID-এ
+             মেলানোর চেষ্টা হয় (server-secure); তবু দাবি না পেলে duplicate
+             অ্যাকাউন্ট তৈরি এখানেই বন্ধ। */
+          let claim = await claimEmailIdentity(o.email, uid);
+          if(!claim.claimed && claim.ownerUid && claim.ownerUid !== uid){
+            const merged = await resolveLegacyAccount().catch(() => null);
+            if(merged && merged.ok && merged.merged){
+              claim = await claimEmailIdentity(o.email, uid);
+            }
+            if(!claim.claimed){
+              if(!isGoogle && signupUid){
+                /* auth account তৈরি হয়ে গেছে — রেখে দেওয়া হয়, পরে ঐ ইমেইলেই
+                   লগইন/রিসেট করা যাবে; নতুন প্রোফাইল তৈরি করা হয় না। */
+                try{ const {signOut} = await import("firebase/auth"); if(auth && auth.currentUser) await signOut(auth); }catch(_e){}
+              }
+              hideAppModal();
+              message.className = "";
+              showMessage($("#signupMessage"),
+                (merged && merged.unconfigured)
+                  ? "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে — একই ইমেইলে দ্বিতীয় অ্যাকাউন্ট তৈরি করা যায় না। অ্যাডমিন প্যানেলে 'ডুপ্লিকেট যাচাই ও পরিষ্কার' চালালে পুরোনো রেকর্ড মিলে যাবে।"
+                  : "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে — একই ইমেইলে দ্বিতীয় অ্যাকাউন্ট তৈরি করা যায় না। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।",
+                "error");
+              setFieldError($("#suEmail"), "এই ইমেইলে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।");
+              return;
+            }
+          }
 
           const existingProfile = await getRow(NODES.users, uid);
           const photoURL = photoForUid(existingProfile, googleProfile ? (googleProfile.photo||"") : "");
