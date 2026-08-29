@@ -1,7 +1,7 @@
 /**
  * CBDC - SEO helper for SPA
+ * Primary domain: https://chawkbazarbloodclub.com
  * Dynamic title, description, canonical, OG tags per route
- * যাতে গুগলে "চকবাজার ব্লাড ডোনার'স ক্লাব", "CBDC", "Chawkbazar Blood Donor" etc নামে সার্চ করলে পাওয়া যায়
  */
 
 export interface SeoData {
@@ -13,67 +13,68 @@ export interface SeoData {
   ogDescription?: string;
 }
 
-const SITE_URL = "https://cbdc-a9418.web.app";
+// PRIMARY DOMAIN - as per user correction
+const SITE_URL = "https://chawkbazarbloodclub.com";
 const SITE_NAME = "চকবাজার ব্লাড ডোনার'স ক্লাব | CBDC";
-const SITE_NAME_EN = "Chakbazar Blood Donor's Club";
 
-const BASE_KEYWORDS = "চকবাজার ব্লাড ডোনার'স ক্লাব, চকবাজার ব্লাড ডোনার ক্লাব, CBDC, Chakbazar Blood Donor's Club, Chawkbazar Blood Donor's Club, চট্টগ্রাম ব্লাড ডোনার, রক্তদাতা চট্টগ্রাম, blood donor chittagong, chawkbazar blood donor";
+// Core keywords - kept short, Google ignores meta keywords for ranking
+const BASE_KEYWORDS = "চকবাজার ব্লাড ডোনার'স ক্লাব, CBDC, Chawkbazar Blood Donor's Club, চট্টগ্রাম ব্লাড ডোনার, blood donor chittagong";
 
 export const SEO_ROUTES: Record<string, SeoData> = {
   home: {
-    title: "চকবাজার ব্লাড ডোনার'স ক্লাব | CBDC - চট্টগ্রামে রক্তদাতা খুঁজুন | Chawkbazar Blood Donor's Club",
-    description: "চকবাজার ব্লাড ডোনার'স ক্লাব (CBDC) - চট্টগ্রামের স্বেচ্ছাসেবী রক্তদাতা সংগঠন। চকবাজার, বাকলিয়া, কোতোয়ালি, চাঁদগাঁও সহ ২৪টি থানায় ভেরিফাইড রক্তদাতা খুঁজুন, নিবন্ধন করুন ও জরুরি রক্তের আবেদন করুন।",
-    keywords: BASE_KEYWORDS + ", চট্টগ্রামে রক্তদাতা খুঁজুন, রক্ত দিন জীবন বাঁচান, ২৪ ঘণ্টা রক্ত সহায়তা",
+    title: "চকবাজার ব্লাড ডোনার'স ক্লাব | CBDC - চট্টগ্রামে রক্তদাতা খুঁজুন",
+    description: "চকবাজার ব্লাড ডোনার'স ক্লাব (CBDC) - চট্টগ্রামের স্বেচ্ছাসেবী রক্তদাতা সংগঠন। চকবাজার, বাকলিয়া, কোতোয়ালি সহ ২৪টি এলাকায় ভেরিফাইড রক্তদাতা খুঁজুন, নিবন্ধন করুন ও জরুরি রক্তের আবেদন করুন।",
+    keywords: BASE_KEYWORDS + ", চট্টগ্রামে রক্তদাতা খুঁজুন, রক্ত দিন জীবন বাঁচান",
     canonical: `${SITE_URL}/`,
   },
   "donor-search": {
-    title: "রক্তদাতা খুঁজুন - চট্টগ্রাম | চকবাজার ব্লাড ডোনার'স ক্লাব CBDC",
-    description: "চট্টগ্রামে A+, B+, O+, AB+ সহ সকল গ্রুপের ভেরিফাইড রক্তদাতা খুঁজুন। চকবাজার, বাকলিয়া, কোতোয়ালি, পাঁচলাইশ সহ ২৪টি এলাকায় রক্তদাতা তালিকা - CBDC",
-    keywords: "রক্তদাতা খুঁজুন, চট্টগ্রাম রক্তদাতা তালিকা, A+ রক্তদাতা চট্টগ্রাম, B+ রক্তদাতা, O+ রক্তদাতা, blood donor search chittagong, chawkbazar blood donor list",
+    title: "রক্তদাতা খুঁজুন - চট্টগ্রাম | CBDC চকবাজার ব্লাড ডোনার'স ক্লাব",
+    description: "চট্টগ্রামে A+, B+, O+, AB+ সহ সকল গ্রুপের ভেরিফাইড রক্তদাতা খুঁজুন। চকবাজার, বাকলিয়া, কোতোয়ালি সহ ২৪টি এলাকায় রক্তদাতা তালিকা - CBDC।",
+    keywords: "রক্তদাতা খুঁজুন, চট্টগ্রাম রক্তদাতা তালিকা, blood donor search chittagong",
     canonical: `${SITE_URL}/donor-search`,
   },
   register: {
-    title: "রক্তদাতা নিবন্ধন - ডোনার হিসেবে যোগ দিন | CBDC চকবাজার ব্লাড ডোনার'স ক্লাব",
-    description: "চকবাজার ব্লাড ডোনার'স ক্লাবে রক্তদাতা হিসেবে নিবন্ধন করুন। চট্টগ্রামে মানবতার সেবায় যোগ দিন - CBDC - Chakbazar Blood Donor's Club",
-    keywords: "রক্তদাতা নিবন্ধন, ব্লাড ডোনার রেজিস্ট্রেশন, CBDC registration, chittagong blood donor registration, চকবাজার রক্তদাতা যোগদান",
+    title: "রক্তদাতা নিবন্ধন - ডোনার হিসেবে যোগ দিন | CBDC",
+    description: "চকবাজার ব্লাড ডোনার'স ক্লাবে রক্তদাতা হিসেবে নিবন্ধন করুন। চট্টগ্রামে মানবতার সেবায় যোগ দিন - CBDC।",
+    keywords: "রক্তদাতা নিবন্ধন, CBDC registration, chittagong blood donor registration",
     canonical: `${SITE_URL}/register`,
   },
   emergency: {
-    title: "জরুরি রক্তের আবেদন - ২৪ ঘণ্টা সহায়তা | CBDC চকবাজার ব্লাড ক্লাব",
-    description: "জরুরি রক্তের প্রয়োজনে এখনই আবেদন করুন। চকবাজার ব্লাড ডোনার'স ক্লাব ২৪ ঘণ্টা জরুরি রক্ত সহায়তা দেয় - CBDC Emergency Blood Request Chittagong",
-    keywords: "জরুরি রক্তের আবেদন, emergency blood request chittagong, রক্তের জন্য আবেদন, চট্টগ্রাম জরুরি রক্ত, CBDC emergency",
+    title: "জরুরি রক্তের আবেদন - ২৪ ঘণ্টা সহায়তা | CBDC",
+    description: "জরুরি রক্তের প্রয়োজনে এখনই আবেদন করুন। চকবাজার ব্লাড ডোনার'স ক্লাব ২৪ ঘণ্টা জরুরি রক্ত সহায়তা দেয় - CBDC।",
+    keywords: "জরুরি রক্তের আবেদন, emergency blood request chittagong, CBDC emergency",
     canonical: `${SITE_URL}/emergency`,
   },
   eligibility: {
     title: "রক্তদানের যোগ্যতা যাচাই - আমি কি রক্ত দিতে পারব? | CBDC",
-    description: "রক্তদানের আগে যোগ্যতা যাচাই করুন। বয়স, শেষ রক্তদানের সময় ও স্বাস্থ্য পরীক্ষা - চকবাজার ব্লাড ডোনার'স ক্লাব CBDC",
-    keywords: "রক্তদানের যোগ্যতা, blood donation eligibility, রক্ত দিতে পারব কিনা, CBDC eligibility",
+    description: "রক্তদানের আগে যোগ্যতা যাচাই করুন। বয়স, শেষ রক্তদানের সময় ও স্বাস্থ্য পরীক্ষা - চকবাজার ব্লাড ডোনার'স ক্লাব CBDC।",
+    keywords: "রক্তদানের যোগ্যতা, blood donation eligibility",
     canonical: `${SITE_URL}/eligibility`,
   },
   about: {
-    title: "আমাদের সম্পর্কে - চকবাজার ব্লাড ডোনার'স ক্লাব CBDC | Chawkbazar Blood Donor's Club",
+    title: "আমাদের সম্পর্কে - চকবাজার ব্লাড ডোনার'স ক্লাব CBDC",
     description: "চকবাজার ব্লাড ডোনার'স ক্লাব (CBDC) - চট্টগ্রামের স্বেচ্ছাসেবী রক্তদাতা সংগঠন। মানবতার সেবায় আমরা রক্তদাতা - রক্ত দিন, জীবন বাঁচান।",
-    keywords: "CBDC সম্পর্কে, চকবাজার ব্লাড ডোনার ক্লাব সম্পর্কে, Chakbazar Blood Donor's Club about, চট্টগ্রাম ব্লাড ডোনার সংগঠন",
+    keywords: "CBDC সম্পর্কে, Chawkbazar Blood Donor's Club about",
     canonical: `${SITE_URL}/about`,
   },
   login: {
     title: "লগইন - চকবাজার ব্লাড ডোনার'স ক্লাব | CBDC Login",
-    description: "CBDC অ্যাকাউন্টে লগইন করুন - চকবাজার ব্লাড ডোনার'স ক্লাব ডোনার প্যানেল",
+    description: "CBDC অ্যাকাউন্টে লগইন করুন - চকবাজার ব্লাড ডোনার'স ক্লাব ডোনার প্যানেল।",
     canonical: `${SITE_URL}/login`,
   },
   signup: {
-    title: "অ্যাকাউন্ট তৈরি - CBDC চকবাজার ব্লাড ডোনার'স ক্লাব | Sign Up",
-    description: "চকবাজার ব্লাড ডোনার'স ক্লাবে নতুন অ্যাকাউন্ট তৈরি করুন - CBDC - Chawkbazar Blood Donor's Club",
+    title: "অ্যাকাউন্ট তৈরি - CBDC | Sign Up",
+    description: "চকবাজার ব্লাড ডোনার'স ক্লাবে নতুন অ্যাকাউন্ট তৈরি করুন - CBDC।",
     canonical: `${SITE_URL}/signup`,
   },
   profile: {
     title: "রক্তদাতা প্রোফাইল - CBDC | Blood Donor Profile Chittagong",
-    description: "চট্টগ্রামের ভেরিফাইড রক্তদাতার প্রোফাইল দেখুন - চকবাজার ব্লাড ডোনার'স ক্লাব CBDC",
+    description: "চট্টগ্রামের ভেরিফাইড রক্তদাতার প্রোফাইল দেখুন - চকবাজার ব্লাড ডোনার'স ক্লাব CBDC।",
     canonical: `${SITE_URL}/profile/`,
   },
   "forgot-password": {
     title: "পাসওয়ার্ড রিসেট - CBDC | Forgot Password",
-    description: "CBDC অ্যাকাউন্টের পাসওয়ার্ড ভুলে গেছেন? রিসেট লিংক পাঠান",
+    description: "CBDC অ্যাকাউন্টের পাসওয়ার্ড ভুলে গেছেন? রিসেট লিংক পাঠান।",
     canonical: `${SITE_URL}/forgot-password`,
   },
 };
@@ -106,7 +107,6 @@ export function updateSEO(route: string, extra?: Partial<SeoData>) {
   const data = SEO_ROUTES[key] || SEO_ROUTES["home"];
   const final: SeoData = { ...data, ...extra };
 
-  // Title
   if (final.title) {
     document.title = final.title;
     setMeta("title", final.title);
@@ -114,46 +114,37 @@ export function updateSEO(route: string, extra?: Partial<SeoData>) {
     setMeta("twitter:title", final.ogTitle || final.title);
   }
 
-  // Description
   if (final.description) {
     setMeta("description", final.description);
     setMeta("og:description", final.ogDescription || final.description, true);
     setMeta("twitter:description", final.ogDescription || final.description);
   }
 
-  // Keywords
   if (final.keywords) {
     setMeta("keywords", final.keywords);
   }
 
-  // Canonical
   if (final.canonical) {
     setLink("canonical", final.canonical);
     setMeta("og:url", final.canonical, true);
     setMeta("twitter:url", final.canonical);
   }
-
-  // Also update JSON-LD breadcrumb if needed (optional)
 }
 
 export function initSEO() {
-  // Initial SEO based on current path
   const path = window.location.pathname;
   const segment = path.split("/").filter(Boolean)[0] || "home";
   updateSEO(segment);
 
-  // Listen to popstate (back/forward)
   window.addEventListener("popstate", () => {
     const seg = window.location.pathname.split("/").filter(Boolean)[0] || "home";
     updateSEO(seg);
   });
 
-  // Monkey patch pushState/replaceState to catch SPA navigation
   const origPush = history.pushState;
   const origReplace = history.replaceState;
   const notify = () => {
     const seg = window.location.pathname.split("/").filter(Boolean)[0] || "home";
-    // slight delay to let view switch happen
     setTimeout(() => updateSEO(seg), 50);
   };
   history.pushState = function (...args) {
@@ -161,25 +152,23 @@ export function initSEO() {
     const ret = origPush.apply(this, args);
     notify();
     return ret;
-  };
+  } as any;
   history.replaceState = function (...args) {
     // @ts-ignore
     const ret = origReplace.apply(this, args);
     notify();
     return ret;
-  };
+  } as any;
 
-  // Also watch for hashchange (legacy)
   window.addEventListener("hashchange", () => {
     const h = location.hash.replace(/^#\/?/, "").split("/")[0] || "home";
     if (h) updateSEO(h);
   });
 }
 
-// For donor profile specific SEO
 export function updateProfileSEO(donorName: string, bloodGroup: string, area: string, donorId: string) {
   const title = `${donorName} (${bloodGroup}) - ${area} | রক্তদাতা প্রোফাইল - CBDC`;
-  const desc = `${donorName}, রক্তের গ্রুপ ${bloodGroup}, এলাকা ${area} - চকবাজার ব্লাড ডোনার'স ক্লাব (CBDC) এর ভেরিফাইড রক্তদাতা। চট্টগ্রামে রক্তদাতা খুঁজুন।`;
+  const desc = `${donorName}, রক্তের গ্রুপ ${bloodGroup}, এলাকা ${area} - চকবাজার ব্লাড ডোনার'স ক্লাব (CBDC) এর ভেরিফাইড রক্তদাতা।`;
   updateSEO("profile", {
     title,
     description: desc,
