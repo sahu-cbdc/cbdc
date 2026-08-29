@@ -4958,6 +4958,10 @@ function initPage() {
         showAppLoading();
         const password = o.password || "";
         delete o.password;
+        /* Firebase Auth অ্যাকাউন্ট তৈরি হওয়ার পর RTDB প্রোফাইল লেখা ব্যর্থ হলে
+           catch-এ দুটো পরিস্থিতি আলাদা করা হয় — auth account হয়নি বনাম হয়েছে
+           কিন্তু প্রোফাইল লেখা হয়নি। */
+        let signupUid = null;
 
         try{
           if(!fbReady) throw new Error("ডাটাবেস সংযোগ নেই। ইন্টারনেট সংযোগ পরীক্ষা করুন।");
@@ -4971,6 +4975,7 @@ function initPage() {
             try{ await updateProfile(cred.user, {displayName: o.name}); }catch(_){}
           }
           if(!uid) throw new Error("অ্যাকাউন্ট তৈরি করা যায়নি।");
+          signupUid = uid;
 
           const existingProfile = await getRow(NODES.users, uid);
           const photoURL = photoForUid(existingProfile, googleProfile ? (googleProfile.photo||"") : "");
@@ -5014,45 +5019,58 @@ function initPage() {
           form.reset();
           clearFormErrors(form);
           $("#suAgree").checked = false;
-          const _wasGoogle = isGoogle;
           setSignupGoogleMode(null);
           message.className = "hidden"; message.textContent = "";
-          if(_wasGoogle){
-            // Google দিয়ে প্রথমবার — সরাসরি Doner Panel (কোনো error নয়, clean form থেকে)
-            hideAppModal();
-            setPendingGoogleProfile(null);
-            const rr2 = await resolveRole({uid, email:o.email, name:o.name});
-            finishLogin({email:o.email, name:o.name, role:rr2.role, permissions:rr2.permissions, photo:photoURL, uid});
-          } else {
-            // Manual account creation: সরাসরি Doner Panel নয় — Login পেজে নিয়ে যাওয়া + 3s popup
-            try{
-              const {signOut} = await import("firebase/auth");
-              if(auth && auth.currentUser) await signOut(auth);
-            }catch(e){}
-            setPendingGoogleProfile(null);
-            /* Login ফর্মে ইমেইল আগে থেকেই বসিয়ে রাখি — popup বন্ধ হলে যেন ব্যবহারকারী
-               সহজেই লগইন করতে পারে। */
-            const _loginEmail = document.getElementById("username");
-            if(_loginEmail) _loginEmail.value = o.email || "";
-            /* শুধু ১টি popup: loading popup-এর ভেতরেই text বদলে ছোট success দেখাই —
-               Login পেজে আলাদা success message আর দেখানো হয় না। */
-            const _loginMsg = document.getElementById("loginMessage");
-            if(_loginMsg){ _loginMsg.className = "hidden"; _loginMsg.textContent = ""; }
-            showView("login");
-            try{
-              showAppMessage("অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে। অনুগ্রহ করে ইউজারনেম অথবা ইমেইল এবং পাসওয়ার্ড দিয়ে লগইন করুন।", false, "অ্যাকাউন্ট তৈরি হয়েছে!");
-              /* popup ৩ সেকেন্ড পর নিজে থেকে বন্ধ হবে — Login পেজটি ইতিমধ্যে তার পেছনে আছে */
-              setTimeout(()=>{ try{ hideAppModal(); }catch(e){} }, 3000);
-            }catch(e){ hideAppModal(); toast("অ্যাকাউন্ট তৈরি হয়েছে — এখন লগইন করুন"); }
-          }
+          /* Email/Password ও Google — দুটোতেই একই সফল flow:
+             Firebase Auth + RTDB Save → Success Popup → Auto Hide → Login Page →
+             Email Auto-Fill → ব্যবহারকারী নিজে লগইন করবে।
+             (Google সেশন থাকলেও signOut করা হয় — ইউজার নিজে লগইন করবে।) */
+          try{
+            const {signOut} = await import("firebase/auth");
+            if(auth && auth.currentUser) await signOut(auth);
+          }catch(e){}
+          setPendingGoogleProfile(null);
+          /* Login ফর্মে শুধু ইমেইল auto-fill — পাসওয়ার্ড কখনো auto-fill/save হয় না। */
+          const _loginEmail = document.getElementById("username");
+          if(_loginEmail) _loginEmail.value = o.email || "";
+          const _loginMsg = document.getElementById("loginMessage");
+          if(_loginMsg){ _loginMsg.className = "hidden"; _loginMsg.textContent = ""; }
+          showView("login");
+          try{
+            showAppMessage(
+              isGoogle
+                ? "অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে। লগইন পেজে 'Google দিয়ে লগইন করুন' চেপে প্রবেশ করুন।"
+                : "অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে। অনুগ্রহ করে ইউজারনেম অথবা ইমেইল এবং পাসওয়ার্ড দিয়ে লগইন করুন।",
+              false,
+              "অ্যাকাউন্ট তৈরি হয়েছে!"
+            );
+            /* popup ৩ সেকেন্ড পর নিজে থেকে বন্ধ হবে — Login পেজটি ইতিমধ্যে তার পেছনে আছে */
+            setTimeout(()=>{ try{ hideAppModal(); }catch(e){} }, 3000);
+          }catch(e){ hideAppModal(); toast("অ্যাকাউন্ট তৈরি হয়েছে — এখন লগইন করুন"); }
         }catch(err){
           hideAppModal();
-          console.warn("signup error:", err);
-          const msg = authErrorMessage(err, {fallback: "অ্যাকাউন্ট তৈরি করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।"});
+          /* আসল error code/message কনসোলে — UI-তে কখনো raw Firebase টেক্সট নয়। */
+          console.warn("signup error:", (err && err.code) || "", (err && err.message) || "", err);
           const code = (err && err.code) || "";
-          if(code === "auth/email-already-in-use" || code === "auth/invalid-email") setFieldError($("#suEmail"), msg);
-          else if(code === "auth/weak-password") setFieldError($("#suPassword"), msg);
-          else showMessage(message, msg, "error");
+          if(code === "auth/email-already-in-use" || code === "auth/invalid-email"){
+            setFieldError($("#suEmail"), authErrorMessage(err, {fallback:"এই ইমেইল দিয়ে অ্যাকাউন্ট তৈরি করা যায়নি।"}));
+            return;
+          }
+          if(code === "auth/weak-password"){
+            setFieldError($("#suPassword"), authErrorMessage(err));
+            return;
+          }
+          /* Firebase Auth-এ account তৈরি হয়েছে, কিন্তু RTDB `users/{uid}` প্রোফাইল
+             লেখা যায়নি (Security Rules/সংযোগ) — একই uid-এ আবার লগইন করলে প্রোফাইল
+             স্বয়ংক্রিয়ভাবে তৈরি হয়, তাই বিভ্রান্তিকর "তৈরি করা যায়নি" না দেখিয়ে
+             পরিষ্কার কারণ দেখাই। */
+          if(signupUid){
+            showMessage(message,
+              "অ্যাকাউন্ট তৈরি হয়েছে, কিন্তু প্রোফাইল সংরক্ষণ করা যায়নি (ডাটাবেস অনুমতি বা সংযোগ সমস্যা)। আবার লগইন করলে প্রোফাইল স্বয়ংক্রিয়ভাবে তৈরি হয়ে যাবে — সমস্যা থাকলে অ্যাডমিনের সাথে যোগাযোগ করুন।",
+              "error");
+            return;
+          }
+          showMessage(message, authErrorMessage(err, {fallback: "অ্যাকাউন্ট তৈরি করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।"}), "error");
         }
       });
       attachLiveClear($("#signupForm"));
@@ -5189,12 +5207,14 @@ function initPage() {
           return;
         }
         if(!red){
-          /* redirect শুরু হয়েছিল কিন্তু ফলাফল নেই — বাতিল/বিঘ্ন। চুপচাপ না
-             থেকে পরিষ্কার বার্তা দেখাই, যাতে সমস্যাটি ধরা পড়ে। */
+          /* redirect শুরু হয়েছিল কিন্তু getRedirectResult() ফলাফল দেয়নি।
+             এটি "বাতিল" নয় — প্রকৃত কারণ কনসোলে [google-redirect] লগে দেখা যায়
+             (src/lib/authx.ts → consumeGoogleRedirect)। ভুল 'বাতিল' বার্তা না দেখিয়ে
+             সঠিক, পদক্ষেপযোগ্য বার্তা দেখাই। */
           if(pending){
             showView("login");
             showMessage($("#loginMessage"),
-              "Google লগইন সম্পন্ন হয়নি — নির্বাচনটি বাতিল হয়েছে অথবা সংযোগে সমস্যা হয়েছে। আবার চেষ্টা করুন।",
+              "Google লগইন সম্পন্ন হয়নি — Google থেকে ফেরার ফলাফল পাওয়া যায়নি। ব্রাউজারে তৃতীয়-পক্ষ কুকি/স্টোরেজ ব্লক থাকলে বা সংযোগ বিঘ্নিত হলে এটি হয়। আবার চেষ্টা করুন।",
               "error");
           }
           return;

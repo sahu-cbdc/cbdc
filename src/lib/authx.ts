@@ -288,14 +288,22 @@ export async function loadUserProfile(uid: string): Promise<Record<string, any> 
 }
 
 /**
- * মোবাইল ব্রাউজার ও ওয়েবভিউতে popup অবিশ্বাসী — সরাসরি redirect নিরাপদ।
- * (ইন-অ্যাপ ব্রাউজার যেমন Facebook/Instagram/Messenger webview-এ popup প্রায়ই ব্লক হয়।)
+ * redirect সরাসরি ব্যবহার করা হবে কিনা — শুধু সেসব পরিবেশে যেখানে popup
+ * নির্ভরযোগ্য নয়:
+ *   • ইন-অ্যাপ webview (Facebook/Instagram/Messenger/Line/TikTok) — popup ব্লক হয়;
+ *   • iOS (iPhone/iPad/iPod) — popup window/tab থেকে ফলাফল নির্ভরযোগ্যভাবে ফেরে না।
+ *
+ * সাধারণ মোবাইল ব্রাউজারে (যেমন Android Chrome) আগে popup চেষ্টা করা হয়,
+ * কারণ redirect flow ক্রস-অরিজিন auth-handler iframe + তৃতীয়-পক্ষ storage-এর
+ * উপর নির্ভর করে — ব্রাউজারে তৃতীয়-পক্ষ কুকি/স্টোরেজ ব্লক থাকলে ফলাফল হারিয়ে
+ * গিয়ে getRedirectResult() null ফেরত দেয়। popup ব্লক হলে নিচের
+ * REDIRECT_FALLBACK_CODES অনুযায়ী স্বয়ংক্রিয়ভাবে redirect fallback হয়।
  */
 export function shouldPreferRedirect(): boolean {
   try {
     const ua = navigator.userAgent || "";
     if (/\b(FBAN|FBAV|Instagram|Messenger|Line\/|TikTok)\b/i.test(ua)) return true; // webview
-    if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(ua)) return true;
+    if (/iPhone|iPad|iPod/i.test(ua)) return true; // iOS — popup result unreliable
   } catch {
     /* ignore */
   }
@@ -377,10 +385,40 @@ export async function consumeGoogleRedirect(
     result = await getRedirectResult(auth);
   } catch (err) {
     setGoogleIntent(null);
+    console.warn(
+      "[google-redirect] getRedirectResult threw:",
+      (err as any)?.code,
+      (err as any)?.message
+    );
     throw err;
   }
   if (!result || !result.user) {
-    if (hadIntent) setGoogleIntent(null); // বাতিল/ব্যর্থ redirect — অবশিষ্ট intent পরিষ্কার
+    /* getRedirectResult() null দিতে পারে যদিও SDK ইতিমধ্যে sign-in করে ফেলেছে
+       (initialization-এই redirect process হয়ে user বসে গেলে, বা ফলাফল ইতিমধ্যে
+       consume হয়ে থাকলে)। তখন ভুল "বাতিল" না দেখিয়ে currentUser-ই ব্যবহার করি। */
+    const current = auth.currentUser;
+    if (current && current.uid) {
+      console.warn(
+        "[google-redirect] getRedirectResult returned null but auth.currentUser is signed in — resuming from currentUser.",
+        current.uid
+      );
+      return {
+        profile: {
+          uid: current.uid,
+          email: current.email || "",
+          name: current.displayName || "",
+          photo: current.photoURL || "",
+        },
+        intent,
+      };
+    }
+    if (hadIntent) setGoogleIntent(null); // ব্যর্থ redirect — অবশিষ্ট intent পরিষ্কার
+    console.warn(
+      "[google-redirect] getRedirectResult returned null and no signed-in user." +
+        " pendingIntent=" + (hadIntent ? intent : "none") +
+        ". সম্ভাব্য কারণ: তৃতীয়-পক্ষ কুকি/স্টোরেজ ব্লক, auth-handler ফলাফল সংরক্ষণ না করা," +
+        " অথবা redirect বিঘ্নিত হওয়া।"
+    );
     return null;
   }
   const u = result.user;
