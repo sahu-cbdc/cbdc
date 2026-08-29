@@ -1,0 +1,24 @@
+# CBDC - Chawkbazar Blood Donor's Club
+# চকবাজার ব্লাড ডোনার'স ক্লাব
+
+User-agent: *
+Allow: /
+
+# Disallow private panels from indexing (optional - they require auth)
+Disallow: /admin/
+Disallow: /moderator/
+Disallow: /doner/
+
+# Allow all public pages
+Allow: /donor-search
+Allow: /register
+Allow: /emergency
+Allow: /eligibility
+Allow: /about
+Allow: /profile/
+
+# Sitemaps
+Sitemap: https://cbdc-a9418.web.app/sitemap.xml
+
+# Host
+Host: https://cbdc-a9418.web.app

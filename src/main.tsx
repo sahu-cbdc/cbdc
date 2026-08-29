@@ -6,10 +6,11 @@
  * হবে (URL হিন্ট, শেষ-ভিজিট বা ডিফল্ট home)। পেজ বদলাতে
  * navigateToPage() (src/lib/router.ts) ব্যবহার করা হয়।
  */
-import { Component, Suspense, lazy, type ReactNode } from "react";
+import { Component, Suspense, lazy, type ReactNode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import "./lib/router";
 import { resolveBootPage, navigateToPage } from "./lib/router";
+import { initSEO } from "./lib/seo";
 import Home from "./pages/Home";
 
 /* প্যানেলগুলো lazy-load — হোমপেজ দ্রুত খোলে, প্যানেল দরকার হলেই ডাউনলোড হয় */
@@ -20,6 +21,25 @@ const Moderator = lazy(() => import("./pages/Moderator"));
 const bootPage = resolveBootPage();
 
 function ActivePage() {
+  // SEO init — home এর জন্য dynamic SEO, admin/moderator/doner এর জন্য noindex
+  useEffect(() => {
+    try {
+      initSEO();
+    } catch {}
+    // Private panels should not be indexed
+    if (bootPage !== "home") {
+      try {
+        let metaRobots = document.querySelector('meta[name="robots"]') as HTMLMetaElement | null;
+        if (!metaRobots) {
+          metaRobots = document.createElement("meta");
+          metaRobots.name = "robots";
+          document.head.appendChild(metaRobots);
+        }
+        metaRobots.content = "noindex, nofollow";
+      } catch {}
+    }
+  }, []);
+
   switch (bootPage) {
     case "doner":
       return <Doner />;

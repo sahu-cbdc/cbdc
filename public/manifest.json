@@ -1,0 +1,60 @@
+{
+  "name": "চকবাজার ব্লাড ডোনার'স ক্লাব | CBDC - Chawkbazar Blood Donor's Club",
+  "short_name": "CBDC",
+  "description": "চট্টগ্রামের স্বেচ্ছাসেবী রক্তদাতা সংগঠন - রক্তদাতা খুঁজুন, নিবন্ধন করুন, জরুরি রক্তের আবেদন করুন। Chakbazar Blood Donor's Club",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fbfcfa",
+  "theme_color": "#087a4b",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "lang": "bn",
+  "dir": "ltr",
+  "categories": ["medical", "health", "social", "lifestyle"],
+  "icons": [
+    {
+      "src": "/img/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/img/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "রক্তদাতা খুঁজুন",
+      "short_name": "খুঁজুন",
+      "description": "চট্টগ্রামে রক্তদাতা খুঁজুন",
+      "url": "/donor-search",
+      "icons": [{"src": "/img/logo.png", "sizes": "96x96"}]
+    },
+    {
+      "name": "জরুরি রক্তের আবেদন",
+      "short_name": "জরুরি",
+      "description": "জরুরি রক্তের জন্য আবেদন করুন",
+      "url": "/emergency",
+      "icons": [{"src": "/img/logo.png", "sizes": "96x96"}]
+    },
+    {
+      "name": "ডোনার নিবন্ধন",
+      "short_name": "নিবন্ধন",
+      "description": "রক্তদাতা হিসেবে নিবন্ধন করুন",
+      "url": "/register",
+      "icons": [{"src": "/img/logo.png", "sizes": "96x96"}]
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/img/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "CBDC - চকবাজার ব্লাড ডোনার'স ক্লাব"
+    }
+  ]
+}

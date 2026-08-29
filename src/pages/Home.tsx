@@ -40,6 +40,7 @@ import { validateForm, clearFormErrors, attachLiveClear, setFieldError, clearFie
 import { ageFromDob, ageText, dobBounds, isValidDob, toBanglaDigits } from "../lib/age";
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
+import { updateSEO, updateProfileSEO, initSEO } from "../lib/seo";
 /* প্রোফাইল কার্ড ডাউনলোড — Doner প্যানেলের working system-এর shared port
    (src/lib/donorCard.ts)। দুই জায়গা থেকেই হুবহু একই কার্ড তৈরি হয়। */
 import { openDonorCardDownloadSheet, downloadDonorCardImages } from "../lib/donorCard";
@@ -3490,13 +3491,32 @@ function initPage() {
         setMenuBtn(open);
       }
       function showView(name, target){
-        $$("[data-view]").forEach(v=>v.classList.toggle("active",v.dataset.view===name));
-        $$("#mainNav a[data-route]").forEach(a=>a.classList.toggle("active", a.dataset.route===name || (name==="home" && (a.dataset.route==="home"||a.dataset.route==="homeFooter")) || (name==="login" && a.dataset.route==="dashboard")));
+        $("[data-view]").forEach(v=>v.classList.toggle("active",v.dataset.view===name));
+        $("#mainNav a[data-route]").forEach(a=>a.classList.toggle("active", a.dataset.route===name || (name==="home" && (a.dataset.route==="home"||a.dataset.route==="homeFooter")) || (name==="login" && a.dataset.route==="dashboard")));
         closeMenu();
         if(target){ setTimeout(()=>$(target)?.scrollIntoView({behavior:"smooth",block:"start"}),40); } else window.scrollTo({top:0,behavior:"smooth"});
         if(name==="home"){ renderPublic(); }
         if(name==="login"){ if(typeof renderLoginGate==="function") renderLoginGate(); }
         if(name==="reset-password"){ try{ initResetPage(); }catch(e){ console.warn("reset page:", e && e.message); } }
+        // SEO - প্রতিটি ভিউ পরিবর্তনে title, description, canonical আপডেট
+        try{
+          let seoRoute = name;
+          if(target){
+            if(target==="#donor-search") seoRoute = "donor-search";
+            else if(target==="#about") seoRoute = "about";
+            else if(target==="#gallery") seoRoute = "home";
+          }
+          if(typeof updateSEO === "function") updateSEO(seoRoute);
+          // URL অনুযায়ী canonical আপডেট
+          try{
+            const base = (typeof appBase === "function" ? appBase() : "/");
+            let path = base + (seoRoute==="home"?"":seoRoute);
+            if(target && seoRoute==="home") path = base + target.replace("#","");
+            if(typeof history !== "undefined" && history.replaceState){
+              // canonical meta updateSEO করবে, pushState নয় - শুধু SEO ট্যাগ
+            }
+          }catch(e){}
+        }catch(e){ console.warn("seo:", e && e.message); }
       }
       function routeClick(event){
         const route=event.currentTarget.dataset.route; event.preventDefault();
@@ -4038,6 +4058,12 @@ function initPage() {
         const i = list.findIndex(x => x.id === idv || formatDonorId(x, list.indexOf(x)) === idv);
         const d = i >= 0 ? list[i] : null;
         currentProfId = idv;
+        // SEO for donor profile
+        try{
+          if(d && typeof updateProfileSEO === "function"){
+            updateProfileSEO(d.name||"রক্তদাতা", d.bloodGroup||"", d.area||"", d.id||idv);
+          }
+        }catch(e){}
         if(!d){
           body.innerHTML = `<div class="pmiss"><div class="pmiss-ic">🔍</div>
             <b>প্রোফাইল পাওয়া যায়নি</b>
@@ -5403,6 +5429,7 @@ function initPage() {
       })();
 
       setLogo();
+      try{ if(typeof initSEO === "function") initSEO(); }catch(e){}
       if(window.CBDCShared)CBDCShared.subscribe(()=>{ renderPublic(); renderGallery(); });
       initFirebase().then(()=>{
         /* Home/root বুট-এ কোনো লগইন-গেট redirect নয় — ব্যবহারকারী Panel থেকে
