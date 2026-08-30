@@ -3460,10 +3460,19 @@ function initPage() {
         const n = Number(d.donations ?? d.totalDonations);
         return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
       };
+      /* রক্তদান event-সংখ্যা = জীবন বাঁচিয়েছেন। মোট ব্যাগ আলাদা statistic। */
+      const totalBagCount = d => {
+        const n = Number(d.totalBags ?? 0);
+        return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+      };
       /* ডোনার রেকর্ডে আদৌ রক্তদানের সংখ্যা লেখা আছে কি না — "তথ্য" সেকশনে সংখ্যা
          না থাকলে "দেওয়া হয়নি" দেখানোর জন্য (0 থেকে "তথ্য নেই" আলাদা করতে)। */
       const hasDonationCount = d => {
         const v = d.donations ?? d.totalDonations;
+        return v !== undefined && v !== null && v !== "";
+      };
+      const hasBagCount = d => {
+        const v = d.totalBags;
         return v !== undefined && v !== null && v !== "";
       };
       const publicDonors = () => getDonors();
@@ -3967,6 +3976,8 @@ function initPage() {
           donorId: formatDonorId(d, index),
           total,
           hasDonations: hasDonationCount(d),
+          totalBags: totalBagCount(d),
+          hasBags: hasBagCount(d),
           ready,
           available: d.available !== false,
           rest: (!ready && gap !== null) ? Math.max(0, 90 - gap) : 0
@@ -4008,8 +4019,8 @@ function initPage() {
           </div>
         </div>
         <div class="pstats">
-          <div class="pstat"><b>${v.hasDonations?bn(v.total):"—"}</b><span>মোট রক্তদান</span></div>
-          <div class="pstat"><b>${v.hasDonations?bn(v.total*3):"—"}</b><span>জীবন বাঁচাতে সাহায্য</span></div>
+          <div class="pstat"><b>${v.hasDonations?bn(v.total):"—"}</b><span>জীবন বাঁচিয়েছেন</span></div>
+          <div class="pstat"><b>${v.hasBags?bn(v.totalBags):"—"}</b><span>মোট ব্যাগ</span></div>
           <div class="pstat"><b class="sm">${v.last?dateShort(v.last):"—"}</b><span>শেষ রক্তদান</span></div>
         </div>
         <div class="psec">তথ্য</div>
@@ -4023,7 +4034,8 @@ function initPage() {
           ${row("মোবাইল নম্বর", v.phone || NA, !v.phone)}
           ${row("WhatsApp নম্বর", v.whatsapp || NA, !v.whatsapp)}
           ${row("সর্বশেষ রক্তদানের তারিখ", v.last ? dateText(v.last) : NA, !v.last)}
-          ${row("মোট রক্তদান", v.hasDonations ? bn(v.total) : NA, !v.hasDonations)}
+          ${row("জীবন বাঁচিয়েছেন", v.hasDonations ? bn(v.total) : NA, !v.hasDonations)}
+          ${row("মোট ব্যাগ", v.hasBags ? bn(v.totalBags) : NA, !v.hasBags)}
           ${row("রক্তদানে প্রস্তুত", availLabel, !v.ready)}
           ${v.joined ? row("যুক্ত হয়েছেন", dateText(v.joined)) : ""}
         </div>

@@ -152,11 +152,12 @@ metadata** সেভ হয়।
 
 | Node | Key | Fields | Access |
 | --- | --- | --- | --- |
-| `donors` | donor id (`CBDC-2026-0001`) | name, bloodGroup, gender, **dob**, phone, whatsapp, area, lastDonationDate, donations, totalDonations, status, available, verified, suspended, joined, occupation, ownerUid, photo (ImgBB URL) | public read; admin/moderator write; **owner update (নিজের তথ্য, protected ফিল্ড বাদ) ও owner delete** |
+| `donors` | donor id (`CBDC-2026-0001`) | name, bloodGroup, gender, **dob**, phone, whatsapp, area, lastDonationDate, donations (= lives saved / events), totalDonations, totalBags, status, available, verified, suspended, joined, occupation, ownerUid, photo (ImgBB URL) | public read; admin/moderator write; **owner update (নিজের তথ্য, protected ফিল্ড বাদ) ও owner delete** |
 | `_meta` | counter | `donorCounter/<year>` — পরবর্তী ধারাবাহিক Donor UID-এর atomic counter | public read; authenticated increment |
 | `requests` | push id | patientName, bloodGroup, bags, urgency, status, workflowStatus, hospitalName, hospitalAddress, requesterName, phone, whatsapp, **patientDob**, createdAt, expiresAt, responders | anyone can create; public read; staff manage |
 | `members` | push id | donor sign-up application (status `pending`, **dob**) | anyone can create; owner/staff read |
-| `users` | **auth uid** | uid, name, username, email, phone, **dob**, gender, area, photoURL, provider, role, status, createdAt, **applicationCount**, `data:{donations,mine,notifs,activity,panel}` — `data/panel`-এ Admin/Moderator প্যানেলের নিজের সেটিংস (security/privacy/notif/prefs), সেশন ও কার্যকলাপ | owner + staff; `approved` donorStatus admin-only |
+| `users` | **auth uid** | uid, name, username, email, phone, **dob**, gender, area, photoURL, provider, role, status, createdAt, **applicationCount**, `data:{donations,verifiedDonations,mine,notifs,activity,panel}` — `data/verifiedDonations` এখন Admin-এর **Approved Donations log-এর সাথে synchronized**; `data/panel`-এ Admin/Moderator প্যানেলের নিজের সেটিংস (security/privacy/notif/prefs), সেশন ও কার্যকলাপ | owner + staff; `approved` donorStatus admin-only; `verifiedDonations`-এ লেখা admin/moderator-only |
+| `donations` | donated-record id (`DN-...`) | **approved donation log** — donorId, ownerUid, name, bloodGroup, place, date, bags, **proof (ImgBB URL)**, livesSaved:1, approvedAt, approvedBy, patient, note, updatedAt | `admins` যারা staff (admin/moderator) read; admin সব write; moderator শুধু নতুন record তৈরি (approve-এর সময়), edit/delete নয় |
 | `admins` | **auth uid** | email, role (`admin`/`moderator`), permissions[], name, username, designation | own read; admin write |
 | `queue` | record id | kind (`donor`/`request`/`donation`), name, group, area, **dob**, phone, … | create খোলা (নতুন আবেদনের জন্য); পড়া/সম্পাদনা staff only |
 | *(notification)* | — | Notification **RTDB-তে সংরক্ষিত হয় না** — আলাদা website notification storage (browser localStorage `cbdc.notifications.v1`) | — |
@@ -186,6 +187,16 @@ listener-এর মাধ্যমে সব প্যানেল/ওয়ে�
 | রক্তদান যাচাই | `donationApproval` | রক্তদান ভেরিফিকেশন queue-এ যায় | রক্তদান সরাসরি যাচাইকৃত (`ok:true`) — queue-তে যায় না |
 | জরুরি আবেদন | `emergencyApproval` | জরুরি আবেদন approval queue-এ যায় | আবেদন সরাসরি প্রকাশিত |
 | গ্রুপ বদল | `bloodGroupApproval` | গ্রুপ পরিবর্তন queue-এ যায় | গ্রুপ সরাসরি বদলে যায় (staff হলে সরাসরি RTDB-তে; নইলে pending queue) |
+
+### Approved Donations management (Admin Panel)
+
+রক্তদান approval system **অপরিবর্তিত** থাকে। Approve-র পর admin-এর জন্য নতুন section:
+
+- প্রতিটি approved রক্তদান `donations/{id}`-এ **স্থায়ী record** হয়ে যায় (নাম, গ্রুপ, তারিখ, স্থান, ব্যাগ, Donation ID, approved সময়, **প্রমাণের ছবির URL**)।
+- Admin Panel → আরও → Approved Donations থেকে **View / Edit / Delete**।
+- Edit/Delete-এ confirm হয়; পরে `donors/{id}`-এর `donations`, `totalDonations`, `totalBags`, `lastDonationDate` এবং `users/{uid}/data/verifiedDonations` একসাথে **recompute** হয়।
+- **জীবন বাঁচিয়েছেন:** ১টি approved donation event = ১ জীবন (ব্যাগ দিয়ে হিসাব হয় না)। মোট ব্যাগ `totalBags`-এ আলাদা থাকে।
+- `donations` node-এর read: `admins`-এ থাকা staff; write: admin সব, moderator শুধু approval-এর সময় নতুন record তৈরি করতে পারে।
 
 ### ডোনার ব্যবস্থাপনা ↔ ডোনার আইডি ব্যবস্থাপনা — নিরাপদ সার্ভার ডিলিট
 

@@ -16,6 +16,11 @@ import { ageText, ageFromDob, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
 import { uploadImage as imgbbUploadImage } from "../lib/imgbb";
+import {
+  donationVerKey,
+  safeDonationId,
+  makeApprovedDonationRecord,
+} from "../lib/donationLog";
 import SITE from "../config/site";
 import { noticeVisibleTo, noticeReadKey, markNoticeRead, markAllNoticesRead, watchNoticeReads } from "../lib/notice";
 
@@ -2324,7 +2329,7 @@ function initPage() {
     /* Firebase is the single source of truth — no seeded/dummy records.
        The shape is kept so every consumer finds the same keys. */
     return {donors:[],queue:[],live:[],audit:[],notices:[],messages:[],
-      team:[],gallery:[],
+      team:[],gallery:[],donations:[],
       site:{heroTitle:SITE.hero.title,
         heroText:SITE.hero.text,
         phone:SITE.phone,email:SITE.email,address:SITE.address,
@@ -3679,6 +3684,14 @@ function initPage() {
     if(note)paths[`users/${ownerUid}/groupChange/note`]=String(note).slice(0,200);
     return paths;
   }
+  /* Approved Donation log helper — 1 donation event = 1 life; bags stay separate.
+     The pure implementation is shared from src/lib/donationLog.ts. */
+  const donationIo={
+    listOnce:(node:string)=>listOnce(node),
+    getRow:(node:string,id:string)=>getRow(node,id),
+    updatePaths:(paths:Record<string,any>)=>updatePaths(paths)
+  };
+  const makeApprovedRecord=(q:any,d:any)=>makeApprovedDonationRecord(q,d,ME.name||"মডারেটর",donationIo);
   async function decide(id,ok,note,quiet){
     const i=DB.queue.findIndex(x=>x.id===id);if(i<0)return;
     const q=DB.queue[i];
@@ -3706,6 +3719,7 @@ function initPage() {
              increased only by an approved donation verification. */
           donations:reuseDonor?Number(reuseDonor.donations)||0:0,
           totalDonations:reuseDonor?Number(reuseDonor.totalDonations)||0:0,
+          totalBags:reuseDonor?Number(reuseDonor.totalBags)||0:0,
           createdAt:(reuseDonor&&reuseDonor.createdAt)||at,updatedAt:at};
         paths[`donors/${approvedDonorId}`]=approvedDonor;
         if(q.ownerUid){
@@ -3717,14 +3731,18 @@ function initPage() {
       } else if(q.kind==="donation"&&ok){
         const d=DB.donors.find(x=>x.id===q.donorId||x.name===q.name);
         if(d){
-          /* Verified unit count = number of approved bags, not number of
-             submission rows, so a 4-bag donation is 4 verified units. */
-          const units=Math.max(1,Math.floor(Number(q.bags)||1));
-          const count=(Number(d.donations)||0)+units;
-          approvedDonation={d,count,last:!d.last||q.date>d.last?q.date:d.last};
+          /* One approved donation event = one life. `bags` is a separate metric. */
+          const bags=Math.max(1,Math.floor(Number(q.bags)||1));
+          const count=(Number(d.donations)||0)+1;
+          const totalBags=(Number(d.totalBags)||0)+bags;
+          const last=!d.last||q.date>d.last?q.date:d.last;
+          const record=await makeApprovedRecord(q,d);
+          approvedDonation={d,count,totalBags,last,record};
+          paths[`donations/${record.id}`]=record;
           paths[`donors/${d.id}/donations`]=count;
           paths[`donors/${d.id}/totalDonations`]=count;
-          if(approvedDonation.last)paths[`donors/${d.id}/lastDonationDate`]=approvedDonation.last;
+          paths[`donors/${d.id}/totalBags`]=totalBags;
+          if(last)paths[`donors/${d.id}/lastDonationDate`]=last;
           /* Legacy mirror + authoritative verified list: mark the exact
              user-side record so the donor panel shows it as verified. The
              verifiedDonations list is admin/moderator-only in the RTDB rules. */
@@ -3734,9 +3752,13 @@ function initPage() {
             const arr=Array.isArray(u&&u.data&&u.data.donations)?u.data.donations:[];
             const di=arr.findIndex(x=>x&&String(x.date||"")===String(q.date||"")&&String(x.place||"")===String(q.place||""));
             if(di>=0)paths[`users/${owner}/data/donations/${di}/ok`]=true;
-            const vkey="v"+(((s:string)=>{let h=0;for(let i=0;i<s.length;i++)h=((h<<5)-h+s.charCodeAt(i))|0;return (h>>>0).toString(36)})(String(q.date||"")+"|"+String(q.place||"")));
-            paths[`users/${owner}/data/verifiedDonations/${vkey}`]={date:q.date,place:q.place,bags:units,at:nowIso()};
+            const vkey=donationVerKey(q.date,q.place);
+            paths[`users/${owner}/data/verifiedDonations/${vkey}`]={date:q.date,place:q.place,bags,livesSaved:1,at:nowIso(),proof:record.proof||""};
           }
+        } else {
+          const record=await makeApprovedRecord(q,null);
+          paths[`donations/${record.id}`]=record;
+          approvedDonation={d:null,count:0,totalBags:0,last:"",record};
         }
       } else if(q.kind==="request"&&ok){
         approvedRequest={id:q.id,patient:q.patient,group:q.group,bags:q.bags,urgency:q.urgency,status:"searching",
@@ -3795,9 +3817,14 @@ function initPage() {
       DB.donors.unshift({id:approvedDonor.id,name:approvedDonor.name,group:approvedDonor.group,area:approvedDonor.area,
         phone:approvedDonor.phone,whatsapp:approvedDonor.whatsapp,gender:approvedDonor.gender,dob:approvedDonor.dob,
         last:approvedDonor.lastDonationDate,photo:approvedDonor.photo,ownerUid:approvedDonor.ownerUid,available:true,
-        verified:true,suspended:false,joined:approvedDonor.joined,donations:approvedDonor.donations});
+        verified:true,suspended:false,joined:approvedDonor.joined,donations:approvedDonor.donations,
+        totalBags:approvedDonor.totalBags||0});
     }
-    if(approvedDonation){approvedDonation.d.donations=approvedDonation.count;approvedDonation.d.last=approvedDonation.last;}
+    if(approvedDonation){if(approvedDonation.d){approvedDonation.d.donations=approvedDonation.count;
+      approvedDonation.d.totalBags=approvedDonation.totalBags;approvedDonation.d.last=approvedDonation.last;}
+      if(approvedDonation.record){const rid=approvedDonation.record.id;
+        DB.donations=DB.donations.filter(x=>String(x.id)!==String(rid));
+        DB.donations.unshift(approvedDonation.record);}}
     if(approvedRequest)DB.live.unshift(approvedRequest);
     if(approvedGroup){const d=DB.donors.find(x=>String(x.ownerUid)===String(approvedGroup.ownerUid));if(d)d.group=approvedGroup.to;}
     DB.queue.splice(i,1);
@@ -4221,7 +4248,7 @@ function initPage() {
   
     P.over=()=>`
       <div class="astat">
-        <button class="r"><b>${bn(d.donations)}</b><span>মোট রক্তদান</span></button>
+        <button class="r"><b>${bn(d.donations)}</b><span>জীবন বাঁচিয়েছেন</span></button>
         <button class="g"><b>${d.last?bn(dayDiff(d.last)):"—"}</b><span>${d.last?"দিন আগে শেষ দান":"শেষ দানের তথ্য নেই"}</span></button>
         <button class="b"><b>${bn(donorReqs(d).length)}</b><span>সাড়া দিয়েছেন</span></button>
         <button class="a"><b>${bn(Math.max(0,Math.floor((Date.now()-new Date(d.joined))/864e5/30)))}</b><span>মাস ধরে আছেন</span></button>

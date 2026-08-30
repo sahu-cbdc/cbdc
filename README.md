@@ -17,12 +17,22 @@
 | `/profile/<id>` | পাবলিক ডোনার প্রোফাইল ভিউ |
 | `/doner`, `/doner/<screen>` | ডোনার প্যানেল (`src/pages/Doner.tsx`) |
 | `/admin`, `/admin/<screen>` | অ্যাডমিন প্যানেল (`src/pages/Admin.tsx`) |
+| `/admin/set/approved` | **Approved Donations** — অনুমোদিত রক্তদান দেখুন, সম্পাদনা ও মুছুন |
 | `/moderator`, `/moderator/<screen>` | মডারেটর প্যানেল (`src/pages/Moderator.tsx`) |
 | `/?uid=<donor id>` | ডোনার কার্ড মোড (শেয়ারযোগ্য পাবলিক কার্ড) |
 
 পুরোনো লিংক (`/doner.html?uid=…`, `#/admin`, `#dashboard` ইত্যাদি) স্বয়ংক্রিয়ভাবে
 সঠিক পেজে খুলে এবং clean URL-এ রূপান্তরিত হয় — শেয়ার করা পুরোনো লিংক ভাঙে না।
 
+
+## Approved Donations
+
+- রক্তদান **Submit → Pending → Approve/Reject** সিস্টেম অপরিবর্তিত।
+- Approve-র পরে Admin Panel-এ **Approved Donations** section-এ ছবিসহ স্থায়ী record যায়।
+- Admin **View / Edit / Delete** করতে পারে (confirmation-সহ); Edit/Delete হলে donor statistics ও
+  user-এর verified list **স্বয়ংক্রিয়ভাবে synchronized** হয়।
+- **জীবন বাঁচিয়েছেন** এখন event-ভিত্তিক: ১টি রক্তদান = ১ জীবন (ব্যাগ দিয়ে হিসাব হয় না)।
+  মোট ব্যাগ আলাদা `totalBags` হিসেবে থাকে।
 
 ## যেকোনো হোস্টিং সাইটে চালানো
 

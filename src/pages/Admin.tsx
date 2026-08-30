@@ -11,12 +11,22 @@ import "../lib/store";
 import { initFirebase as initSharedFirebase, NODES, getAuthInstance } from "../lib/firebase";
 import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
 import { authErrorMessage, resolveUserRole, panelForRole, setOrChangePassword } from "../lib/authx";
-import { getRow, setRow, updateRow, removeRow, watchList, watchRow, findBy, nowIso, nextDonorId, updatePaths, serverTime, getPath, setPath, removePath, watchPath } from "../lib/rtdb";
+import { getRow, setRow, updateRow, removeRow, listOnce, watchList, watchRow, findBy, nowIso, nextDonorId, updatePaths, serverTime, getPath, setPath, removePath, watchPath } from "../lib/rtdb";
 import { ageText, ageFromDob, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage, getImgbbKey, saveImgbbKey } from "../lib/imgbb";
+import {
+  donationVerKey,
+  safeDonationId,
+  donorStatsFromRecords,
+  makeApprovedDonationRecord,
+  writeApprovedDonation,
+  deleteApprovedDonation,
+  backfillApprovedDonations,
+  proofUrlOf,
+} from "../lib/donationLog";
 import { serverDeleteEntity, deletionMessage, bulkDeletionMessage, describeDeletionFailure, isAuthUid, runDedupeScan, type DeletionStep, type DeleteScope } from "../lib/accountDelete";
 import { noticeIsActive, noticeTarget } from "../lib/notice";
 
@@ -2287,7 +2297,7 @@ function initPage() {
   
   /* ══════════ PERMISSIONS ══════════ */
   const PERM_GROUPS={
-    "রক্তদাতা":["donor.view","donor.edit","donor.approve","donation.verify","contact.reveal"],
+    "রক্তদাতা":["donor.view","donor.edit","donor.approve","donation.verify","donation.manage","contact.reveal"],
     "আবেদন":["request.view","request.approve","request.resolve"],
     "ব্যবহারকারী":["user.view","user.suspend","group.approve","report.resolve"],
     "ওয়েবসাইট":["website.view","website.edit","gallery.manage","notice.manage"],
@@ -2332,7 +2342,7 @@ function initPage() {
     /* Firebase is the single source of truth — no seeded/dummy records.
        The shape is kept so every consumer finds the same keys. */
     return {donors:[],queue:[],live:[],audit:[],notices:[],messages:[],
-      team:[],gallery:[],reports:[],
+      team:[],gallery:[],reports:[],donations:[],
       site:{heroTitle:SITE.hero.title,
         heroText:SITE.hero.text,
         phone:SITE.phone,email:SITE.email,address:SITE.address,
@@ -2358,6 +2368,7 @@ function initPage() {
       st.gallery=DB.gallery.map((g,i)=>({...g,imageUrl:g.imageUrl||g.url,url:g.url||g.imageUrl,order:g.order??i+1}));
       st.notices=DB.notices.map(x=>CBDCShared.clone(x));
       if(DB.accounts)st.accounts=DB.accounts.map(x=>CBDCShared.clone(x));
+      if(DB.donations)st.donations=DB.donations.map(x=>CBDCShared.clone(x));
       return st;
     },"panel:"+PANEL.id);
   }
@@ -2378,6 +2389,7 @@ function initPage() {
     DB.gallery=st.gallery.map(g=>({...g,url:g.url||g.imageUrl}));
     DB.notices=st.notices.map(x=>CBDCShared.clone(x));
     DB.accounts=st.accounts.map(x=>CBDCShared.clone(x));
+    DB.donations=(st.donations||[]).map(x=>CBDCShared.clone(x));
     SHARED_PULLING=false;
     lastPersistedDB=CBDCShared.clone(DB);
   }
@@ -2462,7 +2474,7 @@ function initPage() {
       if(document.querySelector(".sheet"))return;
       const key=(CUR==="set"&&SUB)?SUB:CUR;
       if(CUR==="home"&&!SUB){go(CUR,SUB,false,ARG);return}
-      if(["team","donorid","access","users","audit","inbox","stats","donors","live","gallery","notice"].includes(key))
+      if(["team","donorid","access","users","audit","inbox","stats","donors","approved","live","gallery","notice"].includes(key))
         go(CUR,SUB,false,ARG);
     }catch(e){/* প্রথম render-এর আগে CUR/SUB থাকে না — তখন কিছুই করতে হয় না */}
   }
@@ -2546,6 +2558,7 @@ function initPage() {
   /* sub-pages: opened from a screen, top bar turns into back + title */
   const SUBS={
     donors:{title:"রক্তদাতা তালিকা",perm:"donor.view"},
+    approved:{title:"অনুমোদিত রক্তদান",perm:"donation.manage"},
     live:{title:"চলমান আবেদন",perm:"request.view"},
     users:{title:"ব্যবহারকারী",perm:"user.view"},
     team:{title:"ডোনার ব্যবস্থাপনা",perm:"team.view"},
@@ -3054,7 +3067,8 @@ function initPage() {
       whatsapp:data.whatsapp||"",gender:data.gender,dob:data.dob,last:data.lastDonation||"",
       photo:data.photo||"",ownerUid:ME.uid,available:data.available!==false,
       verified:true,suspended:d?!!d.suspended:false,joined:data.joined||iso(now()),
-      donations:d?Number(d.donations)||0:Number(data.donations)||0};
+      donations:d?Number(d.donations)||0:Number(data.donations)||0,
+      totalBags:d?Number(d.totalBags)||0:Number(data.totalBags)||0};
     if(d)Object.assign(d,patch);else DB.donors.unshift(patch);
   }
   async function syncAdminDonorPublicRecord(changed={}){
@@ -3171,7 +3185,7 @@ function initPage() {
           /* Creating a donor record never counts an unverified "last donation";
              donation totals are increased only by an approved donation. */
           paths[`${base}/suspended`]=false;paths[`${base}/donations`]=0;
-          paths[`${base}/totalDonations`]=0;paths[`${base}/createdAt`]=at;
+          paths[`${base}/totalDonations`]=0;paths[`${base}/totalBags`]=0;paths[`${base}/createdAt`]=at;
         }
         /* আগে সাধারণ donor হিসেবে pending আবেদন থাকলে Admin flow সেটি সরাসরি
            approved করে; moderation queue-তে নিজের জন্য কিছু রেখে দেয় না। */
@@ -3189,7 +3203,7 @@ function initPage() {
         Object.assign(ME,identity,{bloodGroup,lastDonation,health,whatsapp,available:true,
           donorId,donorStatus:"approved",cardTheme:String(current.cardTheme||ME.cardTheme||"green"),isDonor:true});
         updateLocalAdminDonor(donorId,{...identity,bloodGroup,lastDonation,whatsapp,available:true,photo,joined,
-          donations:isNew?0:Number(donor&&donor.donations)||0});
+          donations:isNew?0:Number(donor&&donor.donations)||0,totalBags:isNew?0:Number(donor&&donor.totalBags)||0});
         DB.queue=DB.queue.filter(q=>!(q.kind==="donor"&&String(q.ownerUid||"")===uid));
         await logMe("রক্তদাতা হিসেবে যুক্ত হয়েছেন",donorId,"donor");
         await logAudit("অ্যাডমিন রক্তদাতা হিসেবে যুক্ত",donorId,"donor");
@@ -4080,6 +4094,7 @@ function initPage() {
              increased only by an approved donation verification. */
           donations:reuseDonor?Number(reuseDonor.donations)||0:0,
           totalDonations:reuseDonor?Number(reuseDonor.totalDonations)||0:0,
+          totalBags:reuseDonor?Number(reuseDonor.totalBags)||0:0,
           createdAt:(reuseDonor&&reuseDonor.createdAt)||at,updatedAt:at};
         paths[`donors/${approvedDonorId}`]=approvedDonor;
         if(q.ownerUid){
@@ -4091,14 +4106,19 @@ function initPage() {
       } else if(q.kind==="donation"&&ok){
         const d=DB.donors.find(x=>x.id===q.donorId||x.name===q.name);
         if(d){
-          /* Verified unit count = number of approved bags, not number of
-             submission rows, so a 4-bag donation is 4 verified units. */
-          const units=Math.max(1,Math.floor(Number(q.bags)||1));
-          const count=(Number(d.donations)||0)+units;
-          approvedDonation={d,count,last:!d.last||q.date>d.last?q.date:d.last};
+          /* One approved donation event = one life. Bag quantity is kept as a
+             separate statistic (`totalBags`), never used for lives saved. */
+          const bags=Math.max(1,Math.floor(Number(q.bags)||1));
+          const count=(Number(d.donations)||0)+1;
+          const totalBags=(Number(d.totalBags)||0)+bags;
+          const last=!d.last||q.date>d.last?q.date:d.last;
+          const record=await makeApprovedRecord(q,d);
+          approvedDonation={d,count,totalBags,last,record};
+          paths[`donations/${record.id}`]=record;
           paths[`donors/${d.id}/donations`]=count;
           paths[`donors/${d.id}/totalDonations`]=count;
-          if(approvedDonation.last)paths[`donors/${d.id}/lastDonationDate`]=approvedDonation.last;
+          paths[`donors/${d.id}/totalBags`]=totalBags;
+          if(last)paths[`donors/${d.id}/lastDonationDate`]=last;
           /* Legacy mirror + authoritative verified list: mark the exact
              user-side record so the donor panel shows it as verified. The
              verifiedDonations list is admin/moderator-only in the RTDB rules. */
@@ -4108,9 +4128,13 @@ function initPage() {
             const arr=Array.isArray(u&&u.data&&u.data.donations)?u.data.donations:[];
             const di=arr.findIndex(x=>x&&String(x.date||"")===String(q.date||"")&&String(x.place||"")===String(q.place||""));
             if(di>=0)paths[`users/${owner}/data/donations/${di}/ok`]=true;
-            const vkey="v"+(((s:string)=>{let h=0;for(let i=0;i<s.length;i++)h=((h<<5)-h+s.charCodeAt(i))|0;return (h>>>0).toString(36)})(String(q.date||"")+"|"+String(q.place||"")));
-            paths[`users/${owner}/data/verifiedDonations/${vkey}`]={date:q.date,place:q.place,bags:units,at:nowIso()};
+            const vkey=donationVerKey(q.date,q.place);
+            paths[`users/${owner}/data/verifiedDonations/${vkey}`]={date:q.date,place:q.place,bags,livesSaved:1,at:nowIso(),proof:record.proof||""};
           }
+        } else {
+          const record=await makeApprovedRecord(q,null);
+          paths[`donations/${record.id}`]=record;
+          approvedDonation={d:null,count:0,totalBags:0,last:"",record};
         }
       } else if(q.kind==="request"&&ok){
         approvedRequest={id:q.id,patient:q.patient,group:q.group,bags:q.bags,urgency:q.urgency,status:"searching",
@@ -4169,9 +4193,14 @@ function initPage() {
       DB.donors.unshift({id:approvedDonor.id,name:approvedDonor.name,group:approvedDonor.group,area:approvedDonor.area,
         phone:approvedDonor.phone,whatsapp:approvedDonor.whatsapp,gender:approvedDonor.gender,dob:approvedDonor.dob,
         last:approvedDonor.lastDonationDate,photo:approvedDonor.photo,ownerUid:approvedDonor.ownerUid,available:true,
-        verified:true,suspended:false,joined:approvedDonor.joined,donations:approvedDonor.donations});
+        verified:true,suspended:false,joined:approvedDonor.joined,donations:approvedDonor.donations,
+        totalBags:approvedDonor.totalBags||0});
     }
-    if(approvedDonation){approvedDonation.d.donations=approvedDonation.count;approvedDonation.d.last=approvedDonation.last;}
+    if(approvedDonation){if(approvedDonation.d){approvedDonation.d.donations=approvedDonation.count;
+      approvedDonation.d.totalBags=approvedDonation.totalBags;approvedDonation.d.last=approvedDonation.last;}
+      if(approvedDonation.record){const rid=approvedDonation.record.id;
+        DB.donations=DB.donations.filter(x=>String(x.id)!==String(rid));
+        DB.donations.unshift(approvedDonation.record);}}
     if(approvedRequest)DB.live.unshift(approvedRequest);
     if(approvedGroup){const d=DB.donors.find(x=>String(x.ownerUid)===String(approvedGroup.ownerUid));if(d)d.group=approvedGroup.to;}
     DB.queue.splice(i,1);
@@ -4198,6 +4227,7 @@ function initPage() {
       </div>`
     +sect("",[
         row("donor.view","donors","drop","রক্তদাতা তালিকা","খুঁজুন, সম্পাদনা করুন, স্থগিত করুন",bn(DB.donors.length)),
+        row("donation.manage","approved","checkC","অনুমোদিত রক্তদান","অনুমোদিত রক্তদান — দেখুন, সম্পাদনা ও মুছুন",bn(DB.donations.length)),
         row("user.view","users","users","ব্যবহারকারী ও অভিযোগ","অ্যাকাউন্ট ও রিপোর্ট",DB.reports.filter(r=>r.status!=="resolved").length?bn(DB.reports.filter(r=>r.status!=="resolved").length):""),
         row("user.view","inbox","mail","বার্তা","ওয়েবসাইটের যোগাযোগ ফর্ম",unread()?`<span class="tag r">${bn(unread())} নতুন</span>`:""),
         row("team.view","team","users","ডোনার ব্যবস্থাপনা","শুধু Website/Firebase অ্যাকাউন্ট-ওয়ালা ডোনার",bn(accountDonors().length)),
@@ -4207,7 +4237,7 @@ function initPage() {
         .map((d,i)=>`<button class="prow" data-dn="${d.id}">
           <span class="bg2" style="background:var(--grn-s);color:var(--grn)">${bn(i+1)}</span>
           <span class="tx"><b>${esc(d.name)}</b><small>${d.group} · ${esc(d.area)}</small></span>
-          <span class="tag g">${bn(d.donations)} বার</span></button>`).join("")}</div>`
+          <span class="tag g">${bn(d.donations)} জীবন</span></button>`).join("")}</div>`
     +`<div class="sec-t">এলাকাভিত্তিক</div>
       <div class="card">${(()=>{
         const a={};DB.donors.forEach(d=>a[d.area]=(a[d.area]||0)+1);
@@ -4245,6 +4275,7 @@ function initPage() {
         row("access.manage","access","key","অ্যাক্সেস ও ভূমিকা","অ্যাডমিন, মডারেটর বা ডোনার ভূমিকা পরিবর্তন",""),
         row("team.view","team","users","ডোনার ব্যবস্থাপনা","শুধু Website/Firebase অ্যাকাউন্ট-ওয়ালা ডোনার",bn(accountDonors().length)),
         row("team.view","donorid","card","ডোনার আইডি ব্যবস্থাপনা","সব ডোনার আইডি — অ্যাকাউন্ট না থাকলেও",bn(DB.donors.length)),
+        row("donation.manage","approved","checkC","অনুমোদিত রক্তদান","অনুমোদিত রক্তদান — দেখুন, সম্পাদনা ও মুছুন",bn(DB.donations.length)),
         row("gallery.manage","gallery","cam","গ্যালারি","ওয়েবসাইটের গ্যালারিতে ছবি যোগ/মুছুন",bn(DB.gallery.length)),
         row("settings.manage","rules","gear","অনুমোদন ও সেটিংস","কোন কোন কাজে অনুমোদন লাগবে","")])
     +sect("ডেটাবেস",[
@@ -4302,8 +4333,8 @@ function initPage() {
     s.q("#ex_ok").onclick=async()=>{
       let csv="";
       if(pick==="donors")csv=toCSV(DB.donors.map(d=>[d.id,d.name,d.group,d.area,maskPhone(d.phone),
-        d.dob||"",ageText(d),d.gender,d.last,d.donations,d.suspended?"স্থগিত":"সক্রিয়"]),
-        ["আইডি","নাম","গ্রুপ","এলাকা","ফোন","জন্ম তারিখ","বয়স","লিঙ্গ","শেষ দান","মোট দান","অবস্থা"]);
+        d.dob||"",ageText(d),d.gender,d.last,d.donations,d.totalBags||0,d.suspended?"স্থগিত":"সক্রিয়"]),
+        ["আইডি","নাম","গ্রুপ","এলাকা","ফোন","জন্ম তারিখ","বয়স","লিঙ্গ","শেষ দান","জীবন বাঁচিয়েছেন","মোট ব্যাগ","অবস্থা"]);
       if(pick==="queue")csv=toCSV(DB.queue.map(q=>[q.id,QK[q.kind].t,q.name||q.patient,q.group||"",iso(q.at)]),
         ["আইডি","ধরন","নাম","গ্রুপ","তারিখ"]);
       if(pick==="live")csv=toCSV(DB.live.map(r=>[r.id,r.patient,r.group,r.bags,r.hospital,r.urgency,r.status]),
@@ -4412,12 +4443,210 @@ function initPage() {
         try{ newId=await nextDonorId(); }
         catch(e){ console.warn("donor id:",e&&e.message); toast("Donor UID তৈরি করা যায়নি — সংরক্ষণ হয়নি। আবার চেষ্টা করুন।","er"); return; }
         DB.donors.unshift({id:newId,...o,available:true,verified:true,
-          suspended:false,joined:iso(now()),donations:0});logAudit("নতুন ডোনার যোগ",n,"donor")}
+          suspended:false,joined:iso(now()),donations:0,totalBags:0});logAudit("নতুন ডোনার যোগ",n,"donor")}
       try{await persist();}
       catch(e){toast("রক্তদাতা সংরক্ষণ করা যায়নি — কোনো সফলতা দেখানো হয়নি","er");return;}
       s.close();renderSub("donors");toast("সংরক্ষণ হয়েছে","ok")};
   }
   
+  /* ══════════════════ APPROVED DONATIONS (Admin) ══════════════════
+     Authoritative approved-donation log lives in RTDB `donations`.
+     Approve → record; View / Edit / Delete here; donor & user donor
+     statistics are recomputed from the same log (1 event = 1 life).
+
+     The pure write/delete/backfill logic lives in src/lib/donationLog.ts
+     and is shared with the Moderator panel + the test suite. */
+  const donationIo={
+    listOnce:(node:string)=>listOnce(node),
+    getRow:(node:string,id:string)=>getRow(node,id),
+    updatePaths:(paths:Record<string,any>)=>updatePaths(paths)
+  };
+  function localDonorForRecord(record){
+    return DB.donors.find(x=>String(x.id)===String(record.donorId||""))||null;
+  }
+  /* Remove donation-related queue items locally so a subsequent persist()
+     cannot re-publish the same record back into রক্তদান যাচাই. */
+  function clearDonationQueueFor(record){
+    DB.queue=(DB.queue||[]).filter(q=>{
+      if(String(q?.kind||"")!=="donation")return true;
+      if(String(q?.id||"")===String(record.id||""))return false;
+      const sameOwner=String(q?.ownerUid||q?.uid||"")===String(record.ownerUid||"");
+      const sameDate=String(q?.date||"")===String(record.date||"");
+      const samePlace=String(q?.place||"")===String(record.place||"");
+      return !(sameOwner&&sameDate&&samePlace);
+    });
+  }
+  async function saveApprovedDonation(record,oldRecord){
+    const {paths,stats}=await writeApprovedDonation(record,oldRecord,donationIo);
+    await updatePaths(paths);
+    clearDonationQueueFor(record);
+    DB.donations=DB.donations.filter(x=>String(x.id)!==String(record.id));
+    DB.donations.unshift(record);
+    const d=localDonorForRecord(record);
+    if(d){d.donations=stats.lives;d.totalDonations=stats.lives;d.totalBags=stats.bags;d.last=stats.last;}
+    return stats;
+  }
+  async function deleteApprovedDonation(record){
+    const {paths,stats}=await deleteApprovedDonation(record,donationIo);
+    await updatePaths(paths);
+    clearDonationQueueFor(record);
+    DB.donations=DB.donations.filter(x=>String(x.id)!==String(record.id));
+    const d=DB.donors.find(x=>String(x.id)===String(record.donorId||""));
+    if(d){d.donations=stats.lives;d.totalDonations=stats.lives;d.totalBags=stats.bags;d.last=stats.last;}
+    return stats;
+  }
+  /* ── legacy verifiedDonations → donations node (idempotent, one-time) ── */
+  let approvedDonationBackfillRun=false;
+  async function backfillApprovedDonations(){
+    if(approvedDonationBackfillRun||!can("donation.manage"))return;
+    approvedDonationBackfillRun=true;
+    try{
+      const {paths,newRecords,touched}=await backfillApprovedDonations(donationIo,DB.donations||[],DB.donors||[]);
+      if(!newRecords.length)return;
+      await updatePaths(paths);
+      newRecords.forEach(r=>{DB.donations.unshift(r)});
+      for(const donorId of touched){
+        const d=DB.donors.find(x=>String(x.id)===String(donorId));
+        if(!d)continue;
+        const all=(((await donationIo.listOnce(NODES.donations))||[]).filter(r=>r&&String(r.donorId||"")===String(donorId)));
+        const stats=donorStatsFromRecords(all);
+        d.donations=stats.lives;d.totalDonations=stats.lives;d.totalBags=stats.bags;d.last=stats.last;
+      }
+      logAudit("অনুমোদিত রক্তদান ব্যাকফিল",bn(newRecords.length)+"টি পুরোনো রক্তদান যুক্ত হয়েছে","donation");
+    }catch(e){console.warn("approved donation backfill:",e&&e.message)}
+  }
+  /* Approve-এর সময় queue থেকে তৈরি রেকর্ড (proof URL সহ) — shared module */
+  const makeApprovedRecord=(q:any,d:any)=>makeApprovedDonationRecord(q,d,ME.name||"অ্যাডমিন",donationIo);
+  let appFil={q:"",g:""};
+  SUBP.approved=el=>{
+    const list=(DB.donations||[]).slice().sort((a,b)=>String(b.date||b.approvedAt).localeCompare(String(a.date||a.approvedAt)));
+    const filtered=list.filter(r=>{
+      if(appFil.q&&![r.name,r.donorId,r.id,r.place,r.group].join(" ").toLowerCase().includes(appFil.q.toLowerCase()))return false;
+      if(appFil.g&&r.group!==appFil.g)return false;
+      return true;
+    });
+    const totalBags=DB.donations.reduce((s,r)=>s+Math.max(0,Number(r.bags)||0),0);
+    el.innerHTML=ptitle("অনুমোদিত রক্তদান","অনুমোদিত রক্তদান — দেখুন, সম্পাদনা ও মুছুন")
+    +`<div class="astat">
+        <button class="g"><b>${bn(DB.donations.length)}</b><span>জীবন বাঁচিয়েছে</span></button>
+        <button class="b"><b>${bn(totalBags)}</b><span>মোট ব্যাগ</span></button>
+        <button class="a"><b>${bn(new Set(DB.donations.map(r=>r.donorId)).size)}</b><span>রক্তদাতা</span></button>
+        <button class="r"><b>${bn((DB.donations||[]).reduce((s,r)=>s+(r.approvedAt?1:0),0))}</b><span>যাচাইকৃত</span></button>
+      </div>
+      <div class="frow">
+        <input class="gw" id="aq" value="${esc(appFil.q)}" placeholder="নাম / আইডি / স্থান…">
+        <select id="ag"><option value="">সব গ্রুপ</option>${GROUPS.map(g=>`<option ${appFil.g===g?"selected":""}>${g}</option>`).join("")}</select>
+        <button class="btn gh sm" id="aExp">${SI.dl(14)} রপ্তানি</button>
+      </div>
+      ${filtered.length?`<div class="card pad0">${filtered.map(r=>{
+        const donor=DB.donors.find(x=>String(x.id)===String(r.donorId||""));
+        const thumb=proofUrlOf(r)||(donor&&donor.photo)||"";
+        return `<button class="prow" data-aid="${r.id}">
+          <span class="bg2">${esc(r.group)}</span>
+          <span class="tx"><b>${esc(r.name)}</b><small>${esc(r.donorId||r.id)} · ${esc(r.place||"")} · ${dL(r.date)}</small></span>
+          <span style="display:flex;align-items:center;gap:6px;flex:none">
+            <span class="tag b">${bn(r.bags)} ব্যাগ</span>${thumb?`<img src="${esc(thumb)}" alt="" style="width:32px;height:32px;border-radius:8px;object-fit:cover">`:""}
+          </span></button>`;
+      }).join("")}</div>`:`<div class="card">${emptyBox("check","কোনো Approved Donation নেই","অনুমোদিত রক্তদান এখানে দেখা যাবে")}</div>`}`;
+    let t;$("#aq").oninput=e=>{appFil.q=e.target.value;clearTimeout(t);t=setTimeout(()=>renderSub("approved"),260)};
+    $("#ag").onchange=e=>{appFil.g=e.target.value;renderSub("approved")};
+    $("#aExp")&&($("#aExp").onclick=()=>{
+      const csv=toCSV(list.map(r=>[r.id,r.donorId,r.name,r.group,r.date,r.place,r.bags,r.proof?r.proof:"",r.submittedAt||"",r.approvedAt]),
+        ["Donation ID","Donor ID","নাম","গ্রুপ","তারিখ","স্থান","ব্যাগ","প্রমাণ ছবি","Submitted","Approved"]);
+      dlFile(`cbdc-approved-donations-${iso(now())}.csv`,csv);
+      logAudit("অনুমোদিত রক্তদান রপ্তানি","CSV","donation");toast("ফাইল নামছে","ok");
+    });
+    el.querySelectorAll("[data-aid]").forEach(b=>b.onclick=()=>openApprovedDonation(b.dataset.aid));
+  };
+  async function openApprovedDonation(id){
+    const r=DB.donations.find(x=>String(x.id)===String(id));if(!r)return;
+    const donor=DB.donors.find(x=>String(x.id)===String(r.donorId||""));
+    /* Always validate the stored value as an image URL. booleans, empty/
+       invalid strings and `true`/`false` must NOT be used as `<img src>`.
+       When the approved record has no usable proof, read the owner's own
+       `users/{uid}/data/donations` record as the fallback source. */
+    let proof=proofUrlOf(r);
+    if(!proof && r.ownerUid){
+      try{
+        const u=await getRow("users",r.ownerUid);
+        const arr=u&&Array.isArray(u.data&&u.data.donations)?u.data.donations:[];
+        const hit=arr.find((x:any)=>String(x?.date||"")===String(r.date||"")&&String(x?.place||"")===String(r.place||""));
+        proof=proofUrlOf(hit);
+      }catch(e){console.warn("approved proof fallback:",e&&e.message)}
+    }
+    const thumb=proof||(donor&&donor.photo)||"";
+    const s=sheet("Approved Donation",`
+      <div class="per">${thumb?`<img src="${esc(thumb)}" style="width:46px;height:46px;border-radius:14px;object-fit:cover" alt="">`
+        :`<span class="bg2" style="width:44px;height:44px;border-radius:12px">${esc(r.group)}</span>`}
+        <div class="i"><b>${esc(r.name)}</b><small>${esc(r.donorId||"")} · ${dL(r.date)}</small></div>
+        <span class="pill g">যাচাইকৃত</span></div>
+      <div class="kv" style="margin-top:11px">
+        <div><span>Donation ID</span><b>${esc(r.id)}</b></div>
+        <div><span>রক্তদাতা</span><b>${esc(r.name)}</b></div>
+        <div><span>রক্তের গ্রুপ</span><b>${esc(r.group)}</b></div>
+        <div><span>রক্তদানের তারিখ</span><b>${dL(r.date)}</b></div>
+        <div><span>হাসপাতাল / স্থান</span><b>${esc(r.place)}</b></div>
+        <div><span>ব্যাগ</span><b>${bn(r.bags)}</b></div>
+        <div><span>জীবন বাঁচিয়েছে</span><b>${bn(1)}</b></div>
+        <div><span>Submitted</span><b>${r.submittedAt?dL(r.submittedAt):"—"}</b></div>
+        <div><span>Approved</span><b>${r.approvedAt?dL(r.approvedAt):"—"}</b></div>
+        ${r.patient?`<div><span>রোগী</span><b>${esc(r.patient)}</b></div>`:""}
+        ${r.note?`<div><span>মন্তব্য</span><b>${esc(r.note)}</b></div>`:""}
+      </div>
+      ${proof?`<div class="sec-t">প্রমাণের ছবি</div>
+        <a href="${esc(proof)}" target="_blank" rel="noopener"><img src="${esc(proof)}" alt="রক্তদানের প্রমাণ"
+          style="width:100%;max-height:300px;object-fit:contain;border-radius:12px;border:1px solid var(--line);background:var(--card2)"></a>`:""}`,
+      `<button class="btn gh amb" id="ad_del">${SI.trash(16)} মুছে ফেলুন</button>
+       <button class="btn" id="ad_edit">${SI.edit(16)} সম্পাদনা</button>`);
+    s.q("#ad_edit").onclick=()=>{s.close();editApprovedDonation(id)};
+    s.q("#ad_del").onclick=async()=>{
+      if(!await confirmS({title:"এই রক্তদানের সম্পূর্ণ রেকর্ড মুছে ফেলবেন? এই কাজটি পূর্বাবস্থায় ফেরানো যাবে না।",desc:`${r.donorId||r.id} · ${dL(r.date)} · ${r.place}`,
+        ok:"Delete",cancel:"Cancel",danger:true}))return;
+      try{
+        const stats=await deleteApprovedDonation(r);
+        await persist();
+        logAudit("Approved Donation মুছা",r.id+" — "+r.donorId,"donation");
+        s.close();renderSub("approved");paintNav();paintTop();
+        toast("রেকর্ড মুছে গেছে — পরিসংখ্যান হালনাগাদ হয়েছে","ok");
+      }catch(e){console.warn("delete approved donation:",e&&e.message);toast("মোছা যায়নি","er")}
+    };
+  }
+  function editApprovedDonation(id){
+    const r=DB.donations.find(x=>String(x.id)===String(id));if(!r)return;
+    const s=sheet("Approved Donation সম্পাদনা",`
+      <div class="f">
+        <label>রক্তদানের তারিখ</label><input id="ad_date" type="date" value="${esc(r.date)}" max="${iso(now())}">
+        <label>হাসপাতাল / স্থান</label><input id="ad_place" value="${esc(r.place)}">
+        <label>কত ব্যাগ</label><input id="ad_bags" type="number" value="${Number(r.bags)||1}" min="1" max="99">
+        <label>নতুন প্রমাণের ছবি (ঐচ্ছিক)</label><input id="ad_file" type="file" accept="image/*">
+        ${r.proof?`<a href="${esc(r.proof)}" target="_blank" rel="noopener"><img src="${esc(r.proof)}" alt="প্রমাণ" style="max-height:130px;border-radius:10px;border:1px solid var(--line)"></a>`:""}
+        <label>রোগীর নাম (ঐচ্ছিক)</label><input id="ad_pat" value="${esc(r.patient||'')}">
+        <label>মন্তব্য</label><input id="ad_note" value="${esc(r.note||'')}">
+      </div>`,
+      `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="ad_ok">${SI.check(15)} সংরক্ষণ</button>`);
+    s.q("#ad_ok").onclick=async()=>{
+      const date=s.q("#ad_date").value, place=s.q("#ad_place").value.trim().slice(0,120);
+      const bags=Math.max(1,Math.floor(Number(s.q("#ad_bags").value)||1));
+      if(!date)return toast("তারিখ দিন","er");
+      if(!place)return toast("হাসপাতাল / স্থান লিখুন","er");
+      const f=s.q("#ad_file").files&&s.q("#ad_file").files[0];
+      let proof=r.proof||"";
+      if(f){
+        if(f.size>4*1024*1024)return toast("ছবি ৪ MB-এর কম হতে হবে","er");
+        try{proof=(await imgbbUploadImage(f)).url}catch(e){return toast(e&&e.message?e.message:"ছবি আপলোড হয়নি","er")}
+      }
+      const oldRecord={id:r.id,date:r.date,place:r.place};
+      const updated={...r,date,place,bags,proof,patient:s.q("#ad_pat").value.trim().slice(0,120),
+        note:s.q("#ad_note").value.trim().slice(0,300),updatedAt:nowIso()};
+      try{
+        await saveApprovedDonation(updated,oldRecord);
+        await persist();
+        logAudit("Approved Donation সম্পাদনা",r.id+" — "+date+" · "+place,"donation");
+        s.close();renderSub("approved");toast("সংরক্ষণ হয়েছে — পরিসংখ্যান হালনাগাদ হয়েছে","ok");
+      }catch(e){console.warn("edit approved donation:",e&&e.message);toast("সংরক্ষণ হয়নি","er")}
+    };
+  }
+
   /* ---------- live requests ---------- */
   SUBP.live=el=>{
     el.innerHTML=DB.live.length
@@ -4822,7 +5051,8 @@ function initPage() {
             :rest?`<span class="pill m">বিশ্রামে · ${bn(rest)} দিন বাকি</span>`
             :`<span class="pill a">নিজে বন্ধ রেখেছেন</span>`}
           ${d.verified?`<span class="pill b">যাচাইকৃত</span>`:`<span class="pill a">যাচাই বাকি</span>`}
-          <span class="tag">${bn(d.donations)} বার দান</span>
+          <span class="tag">${bn(d.donations)} জীবন বাঁচিয়েছেন</span>
+          ${d.totalBags?`<span class="tag b">${bn(d.totalBags)} ব্যাগ</span>`:""}
         </div>
         <div style="display:flex;gap:7px;margin-top:12px;flex-wrap:wrap">
           ${can("contact.reveal")?`<a class="btn sm" style="flex:1" href="tel:${esc(d.phone)}">${SI.phone(15)} কল</a>`:""}
@@ -4839,7 +5069,8 @@ function initPage() {
   
     P.over=()=>`
       <div class="astat">
-        <button class="r"><b>${bn(d.donations)}</b><span>মোট রক্তদান</span></button>
+        <button class="r"><b>${bn(d.donations)}</b><span>জীবন বাঁচিয়েছেন</span></button>
+        <button class="b"><b>${bn(d.totalBags||0)}</b><span>মোট ব্যাগ</span></button>
         <button class="g"><b>${d.last?bn(dayDiff(d.last)):"—"}</b><span>${d.last?"দিন আগে শেষ দান":"শেষ দানের তথ্য নেই"}</span></button>
         <button class="b"><b>${bn(donorReqs(d).length)}</b><span>সাড়া দিয়েছেন</span></button>
         <button class="a"><b>${bn(Math.max(0,Math.floor((Date.now()-new Date(d.joined))/864e5/30)))}</b><span>মাস ধরে আছেন</span></button>
@@ -4912,11 +5143,11 @@ function initPage() {
           ${SI.plus(16)} রক্তদান যোগ করুন</button>`:""}
         ${list.length?`<div class="card pad0">${list.map(x=>`<div class="row">
           <span class="ic" style="background:var(--red-s);color:var(--red)">${SI.drop(18)}</span>
-          <span class="tx"><b>${esc(x.place)}</b><small>${dL(x.date)} · ${bn(x.bags)} ব্যাগ</small></span>
-          <span class="rt">${x.ok?`<span class="pill g">যাচাইকৃত</span>`:`<span class="pill a">অপেক্ষমাণ</span>`}</span>
+          <span class="tx"><b>${esc(x.place)}</b><small>${dL(x.date)} · ${bn(x.bags)} ব্যাগ · ${bn(1)} জীবন</small></span>
+          ${x.proof?`<span class="rt"><img src="${esc(x.proof)}" alt="প্রমাণ" style="width:30px;height:30px;border-radius:8px;object-fit:cover"></span>`:`<span class="rt" style="color:var(--grn)">${SI.checkC(16)}</span>`}
         </div>`).join("")}</div>`
         :`<div class="card">${emptyBox("drop","কোনো রক্তদানের রেকর্ড নেই",
-          d.donations?"পুরনো "+bn(d.donations)+" বারের বিস্তারিত নেই":"এখনো রক্ত দেননি")}</div>`}
+          d.donations?"পুরনো "+bn(d.donations)+" দানের বিস্তারিত নেই":"এখনো রক্ত দেননি")}</div>`}
         ${d.last?`<div class="note g">${SI.checkC(17)}<span>সর্বশেষ রক্তদান <b>${dL(d.last)}</b> —
           ${rest?`আর ${bn(rest)} দিন পর আবার দিতে পারবেন।`:"এখন আবার দিতে পারবেন।"}</span></div>`:""}`;
     };
@@ -4964,9 +5195,9 @@ function initPage() {
   /* donations & requests linked to a donor */
   function donorDonations(d){
     /* কোনো রেকর্ড বানিয়ে নেওয়া হয় না — ডাটাবেসে যা আছে শুধু তা-ই দেখানো হয়।
-       (আগে শেষ রক্তদানের তারিখ থাকলে একটি কাল্পনিক এন্ট্রি তৈরি করা হতো।) */
-    d.log=Array.isArray(d.log)?d.log:[];
-    return d.log.slice().sort((a,b)=>b.date.localeCompare(a.date));
+       Approved donations এখন RTDB `donations` node-তে থাকে (report/সব জায়গায় এক উৎস)। */
+    const approved=DB.donations.filter(r=>String(r.donorId||r.id)===String(d.id||""));
+    return approved.length?approved.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))):[];
   }
   function donorReqs(d){
     return DB.live.filter(r=>CAN_GIVE[d.group].includes(r.group)&&r.area===d.area);
@@ -5012,12 +5243,16 @@ function initPage() {
         const dt=s.q("#ad_d").value,pl=s.q("#ad_p").value.trim()||"অজানা স্থান";
         if(!dt)return toast("তারিখ দিন","er");
         const bags=Math.max(1,Math.floor(Number(s.q("#ad_b").value)||1));
-        d.log=d.log||[];d.log.push({date:dt,place:pl,bags,ok:true});
-        d.donations=(Number(d.donations)||0)+bags;d.totalDonations=d.donations;
-        if(!d.last||dt>d.last)d.last=dt;
+        const record={id:safeDonationId(d.ownerUid||"",dt,pl),
+          donorId:d.id,ownerUid:Object(d).ownerUid||"",name:d.name,group:d.group,area:d.area,
+          photo:d.photo,phone:d.phone,place:pl,date:dt,bags,proof:"",patient:"",note:"",
+          livesSaved:1,approvedAt:nowIso(),approvedBy:ME.name||"অ্যাডমিন",updatedAt:nowIso(),source:"admin"};
         logAudit("রক্তদান যোগ",d.id+" — "+dL(dt)+" · "+bn(bags)+" ব্যাগ","donation");
-        try{await persist();}catch(e){restoreLastPersistedDB();return toast("রক্তদান সংরক্ষণ করা যায়নি","er");}
-        s.close();renderSub("donor");toast("রক্তদান যোগ হয়েছে","ok")};
+        try{
+          await saveApprovedDonation(record,{id:record.id,date:"",place:""});
+          await persist();
+        }catch(e){restoreLastPersistedDB();return toast("রক্তদান সংরক্ষণ করা যায়নি","er");}
+        s.close();renderSub("donor");toast("রক্তদান যোগ হয়েছে — পরিসংখ্যান হালনাগাদ হয়েছে","ok")};
       return;
     }
     if(a==="more"){
@@ -5072,8 +5307,8 @@ function initPage() {
           navigator.clipboard?.writeText(t).then(()=>toast("কপি হয়েছে","ok"),()=>toast("কপি করা যায়নি","er"))}
         if(m==="csv"){
           dlFile(`${d.id}.csv`,toCSV([[d.id,d.name,d.group,d.area,maskPhone(d.phone),d.dob||"",ageText(d),d.gender,
-            d.last,d.donations,d.suspended?"স্থগিত":"সক্রিয়"]],
-            ["আইডি","নাম","গ্রুপ","এলাকা","ফোন","বয়স","লিঙ্গ","শেষ দান","মোট দান","অবস্থা"]));
+            d.last,d.donations,d.totalBags||0,d.suspended?"স্থগিত":"সক্রিয়"]],
+            ["আইডি","নাম","গ্রুপ","এলাকা","ফোন","জন্ম তারিখ","বয়স","লিঙ্গ","শেষ দান","জীবন বাঁচিয়েছেন","মোট ব্যাগ","অবস্থা"]));
           logAudit("প্রোফাইল রপ্তানি",d.id,"data");toast("ফাইল নামছে","ok")}
         if(m==="del"){
           if(!await confirmS({title:"ডোনার আইডি স্থায়ীভাবে মুছবেন?",
@@ -5358,7 +5593,7 @@ function initPage() {
     <div class="hr"><h1>${esc(s.heroTitle)}</h1><p>${esc(s.heroText)}</p><span class="cta">রক্তদাতা খুঁজুন</span></div>
     ${s.showStats?`<div class="st">
       <div><b>${bn(DB.donors.length)}</b><span>রক্তদাতা</span></div>
-      <div><b>${bn(DB.donors.reduce((a,d)=>a+d.donations,0))}</b><span>রক্তদান</span></div>
+      <div><b>${bn(DB.donors.reduce((a,d)=>a+d.donations,0))}</b><span>জীবন বাঁচিয়েছেন</span></div>
       <div><b>${bn(Object.values(c).reduce((a,b)=>a+b,0))}</b><span>প্রস্তুত</span></div></div>`:""}
     ${s.showEmergency?`<div class="em"><b>জরুরি হটলাইন:</b> ${esc(s.phone)} — ২৪ ঘণ্টা খোলা</div>`:""}
     ${s.showGallery?`<div class="gl">${DB.gallery.filter(g=>g.status==="published").map(()=>`<i></i>`).join("")||"<i></i><i></i><i></i>"}</div>`:""}
@@ -6116,7 +6351,7 @@ function initPage() {
     el.innerHTML=`<div class="astat">
         <button class="g"><b>${bn(DB.donors.length)}</b><span>রক্তদাতা</span></button>
         <button class="r"><b>${bn(tot)}</b><span>প্রস্তুত</span></button>
-        <button class="b"><b>${bn(DB.donors.reduce((a,d)=>a+d.donations,0))}</b><span>মোট দান</span></button>
+        <button class="b"><b>${bn(DB.donors.reduce((a,d)=>a+d.donations,0))}</b><span>জীবন বাঁচিয়েছেন</span></button>
         <button class="a"><b>${bn(Math.round(DB.donors.filter(d=>d.donations>2).length/DB.donors.length*100))}%</b><span>নিয়মিত</span></button>
       </div>
       <div class="sec-t">গ্রুপের অনুপাত</div>
@@ -6299,6 +6534,7 @@ function initPage() {
           watchMe(user.uid);watchTeam();watchAudit();watchMessages();watchAccounts();watchReports();
           applyLogo(document);
           paintTop();paintNav();
+          setTimeout(backfillApprovedDonations,1200);
           proceed();
         });
       }catch(e){ console.warn("panel auth:", e&&e.message); proceed(); }
@@ -6312,7 +6548,8 @@ function initPage() {
        (প্রথম বুট / লগইন-লগআউটে কোনো `meta.node` থাকে না — তখন পূর্ণ
        স্ক্রিন refresh প্রয়োজন।) */
     const NODE_SCREENS={
-      donors:["home","people","donors","donor","stats","search","team","donorid","set","live","users"],
+      donors:["home","people","donors","donor","stats","search","team","donorid","approved","set","live","users"],
+      donations:["approved","home"],
       requests:["home","work","live","search"],
       queue:["home","work","search"],
       gallery:["gallery","site","set","home"],
@@ -6323,6 +6560,7 @@ function initPage() {
       if(meta&&meta.source==="panel:"+PANEL.id)return;
       pullSharedState();
       paintNav();paintTop();
+      if(!approvedDonationBackfillRun&&(meta&&(meta.node==="donors"||meta.node==="donations")))backfillApprovedDonations();
       const node=meta&&meta.node;
       if(node){
         const affected=NODE_SCREENS[node];

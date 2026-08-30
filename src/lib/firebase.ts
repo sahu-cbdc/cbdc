@@ -134,6 +134,7 @@ export const NODES = {
   users: "users", // website user accounts (key = auth uid)
   admins: "admins", // admin / moderator role records (key = auth uid)
   queue: "queue", // moderation queue (approvals, proofs, reports)
+  donations: "donations", // approved donation records (admin-managed log)
   gallery: "gallery", // gallery images (ImgBB URL + metadata)
   notices: "notices", // published notices
   accounts: "accounts", // panel / team account records

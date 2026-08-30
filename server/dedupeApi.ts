@@ -224,12 +224,14 @@ export async function handleAdminDedupe(
           filled.push(f);
         }
       }
-      /* দান-সংখ্যা/মোট ক্যানোনিকালে যোগ হয় (রেকর্ড মুছে গেলে হারায় না) —
-         অ্যাপে donations ও totalDonations সবসময় সমান রাখা হয়। */
+      /* দান-event/মোট ক্যানোনিকালে যোগ হয় (রেকর্ড মুছে গেলে হারায় না) —
+         অ্যাপে donations ও totalDonations সবসময় সমান রাখা হয়; মোট ব্যাগও আলাদা। */
       const sumDon = (Number(keepRow?.donations) || 0) + (Number(erow?.donations) || 0);
-      if (sumDon > 0) {
+      const sumBags = (Number(keepRow?.totalBags) || 0) + (Number(erow?.totalBags) || 0);
+      if (sumDon > 0 || sumBags > 0) {
         paths[`donors/${keepId}/donations`] = sumDon;
         paths[`donors/${keepId}/totalDonations`] = sumDon;
+        if (sumBags > 0) paths[`donors/${keepId}/totalBags`] = sumBags;
       }
       paths[`donors/${eid}`] = null;
     }
