@@ -49,8 +49,9 @@ const CACHE_ENABLED = (() => {
   }
 })();
 
-/** The six collections that make up the shared aggregate state. */
-const COLLECTION_NAMES = ["donors", "requests", "queue", "gallery", "notices", "accounts"] as const;
+/** The shared aggregate state collections. `donations` is the admin-maintained
+ *  approved-donation log; it is private (not in PUBLIC_COLLECTIONS). */
+const COLLECTION_NAMES = ["donors", "requests", "queue", "gallery", "notices", "accounts", "donations"] as const;
 type CollectionName = (typeof COLLECTION_NAMES)[number];
 
 /**
@@ -81,6 +82,7 @@ function fresh(): any {
     gallery: [],
     notices: [],
     accounts: [],
+    donations: [],
   };
 }
 
@@ -216,6 +218,7 @@ const filters: Record<CollectionName, (rows: any[]) => any[]> = {
   gallery: (rows) => rows.slice().sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0)),
   notices: (rows) => rows,
   accounts: (rows) => rows,
+  donations: (rows) => rows.slice().sort((a, b) => String(b.date || b.approvedAt).localeCompare(String(a.date || a.approvedAt))),
 };
 
 function canAttachCollection(name: CollectionName): boolean {
@@ -451,6 +454,7 @@ const toAdminDonor = (d: any) => ({
   suspended: !!d.suspended,
   joined: d.joined || "",
   donations: Number(d.donations ?? d.totalDonations) || 0,
+  totalBags: Number(d.totalBags ?? d.bags ?? 0) || 0,
   whatsapp: d.whatsapp || "",
   /* প্রোফাইল ছবি (ImgBB link) — admin round-trip-এ কখনো বাদ পড়ে না */
   photo: d.photo || d.photoURL || "",
@@ -471,6 +475,7 @@ const fromAdminDonor = (d: any) => ({
   lastDonationDate: d.last || "",
   donations: Number(d.donations) || 0,
   totalDonations: Number(d.donations) || 0,
+  totalBags: Number(d.totalBags ?? d.bags ?? 0) || 0,
   status: "approved",
   available: d.available !== false,
   verified: d.verified !== false,
@@ -496,6 +501,7 @@ const toDonerDonor = (d: any) => ({
   whatsapp: !!d.whatsapp,
   lastDonation: d.lastDonationDate || d.last || "",
   totalDonations: Number(d.totalDonations ?? d.donations) || 0,
+  totalBags: Number(d.totalBags ?? d.bags ?? 0) || 0,
   joined: d.joined || "",
   verified: d.verified !== false,
   privacy: { showArea: true, showGroup: true, showWhatsapp: !!d.whatsapp },
@@ -515,6 +521,7 @@ const fromDonerDonor = (d: any) => ({
   lastDonationDate: d.lastDonation || d.lastDonationDate || "",
   donations: Number(d.totalDonations ?? d.donations) || 0,
   totalDonations: Number(d.totalDonations ?? d.donations) || 0,
+  totalBags: Number(d.totalBags ?? d.bags ?? 0) || 0,
   status: "approved",
   available: d.available !== false,
   verified: d.verified !== false,

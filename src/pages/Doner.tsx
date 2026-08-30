@@ -1647,7 +1647,7 @@ function initPage() {
     },
     donor:{
       is:false, status:"none", donorId:"",
-      bloodGroup:"", whatsapp:"", lastDonation:"", totalDonations:0,
+      bloodGroup:"", whatsapp:"", lastDonation:"", totalDonations:0, totalBags:0,
       health:"",
       available:true, appliedAt:"", cardTheme:"green",
       /* রক্তের গ্রুপ পরিবর্তনের অনুরোধ — users/{uid}/groupChange থেকে sync হয়।
@@ -1730,7 +1730,13 @@ function initPage() {
        so existing verified donations are not re-approved / double counted. */
     return isVerifiedDonation(x)||!!(x&&x.ok===true);
   }
-  function verifiedDonationUnits(){
+  /* ১টি অনুমোদিত রক্তদান event = ১ জীবন। ব্যাগ আলাদা মেট্রিক — একে জীবন-গণনায়
+     ব্যবহার করা হয় না। */
+  function verifiedDonationEvents(){
+    if(!RAW.verifiedDonations||typeof RAW.verifiedDonations!=="object")return 0;
+    return Object.values(RAW.verifiedDonations as any).length;
+  }
+  function verifiedDonationBags(){
     if(!RAW.verifiedDonations||typeof RAW.verifiedDonations!=="object")return 0;
     return Object.values(RAW.verifiedDonations as any).reduce(
       (sum:number,v:any)=>sum+Math.max(0,Math.floor(Number(v&&v.bags)||0)),0);
@@ -1844,7 +1850,7 @@ function initPage() {
     Object.assign(STORE.account,{uid:"",name:"",username:"",email:"",phone:"",photo:"",photoSource:"none",
       emailVerified:false,phoneVerified:false,dob:"",gender:"",area:"",address:"",bloodGroup:"",applicationCount:0,joined:iso(now())});
     Object.assign(STORE.donor,{is:false,status:"none",donorId:"",bloodGroup:"",whatsapp:"",lastDonation:"",
-      totalDonations:0,health:"",available:true,appliedAt:"",cardTheme:"green",groupChange:null});
+      totalDonations:0,totalBags:0,health:"",available:true,appliedAt:"",cardTheme:"green",groupChange:null});
     Object.assign(STORE.privacy,{profile:"all",showPhone:"responders",showWhatsapp:true,showGroup:true,showArea:true,searchable:true});
     Object.assign(STORE.notif,{emergency:true,onlyGroup:true,onlyArea:false,donor:true,account:true,security:true,quiet:false});
     Object.assign(STORE.security,{loginAlert:true,passwordChangedAt:""});
@@ -1922,6 +1928,8 @@ function initPage() {
       STORE.donor.status="approved";STORE.donor.donorId=mine.donorId||mine.id;
       STORE.donor.bloodGroup=mine.group||mine.bloodGroup||STORE.donor.bloodGroup;
       STORE.donor.lastDonation=mine.lastDonation||mine.lastDonationDate||"";
+      STORE.donor.totalDonations=Math.max(0,Number(mine.donations??mine.totalDonations??0))||0;
+      STORE.donor.totalBags=Math.max(0,Number(mine.totalBags??0))||0;
       /* admin-পরিবর্তিত প্রাপ্যতা/WhatsApp পাবলিক রেকর্ড থেকেই সাথে সাথে সিঙ্ক —
          নইলে ডোনারের পরবর্তী save() পুরোনো মান দিয়ে আবার admin-এর পরিবর্তন মুছে দেবে */
       if(mine.available!==undefined)STORE.donor.available=!!mine.available;
@@ -1983,9 +1991,11 @@ function initPage() {
         }
       });
       RAW.donations.filter(x=>!isVerifiedOrLegacy(x)).forEach((x,i)=>{
-        const id="DN-"+owner+"-"+x.date.replaceAll("-","");
+        const ownerKey=owner.replace(/[^A-Za-z0-9]/g,"").slice(-8)||"unknown";
+        const id="DN-"+ownerKey+"-"+String(x.date||"").replace(/[^0-9]/g,"")+"-"+donationVerKey(x).replace(/^v/,"");
         if(!st.queue.some(q=>q.kind==="donation"&&q.id===id))st.queue.unshift({kind:"donation",id,
-          name:a.name,place:x.place,date:x.date,bags:x.bags,proof:!!x.proof,ownerUid:owner,at:new Date().toISOString()});
+          name:a.name,place:x.place,date:x.date,bags:x.bags,proof:!!x.proof,proofUrl:x.proof||"",
+          patient:x.pat||"",note:x.note||"",ownerUid:owner,at:new Date().toISOString()});
       });
       return st;
     },"doner:personal");
@@ -2244,11 +2254,13 @@ function initPage() {
   /* ══════════ SCREEN: HOME ══════════ */
   function rHome(){
     const a=STORE.account,d=STORE.donor,don=DB().donations,inc=myReqs();
-    /* Only admin-verified units count. STORE.donor.totalDonations is the
-       admin/moderator-maintained donors/{id} total (sum of approved bag units);
-       user-side ok flags never drive statistics. */
-    const myDonationUnits=isDonor()&&dStatus()==="approved"
+    /* Only admin-verified donation events count. donors/{id}.totalDonations is
+       the event count (1 event = 1 life); totalBags is the separate bag total.
+       User-side ok flags never drive statistics. */
+    const myDonationEvents=isDonor()&&dStatus()==="approved"
       ?Math.max(0,Number(STORE.donor.totalDonations ?? STORE.donor.donations ?? 0)):0;
+    const myDonationBags=isDonor()&&dStatus()==="approved"
+      ?Math.max(0,Number(STORE.donor.totalBags??0)):0;
     const hr=new Date().getHours();
     const greet=hr<12?"শুভ সকাল":hr<17?"শুভ দুপুর":hr<20?"শুভ সন্ধ্যা":"শুভ রাত্রি";
   
@@ -2278,8 +2290,8 @@ function initPage() {
   
     const nx=d.lastDonation?addD(d.lastDonation,90):null;
     const stats=isDonor()?`<div class="stats">
-      <div class="stat"><b style="color:var(--red)">${bn(myDonationUnits)}</b><span>মোট রক্তদান</span></div>
-      <div class="stat"><b>${bn(myDonationUnits*3)}</b><span>জীবন বাঁচিয়েছেন</span></div>
+      <div class="stat"><b style="color:var(--red)">${bn(myDonationEvents)}</b><span>জীবন বাঁচিয়েছেন</span></div>
+      <div class="stat"><b>${bn(myDonationBags)}</b><span>মোট ব্যাগ</span></div>
       <div class="stat"><b style="font-size:.9rem;padding:5px 0">${restLeft()?dS(nx):"এখনই"}</b><span>পরবর্তী রক্তদান</span></div>
       <div class="stat"><b>${bn(DB().mine.length)}</b><span>আমার আবেদন</span></div></div>`:"";
   
@@ -2462,6 +2474,7 @@ function initPage() {
       /* Admin-maintained donors/{id} total is the only approved unit count. */
       totalDonations:STORE.donor.status==="approved"
         ?Math.max(0,Number(STORE.donor.totalDonations ?? STORE.donor.donations ?? 0)):0,
+      totalBags:STORE.donor.status==="approved"?Math.max(0,Number(STORE.donor.totalBags??0)):0,
       joined:a.joined||"", verified:d.status==="approved", bio:a.bio||"",
       available:STORE.donor.available!==false,
       privacy:{showArea:STORE.privacy.showArea,
@@ -2490,6 +2503,7 @@ function initPage() {
          it cannot leak through the DOM, a link or the page source. */
       whatsapp:(pv.showWhatsapp!==false&&(d.whatsappNo||d.phone))?(d.whatsappNo||d.phone):null,
       total:d.totalDonations||0,
+      totalBags:d.totalBags||0,
       last:d.lastDonation||"",
       ready:donorReady(d)&&d.available!==false, avail:d.available!==false,
       rest:donorRest(d),
@@ -2526,6 +2540,7 @@ function initPage() {
          donation date. Only the admin-maintained donations/totalDonations field
          is trusted; missing data means "not yet counted". */
       totalDonations:Math.floor(Math.max(0,Number(r.donations ?? r.totalDonations ?? 0))),
+      totalBags:Math.floor(Math.max(0,Number(r.totalBags ?? 0))),
       joined:r.joined||"", verified:(r.status||"approved")==="approved", bio:"",
       privacy:{showArea:true,showGroup:true,showWhatsapp:!!(r.whatsapp&&String(r.whatsapp).trim())}
     };
@@ -2623,8 +2638,8 @@ function initPage() {
       </div>
   
       <div class="pstats">
-        <div class="pstat"><b>${v.total>0?bn(v.total):"—"}</b><span>মোট রক্তদান</span></div>
-        <div class="pstat"><b>${v.total>0?bn(v.total*3):"—"}</b><span>জীবন বাঁচাতে সাহায্য</span></div>
+        <div class="pstat"><b>${v.total>0?bn(v.total):"—"}</b><span>জীবন বাঁচিয়েছেন</span></div>
+        <div class="pstat"><b>${v.totalBags>0?bn(v.totalBags):"—"}</b><span>মোট ব্যাগ</span></div>
         <div class="pstat"><b class="sm">${v.last?dS(v.last):"—"}</b><span>শেষ রক্তদান</span></div>
       </div>
   
@@ -2639,7 +2654,8 @@ function initPage() {
         ${pRow("মোবাইল নম্বর",v.phone||"দেওয়া হয়নি",!v.phone)}
         ${pRow("WhatsApp নম্বর",v.whatsapp||"দেওয়া হয়নি",!v.whatsapp)}
         ${pRow("সর্বশেষ রক্তদানের তারিখ",v.last?dL(v.last):"দেওয়া হয়নি",!v.last)}
-        ${pRow("মোট রক্তদান",v.total>0?bn(v.total):"দেওয়া হয়নি",!(v.total>0))}
+        ${pRow("জীবন বাঁচিয়েছেন",v.total>0?bn(v.total):"দেওয়া হয়নি",!(v.total>0))}
+        ${pRow("মোট ব্যাগ",v.totalBags>0?bn(v.totalBags):"দেওয়া হয়নি",!(v.totalBags>0))}
         ${pRow("রক্তদানে প্রস্তুত",v.ready?"রক্তদানে প্রস্তুত":(v.avail?`বিশ্রামে · আর ${bn(v.rest)} দিন`:"প্রাপ্যতা বন্ধ"),!v.ready)}
         ${v.joined?pRow("যুক্ত হয়েছেন",dL(v.joined)):""}
       </div>
@@ -5419,6 +5435,7 @@ function initPage() {
         STORE.donor.donorId = donor.id || donor.donorId || STORE.donor.donorId || "";
         STORE.donor.bloodGroup = donor.bloodGroup || donor.group || STORE.donor.bloodGroup;
         STORE.donor.totalDonations = Math.max(0,Number(donor.totalDonations ?? donor.donations ?? 0))||0;
+        STORE.donor.totalBags = Math.max(0,Number(donor.totalBags ?? 0))||0;
         if(donor.lastDonationDate) STORE.donor.lastDonation = donor.lastDonationDate;
         else if(donor.lastDonation) STORE.donor.lastDonation = donor.lastDonation;
         else if(donor.last) STORE.donor.lastDonation = donor.last;
@@ -5444,6 +5461,7 @@ function initPage() {
         const st = String(member.status||member.donorStatus||"pending").toLowerCase();
         STORE.donor.status = st==="approved" ? "approved" : st==="rejected" ? "rejected" : "pending";
         STORE.donor.totalDonations = Math.max(0,Number(member.totalDonations ?? member.donations ?? 0))||0;
+        STORE.donor.totalBags = Math.max(0,Number(member.totalBags ?? 0))||0;
         /* Donor UID শুধু approved হলে রাখা হয়; pending হলে approve-র আগে না রাখা */
         STORE.donor.donorId = st==="approved" ? (member.donorId || member.id || STORE.donor.donorId || "") : "";
         STORE.donor.bloodGroup = member.bloodGroup || member.group || STORE.donor.bloodGroup;
@@ -5467,6 +5485,7 @@ function initPage() {
           STORE.donor.donorId = "";
           STORE.donor.bloodGroup = q.group || q.bloodGroup || STORE.donor.bloodGroup;
           STORE.donor.totalDonations = 0;
+          STORE.donor.totalBags = 0;
           if(q.last) STORE.donor.lastDonation = q.last;
           else if(q.lastDonation) STORE.donor.lastDonation = q.lastDonation;
           if(q.whatsapp) STORE.donor.whatsapp = q.whatsapp;
@@ -5494,6 +5513,7 @@ function initPage() {
     stopDonorRecListener=watchRow(NODES.donors,id,row=>{
       if(!row)return;
       STORE.donor.totalDonations=Math.max(0,Number(row.totalDonations??row.donations??0))||0;
+      STORE.donor.totalBags=Math.max(0,Number(row.totalBags??0))||0;
       if(row.lastDonationDate)STORE.donor.lastDonation=row.lastDonationDate;
       else if(row.lastDonation)STORE.donor.lastDonation=row.lastDonation;
       else if(row.last)STORE.donor.lastDonation=row.last;
