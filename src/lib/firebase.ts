@@ -30,7 +30,7 @@ import { getAuth, browserLocalPersistence, setPersistence, type Auth } from "fir
  */
 const DEFAULT_FIREBASE_CONFIG = {
   apiKey: "AIzaSyBxUlGig2NtQLf6tZMRwK6xxzjScNIqbrM",
-  authDomain: "chokbazarbloodclub-69d5f.firebaseapp.com",
+  authDomain: "auth.chawkbazarbloodclub.com", // custom Firebase Auth domain (production sign-in)
   databaseURL: "https://chokbazarbloodclub-69d5f-default-rtdb.firebaseio.com",
   projectId: "chokbazarbloodclub-69d5f",
   storageBucket: "chokbazarbloodclub-69d5f.firebasestorage.app",

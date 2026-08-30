@@ -17,10 +17,10 @@ consent screen** থেকে নিয়ন্ত্রিত হয়। ন
 | App লোগো | ওয়েবসাইটের অফিশিয়াল লোগো (`public/img/logo.png`) |
 | Support / Developer email | ক্লাবের ইমেইল |
 
-> ⚠️ গুরুত্বপূর্ণ: `chokbazarbloodclub-69d5f.firebaseapp.com/__/auth/handler`
-> হলো বাধ্যতামূলক **টেকনিক্যাল redirect URL** — এটি কখনো বদলাবেন না। ব্র্যান্ডিং
-> শুধু উপরের নাম/লোগো সেটিংস দিয়ে হয়; প্রযুক্তিগত ডোমেইন বদলাতে গেলে
-> লগইন ভেঙে যাবে।
+> ⚠️ গুরুত্বপূর্ণ: `auth.chawkbazarbloodclub.com/__/auth/handler`
+> হলো custom Firebase Auth domain-এর বাধ্যতামূলক **টেকনিক্যাল redirect URL** —
+> এটি মেলানো যাবে না। ব্র্যান্ডিং শুধু উপরের নাম/লোগো সেটিংস দিয়ে হয়;
+> প্রযুক্তিগত ডোমেইন ভুল হলে লগইন ভেঙে যাবে।
 
 ---
 
@@ -43,9 +43,9 @@ consent screen** থেকে নিয়ন্ত্রিত হয়। ন
    এই নামটিই দেখায়।
 2. **Sign-in method → Email/Password → Enable** আছে কিনা দেখুন।
 3. **Settings → Authorized domains** — যেসব ডোমেইনে সাইট চলে সব যোগ করুন:
-   - `chokbazarbloodclub-69d5f.firebaseapp.com` (ডিফল্ট থাকে)
+   - `auth.chawkbazarbloodclub.com` (custom Firebase Auth domain)
+   - `chawkbazarbloodclub.com` (main website)
    - `cbdc-a9418.web.app` (Hosting)
-   - আপনার কাস্টম ডোমেইন (যেমন `www.চকবাজার...` / `cbdc.pages.dev`)
    - ডেভেলপমেন্টের জন্য `localhost`
 
    এখানে ডোমেইন না থাকলে Google অ্যাকাউন্ট বেছে নেওয়ার পরেও লগইন
@@ -85,7 +85,7 @@ convert public/img/logo.png -resize 120x120 -background white -flatten public/im
 → (Web client)** — Authorized redirect URIs তালিকায় এই ঠিকানাটি থাকতে হবে:
 
 ```
-https://chokbazarbloodclub-69d5f.firebaseapp.com/__/auth/handler
+https://auth.chawkbazarbloodclub.com/__/auth/handler
 ```
 
 এটি না থাকলে যোগ করুন; অন্য কিছু বদলাবেন না।

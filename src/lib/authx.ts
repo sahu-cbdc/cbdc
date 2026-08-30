@@ -18,6 +18,9 @@
  *       (RTDB `admins` → তারপর `users`)।
  *    ৭. requestPasswordReset() / completePasswordReset() — Firebase-এর built-in
  *       password reset link ব্যবহার করে (কোনো custom OTP backend নেই)।
+ *    ৮. Google + Email/Password linking — account-exists হলে Google credential
+ *       একই UID-এ যুক্ত করা (setOrChangePassword / googleCredentialFromError /
+ *       userHasPasswordProvider)।
  */
 
 import {
@@ -25,9 +28,15 @@ import {
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
+  EmailAuthProvider,
+  linkWithCredential,
+  reauthenticateWithCredential,
+  updatePassword,
+  fetchSignInMethodsForEmail,
   type Auth,
   type User,
   type UserCredential,
+  type AuthCredential,
 } from "firebase/auth";
 import { subscribeAuthUser } from "./authState";
 import {
@@ -458,6 +467,78 @@ export async function consumeGoogleRedirect(
 export function onAuthUserChanged(_auth: Auth, cb: (user: User | null) => void): () => void {
   void _auth; // legacy signature compatibility
   return subscribeAuthUser(cb);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ২.৫ Google + Email/Password — একই অ্যাকাউন্টে উভয় সাইন-ইন পদ্ধতি
+   ═══════════════════════════════════════════════════════════════════ */
+
+/** এই ইমেইলে Firebase Auth-এ কী কী সাইন-ইন পদ্ধতি আছে (empty/অ-পাওয়া হলে []). */
+export async function signInMethodsForEmail(auth: Auth, email: string): Promise<string[]> {
+  try {
+    return await fetchSignInMethodsForEmail(auth, String(email || "").trim().toLowerCase());
+  } catch {
+    return [];
+  }
+}
+
+/** Firebase Auth user-এ Email/Password (password) provider আছে কিনা। */
+export function userHasPasswordProvider(
+  user: { providerData?: ReadonlyArray<{ providerId?: string } | null> } | null | undefined
+): boolean {
+  try {
+    return (user?.providerData || []).some(
+      (p) => !!p && (p.providerId === "password" || p.providerId === "firebase")
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Google sign-in-এ `auth/account-exists-with-different-credential` হলে erro-র
+ * ভেতরে থাকা OAuth credential-টি বের করা (linkWithCredential-এর জন্য)।
+ * রিটার্ন: `{ email, credential }` — না পেলে `null`।
+ */
+export function googleCredentialFromError(
+  err: unknown
+): { email: string; credential: AuthCredential } | null {
+  try {
+    const e = err as any;
+    const email = String(e?.customData?.email || e?.email || "").trim().toLowerCase();
+    const credential = e?.credential as AuthCredential | undefined;
+    if (!email || !credential) return null;
+    return { email, credential };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * একই অ্যাকাউন্টে Email/Password সেট বা পরিবর্তন।
+ *  - Password provider থাকলে: current password re-auth করে `updatePassword`।
+ *  - Google-only account-এ: নতুন password `linkWithCredential`-এ যুক্ত হয়,
+ *    ফলে একই UID-তে Email/Password লগইনও চালু হয় (duplicate তৈরি হয় না)।
+ * রিটার্ন: true = নতুন password লিংক হয়েছে (Google-চালু), false = password বদলানো হয়েছে।
+ */
+export async function setOrChangePassword(
+  user: User,
+  email: string,
+  currentPassword: string,
+  newPassword: string
+): Promise<boolean> {
+  const address = String(email || "").trim().toLowerCase();
+  const next = String(newPassword || "");
+  if (!address || !next) throw new Error("পাসওয়ার্ড দেওয়া হয়নি।");
+  if (userHasPasswordProvider(user)) {
+    if (!currentPassword) throw new Error("বর্তমান পাসওয়ার্ড দিন।");
+    await reauthenticateWithCredential(user, EmailAuthProvider.credential(address, currentPassword));
+    await updatePassword(user, next);
+    return false;
+  }
+  // Google-only account — password যুক্ত হলে উভয় সাইন-ইন পদ্ধতি সক্রিয় হয়
+  await linkWithCredential(user, EmailAuthProvider.credential(address, next));
+  return true;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
