@@ -3168,9 +3168,10 @@ function initPage() {
           lastDonationDate:lastDonation,status:"approved",available:true,verified:true,
           joined,photo,updatedAt:at}).forEach(([k,val])=>paths[`${base}/${k}`]=val);
         if(isNew){
-          const count=lastDonation?1:0;
-          paths[`${base}/suspended`]=false;paths[`${base}/donations`]=count;
-          paths[`${base}/totalDonations`]=count;paths[`${base}/createdAt`]=at;
+          /* Creating a donor record never counts an unverified "last donation";
+             donation totals are increased only by an approved donation. */
+          paths[`${base}/suspended`]=false;paths[`${base}/donations`]=0;
+          paths[`${base}/totalDonations`]=0;paths[`${base}/createdAt`]=at;
         }
         /* আগে সাধারণ donor হিসেবে pending আবেদন থাকলে Admin flow সেটি সরাসরি
            approved করে; moderation queue-তে নিজের জন্য কিছু রেখে দেয় না। */
@@ -3188,7 +3189,7 @@ function initPage() {
         Object.assign(ME,identity,{bloodGroup,lastDonation,health,whatsapp,available:true,
           donorId,donorStatus:"approved",cardTheme:String(current.cardTheme||ME.cardTheme||"green"),isDonor:true});
         updateLocalAdminDonor(donorId,{...identity,bloodGroup,lastDonation,whatsapp,available:true,photo,joined,
-          donations:isNew?(lastDonation?1:0):Number(donor&&donor.donations)||0});
+          donations:isNew?0:Number(donor&&donor.donations)||0});
         DB.queue=DB.queue.filter(q=>!(q.kind==="donor"&&String(q.ownerUid||"")===uid));
         await logMe("রক্তদাতা হিসেবে যুক্ত হয়েছেন",donorId,"donor");
         await logAudit("অ্যাডমিন রক্তদাতা হিসেবে যুক্ত",donorId,"donor");
@@ -4069,13 +4070,16 @@ function initPage() {
         approvedDonorId=String(q.donorId||"");
         if(reuseDonor&&reuseDonor.id)approvedDonorId=String(reuseDonor.id);
         if(!approvedDonorId)approvedDonorId=await nextDonorId();
-        const at=nowIso(), count=q.last?1:0;
+        const at=nowIso();
         approvedDonor={id:approvedDonorId,donorId:approvedDonorId,uid:q.ownerUid||"",ownerUid:q.ownerUid||"",
           name:q.name||"",bloodGroup:q.group||"",group:q.group||"",area:q.area||"",phone:q.phone||"",
-          whatsapp:q.whatsapp||q.phone||"",gender:q.gender||"",dob:q.dob||"",lastDonationDate:q.last||"",
+          whatsapp:q.whatsapp||q.phone||"",gender:q.gender||"",dob:q.dob||"",
+          lastDonationDate:(reuseDonor&&reuseDonor.lastDonationDate)||"",
           status:"approved",available:true,verified:true,suspended:false,joined:(reuseDonor&&reuseDonor.joined)||at,photo:q.photo||"",
-          donations:reuseDonor?Number(reuseDonor.donations)||0:count,
-          totalDonations:reuseDonor?Number(reuseDonor.totalDonations)||0:count,
+          /* Donor approval alone never counts a donation. Donation totals are
+             increased only by an approved donation verification. */
+          donations:reuseDonor?Number(reuseDonor.donations)||0:0,
+          totalDonations:reuseDonor?Number(reuseDonor.totalDonations)||0:0,
           createdAt:(reuseDonor&&reuseDonor.createdAt)||at,updatedAt:at};
         paths[`donors/${approvedDonorId}`]=approvedDonor;
         if(q.ownerUid){
@@ -4087,11 +4091,26 @@ function initPage() {
       } else if(q.kind==="donation"&&ok){
         const d=DB.donors.find(x=>x.id===q.donorId||x.name===q.name);
         if(d){
-          const count=(Number(d.donations)||0)+1;
+          /* Verified unit count = number of approved bags, not number of
+             submission rows, so a 4-bag donation is 4 verified units. */
+          const units=Math.max(1,Math.floor(Number(q.bags)||1));
+          const count=(Number(d.donations)||0)+units;
           approvedDonation={d,count,last:!d.last||q.date>d.last?q.date:d.last};
           paths[`donors/${d.id}/donations`]=count;
           paths[`donors/${d.id}/totalDonations`]=count;
           if(approvedDonation.last)paths[`donors/${d.id}/lastDonationDate`]=approvedDonation.last;
+          /* Legacy mirror + authoritative verified list: mark the exact
+             user-side record so the donor panel shows it as verified. The
+             verifiedDonations list is admin/moderator-only in the RTDB rules. */
+          const owner=String(q.ownerUid||q.uid||"").trim();
+          if(owner){
+            const u=await getRow(NODES.users,owner).catch(()=>null);
+            const arr=Array.isArray(u&&u.data&&u.data.donations)?u.data.donations:[];
+            const di=arr.findIndex(x=>x&&String(x.date||"")===String(q.date||"")&&String(x.place||"")===String(q.place||""));
+            if(di>=0)paths[`users/${owner}/data/donations/${di}/ok`]=true;
+            const vkey="v"+(((s:string)=>{let h=0;for(let i=0;i<s.length;i++)h=((h<<5)-h+s.charCodeAt(i))|0;return (h>>>0).toString(36)})(String(q.date||"")+"|"+String(q.place||"")));
+            paths[`users/${owner}/data/verifiedDonations/${vkey}`]={date:q.date,place:q.place,bags:units,at:nowIso()};
+          }
         }
       } else if(q.kind==="request"&&ok){
         approvedRequest={id:q.id,patient:q.patient,group:q.group,bags:q.bags,urgency:q.urgency,status:"searching",
@@ -4992,9 +5011,11 @@ function initPage() {
       s.q("#ad_ok").onclick=async()=>{
         const dt=s.q("#ad_d").value,pl=s.q("#ad_p").value.trim()||"অজানা স্থান";
         if(!dt)return toast("তারিখ দিন","er");
-        d.log=d.log||[];d.log.push({date:dt,place:pl,bags:+s.q("#ad_b").value||1,ok:true});
-        d.donations++;if(!d.last||dt>d.last)d.last=dt;
-        logAudit("রক্তদান যোগ",d.id+" — "+dL(dt),"donation");
+        const bags=Math.max(1,Math.floor(Number(s.q("#ad_b").value)||1));
+        d.log=d.log||[];d.log.push({date:dt,place:pl,bags,ok:true});
+        d.donations=(Number(d.donations)||0)+bags;d.totalDonations=d.donations;
+        if(!d.last||dt>d.last)d.last=dt;
+        logAudit("রক্তদান যোগ",d.id+" — "+dL(dt)+" · "+bn(bags)+" ব্যাগ","donation");
         try{await persist();}catch(e){restoreLastPersistedDB();return toast("রক্তদান সংরক্ষণ করা যায়নি","er");}
         s.close();renderSub("donor");toast("রক্তদান যোগ হয়েছে","ok")};
       return;

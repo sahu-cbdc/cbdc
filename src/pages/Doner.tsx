@@ -49,6 +49,7 @@ import {
   subscribe as notifSubscribe,
   loadSeen,
   saveSeen,
+  resetNotificationContext,
   sanitizeKey,
 } from "../lib/notify";
 
@@ -1646,7 +1647,7 @@ function initPage() {
     },
     donor:{
       is:false, status:"none", donorId:"",
-      bloodGroup:"", whatsapp:"", lastDonation:"",
+      bloodGroup:"", whatsapp:"", lastDonation:"", totalDonations:0,
       health:"",
       available:true, appliedAt:"", cardTheme:"green",
       /* রক্তের গ্রুপ পরিবর্তনের অনুরোধ — users/{uid}/groupChange থেকে sync হয়।
@@ -1708,7 +1709,32 @@ function initPage() {
                               সংরক্ষিত হয়, তাই যেকোনো ডিভাইসে লগইন করলেই পাওয়া যায়
        • localStorage       → শুধু দ্রুত লোডের জন্য cache, উৎস নয় */
   const LS_DATA="cbdc.data";
-  const RAW={ donations:[], incoming:[], mine:[], notifs:[], activity:[], sessions:[], donors:[], notices:[] };
+  const RAW={ donations:[], verifiedDonations:{}, incoming:[], mine:[], notifs:[], activity:[], sessions:[], donors:[], notices:[] };
+  /* Admin-driven verified donation mirror. `ok` on a user record is only a
+     legacy display hint; this object is written exclusively by staff (RTDB
+     rules block owner writes) and is the authority for a verified record. */
+  const donationVerKey=(x:any)=>{
+    const s=String(x&&(x.date||"")||"").trim()+"|"+String(x&&(x.place||"")||"").trim();
+    let h=0;
+    for(let i=0;i<s.length;i++) h=((h<<5)-h+s.charCodeAt(i))|0;
+    return "v"+(h>>>0).toString(36);
+  };
+  function isVerifiedDonation(x:any){
+    /* Authoritative source is the staff-maintained verifiedDonations object.
+       A user-side `ok:true` flag is never trusted for the verified badge. */
+    const k=donationVerKey(x);
+    return !!(RAW.verifiedDonations&&typeof RAW.verifiedDonations==="object"&&(RAW.verifiedDonations as any)[k]);
+  }
+  function isVerifiedOrLegacy(x:any){
+    /* Old records carry only `ok:true`; keep them out of the moderation queue
+       so existing verified donations are not re-approved / double counted. */
+    return isVerifiedDonation(x)||!!(x&&x.ok===true);
+  }
+  function verifiedDonationUnits(){
+    if(!RAW.verifiedDonations||typeof RAW.verifiedDonations!=="object")return 0;
+    return Object.values(RAW.verifiedDonations as any).reduce(
+      (sum:number,v:any)=>sum+Math.max(0,Math.floor(Number(v&&v.bags)||0)),0);
+  }
 
   /*
      "আমার আবেদন" is private data.  It must not be reconstructed from the
@@ -1745,6 +1771,7 @@ function initPage() {
   let MY_APPLICATION_REQUEST_ROWS=[];
   let stopMyApplicationRequests=()=>{};
   let stopMyProfileListener=()=>{};
+  let stopDonorRecListener=()=>{};
   let stopNoticeReads=()=>{};
   let myApplicationNotifUnsubscribe=null;
 
@@ -1754,6 +1781,8 @@ function initPage() {
       ["donations","incoming","mine","notifs","activity","sessions","donors"].forEach(k=>{
         if(Array.isArray(d[k]))RAW[k]=d[k];
       });
+      if(d.verifiedDonations&&typeof d.verifiedDonations==="object"&&!Array.isArray(d.verifiedDonations))
+        RAW.verifiedDonations=d.verifiedDonations;
     }catch(e){}
     if(!RAW.sessions.length){
       RAW.sessions=[{id:"s1",name:thisDevice(),place:"এই ডিভাইস",last:"বর্তমানে সক্রিয়",cur:true}];
@@ -1811,16 +1840,17 @@ function initPage() {
      (নাম, ছবি, কার্যক্রম, আবেদন…) যেন নতুন user-এ চলে না আসে — এই cache সম্পূর্ণ
      fresh অবস্থায় ফিরিয়ে নেওয়া হয়। */
   function resetUserCache(){
+    try{stopDonorRecListener()}catch(e){}
     Object.assign(STORE.account,{uid:"",name:"",username:"",email:"",phone:"",photo:"",photoSource:"none",
       emailVerified:false,phoneVerified:false,dob:"",gender:"",area:"",address:"",bloodGroup:"",applicationCount:0,joined:iso(now())});
     Object.assign(STORE.donor,{is:false,status:"none",donorId:"",bloodGroup:"",whatsapp:"",lastDonation:"",
-      health:"",available:true,appliedAt:"",cardTheme:"green",groupChange:null});
+      totalDonations:0,health:"",available:true,appliedAt:"",cardTheme:"green",groupChange:null});
     Object.assign(STORE.privacy,{profile:"all",showPhone:"responders",showWhatsapp:true,showGroup:true,showArea:true,searchable:true});
     Object.assign(STORE.notif,{emergency:true,onlyGroup:true,onlyArea:false,donor:true,account:true,security:true,quiet:false});
     Object.assign(STORE.security,{loginAlert:true,passwordChangedAt:""});
     STORE.noticeReads={};
     STORE.saved=[];
-    RAW.donations=[];RAW.incoming=[];RAW.mine=[];RAW.notifs=[];RAW.activity=[];RAW.donors=[];
+    RAW.donations=[];RAW.verifiedDonations={};RAW.incoming=[];RAW.mine=[];RAW.notifs=[];RAW.activity=[];RAW.donors=[];
     RAW.sessions=[{id:"s1",name:thisDevice(),place:"এই ডিভাইস",last:"বর্তমানে সক্রিয়",cur:true}];
     try{localStorage.removeItem(LS);localStorage.removeItem(LS_DATA);}catch(e){}
   }
@@ -1952,7 +1982,7 @@ function initPage() {
           }
         }
       });
-      RAW.donations.filter(x=>!x.ok).forEach((x,i)=>{
+      RAW.donations.filter(x=>!isVerifiedOrLegacy(x)).forEach((x,i)=>{
         const id="DN-"+owner+"-"+x.date.replaceAll("-","");
         if(!st.queue.some(q=>q.kind==="donation"&&q.id===id))st.queue.unshift({kind:"donation",id,
           name:a.name,place:x.place,date:x.date,bags:x.bags,proof:!!x.proof,ownerUid:owner,at:new Date().toISOString()});
@@ -1968,7 +1998,16 @@ function initPage() {
   function syncNotifsFromData(){
     const uid=String(STORE.account.uid||"").trim();
     if(!uid)return;
-    const seen=loadSeen();
+    /* Notification/seen state is browser-wide. If a different Firebase account
+       is now signed in, the previous account's pending/rejected tracking must
+       not create a false "donor application rejected" notification for the new
+       account. Reset the context once and start a fresh baseline. */
+    let seen=loadSeen();
+    const seenUid=String(seen.uid||"").trim();
+    if(seenUid!==uid){
+      resetNotificationContext(uid);
+      seen=loadSeen();
+    }
     const d=STORE.donor;
     /* Published RTDB notices are delivered without removing the legacy notification system. */
     RAW.notices.forEach(n=>{
@@ -1977,6 +2016,7 @@ function initPage() {
     });
     /* প্রথম সিঙ্ক — শুধু baseline ধরি, পুরোনো অবস্থার notification বানাই না */
     if(!seen.booted){
+      seen.uid=uid;
       RAW.mine.forEach(m=>{ if(m&&m.id&&m.status)seen.reqStatus[m.id]=m.status; });
       DB().incoming.forEach(r=>{ if(r&&r.id)seen.incoming[r.id]=1; });
       seen.donorStatus=d.status||"";
@@ -2029,7 +2069,11 @@ function initPage() {
     if(seen.donorStatus==="pending"&&ds==="approved")
       addNotif({id:"donor-appr",title:"রক্তদাতা আবেদন অনুমোদিত",
         body:"আপনার ডোনার আবেদন অনুমোদিত হয়েছে। ডোনার ID: "+(d.donorId||""),type:"approval",ref:d.donorId,go:"req:become"});
-    else if(seen.donorStatus==="pending"&&(ds==="rejected"||(ds==="none"&&!d.is)))
+    /* শুধু অ্যাডমিন/মডারেটরের স্পষ্ট `rejected` অবস্থা থেকেই বাতিল-নোটিফিকেশন
+       পাঠানো হয়। pending অবস্থা হঠাৎ "none" হয়ে গেলে (আবেদন প্রত্যাহার, পুরোনো
+       queue/member cleanup, ভিন্ন অ্যাকাউন্টের stale cache) সেটিকে বাতিল বলে
+       ভুলভাবে জানানো হয় না। */
+    else if(seen.donorStatus==="pending"&&ds==="rejected")
       addNotif({id:"donor-rej",title:"ডোনার আবেদন বাতিল",
         body:"আপনার রক্তদাতা আবেদনটি বাতিল করা হয়েছে।",type:"rejected",go:"req:become"});
     if(ds)seen.donorStatus=ds;
@@ -2052,7 +2096,7 @@ function initPage() {
     /* ৫) রক্তদান যাচাই — donors record-এর last আমার যাচাইবিহীন রেকর্ডের সাথে মিললে */
     if(d.lastDonation&&seen.lastDonation&&seen.lastDonation!==d.lastDonation){
       const hit=RAW.donations.find(x=>x&&x.date===d.lastDonation);
-      if(hit&&!hit.ok)addNotif({id:"dn-"+sanitizeKey(d.lastDonation),title:"রক্তদান যাচাই সম্পন্ন",
+      if(hit&&isVerifiedDonation(hit))addNotif({id:"dn-"+sanitizeKey(d.lastDonation),title:"রক্তদান যাচাই সম্পন্ন",
         body:`${dL(d.lastDonation)}${hit.place?" · "+hit.place:""}`,type:"approval",go:"set:adddonation"});
     }
     if(d.lastDonation)seen.lastDonation=d.lastDonation;
@@ -2200,6 +2244,11 @@ function initPage() {
   /* ══════════ SCREEN: HOME ══════════ */
   function rHome(){
     const a=STORE.account,d=STORE.donor,don=DB().donations,inc=myReqs();
+    /* Only admin-verified units count. STORE.donor.totalDonations is the
+       admin/moderator-maintained donors/{id} total (sum of approved bag units);
+       user-side ok flags never drive statistics. */
+    const myDonationUnits=isDonor()&&dStatus()==="approved"
+      ?Math.max(0,Number(STORE.donor.totalDonations ?? STORE.donor.donations ?? 0)):0;
     const hr=new Date().getHours();
     const greet=hr<12?"শুভ সকাল":hr<17?"শুভ দুপুর":hr<20?"শুভ সন্ধ্যা":"শুভ রাত্রি";
   
@@ -2229,8 +2278,8 @@ function initPage() {
   
     const nx=d.lastDonation?addD(d.lastDonation,90):null;
     const stats=isDonor()?`<div class="stats">
-      <div class="stat"><b style="color:var(--red)">${bn(don.length)}</b><span>মোট রক্তদান</span></div>
-      <div class="stat"><b>${bn(don.length*3)}</b><span>জীবন বাঁচিয়েছেন</span></div>
+      <div class="stat"><b style="color:var(--red)">${bn(myDonationUnits)}</b><span>মোট রক্তদান</span></div>
+      <div class="stat"><b>${bn(myDonationUnits*3)}</b><span>জীবন বাঁচিয়েছেন</span></div>
       <div class="stat"><b style="font-size:.9rem;padding:5px 0">${restLeft()?dS(nx):"এখনই"}</b><span>পরবর্তী রক্তদান</span></div>
       <div class="stat"><b>${bn(DB().mine.length)}</b><span>আমার আবেদন</span></div></div>`:"";
   
@@ -2409,7 +2458,10 @@ function initPage() {
       name:a.name||"আপনি", gender:a.gender, photo:a.photo,
       group:d.bloodGroup, area:a.area, dob:a.dob||"", age:ageFromDob(a.dob),
       occupation:a.occupation||"", phone:a.phone, whatsapp:!!d.whatsapp,
-      lastDonation:d.lastDonation, totalDonations:DB().donations.length,
+      lastDonation:d.lastDonation,
+      /* Admin-maintained donors/{id} total is the only approved unit count. */
+      totalDonations:STORE.donor.status==="approved"
+        ?Math.max(0,Number(STORE.donor.totalDonations ?? STORE.donor.donations ?? 0)):0,
       joined:a.joined||"", verified:d.status==="approved", bio:a.bio||"",
       available:STORE.donor.available!==false,
       privacy:{showArea:STORE.privacy.showArea,
@@ -2470,8 +2522,10 @@ function initPage() {
       group:r.bloodGroup||r.group||"", area:r.area||"",
       age:parseInt(bnNum(r.age),10)||null, occupation:r.occupation||"",
       phone:r.phone||"", lastDonation:r.lastDonationDate||r.lastDonation||"",
-      totalDonations:Number.isFinite(+r.donations)?+r.donations
-        :(r.lastDonationDate?((parseInt(String(r.id||"").replace(/\D/g,"").slice(-2)||"0",10)%9)+1):0),
+      /* Life-saved/donation stats must never be invented from an ID or a last
+         donation date. Only the admin-maintained donations/totalDonations field
+         is trusted; missing data means "not yet counted". */
+      totalDonations:Math.floor(Math.max(0,Number(r.donations ?? r.totalDonations ?? 0))),
       joined:r.joined||"", verified:(r.status||"approved")==="approved", bio:"",
       privacy:{showArea:true,showGroup:true,showWhatsapp:!!(r.whatsapp&&String(r.whatsapp).trim())}
     };
@@ -2908,7 +2962,7 @@ function initPage() {
     P.adddonation=()=>{
       if(!isDonor())return emptyBox(ICON.drop(26),"আগে রক্তদাতা হিসেবে যুক্ত হন",
         "রক্তদানের হিসাব রাখতে আপনার রক্তের গ্রুপ ও তথ্য দরকার","become","রক্তদাতা হিসেবে যুক্ত হন");
-      const dn=RAW.donations||[], pend=dn.filter(x=>!x.ok).length, okc=dn.filter(x=>x.ok).length;
+      const dn=RAW.donations||[], pend=dn.filter(x=>!isVerifiedDonation(x)).length, okc=dn.filter(x=>isVerifiedDonation(x)).length;
       const rest=restLeft();
       return `
         <div class="intro">
@@ -2973,9 +3027,9 @@ function initPage() {
   
         <div class="sec-t">আগের রক্তদান</div>
         ${dn.length?`<div class="card pad0">${dn.slice(0,6).map((x,i)=>`
-          <div class="row"><span class="ic" style="background:${x.ok?"var(--grn-s)":"var(--amb-s)"};color:${x.ok?"var(--grn)":"var(--amb)"}">${x.ok?ICON.checkC(18):ICON.clock(18)}</span>
+          <div class="row"><span class="ic" style="background:${isVerifiedDonation(x)?"var(--grn-s)":"var(--amb-s)"};color:${isVerifiedDonation(x)?"var(--grn)":"var(--amb)"}">${isVerifiedDonation(x)?ICON.checkC(18):ICON.clock(18)}</span>
             <span class="tx"><b>${esc(dL(x.date))}</b><small>${esc(x.place)} · ${bn(x.bags||1)} ব্যাগ</small></span>
-            <span class="rt">${x.ok?`<small class="mut">যাচাইকৃত</small>`
+            <span class="rt">${isVerifiedDonation(x)?`<small class="mut">যাচাইকৃত</small>`
               :`<button class="lnk" data-delrec="${i}" style="color:var(--red-d)">মুছুন</button>`}</span></div>`).join("")}</div>`
           :`<div class="card"><p class="mut" style="font-size:.83rem;margin:0">এখনো কোনো রক্তদান যোগ করা হয়নি।</p></div>`}
         <div class="note i" style="margin-top:12px">${ICON.info(17)}<span>প্রশ্ন থাকলে ক্লাবের হটলাইনে কল করুন — <b>${SITE.phone}</b></span></div>`;
@@ -3681,15 +3735,15 @@ function initPage() {
         try{ const up=await imgbbUploadImage(f); proof=up.url; }
         catch(e){ return er(e&&e.message?e.message:"ছবি আপলোড করা যায়নি"); }
       }
-      /* রক্তদান যাচাইয়ের অনুমোদন OFF থাকলে রেকর্ডটি সরাসরি যাচাইকৃত (ok)
-         হয় — approval queue-তে কোনো এন্ট্রি যায় না (Admin সেটিং realtime)। */
-      const autoVerify=APPROVAL_SETTINGS.donationApproval===false;
+      /* User-submitted donation is always pending. It becomes verified/counted
+         only after an admin/moderator approves it in the moderation queue. No
+         client-side approval setting may auto-approve a user submission. */
       RAW.donations.unshift({date,place,bags:Number($("#ad_bags").value)||1,
-        pat:$("#ad_pat").value.trim()||"",note:$("#ad_note").value.trim()||"",proof,ok:autoVerify});
+        pat:$("#ad_pat").value.trim()||"",note:$("#ad_note").value.trim()||"",proof,ok:false});
       await saveData();
       await logAct("রক্তদান যোগ",date+" · "+place,"donor");
       renderSub("adddonation");
-      toast(autoVerify?"যোগ হয়েছে — সরাসরি যাচাইকৃত হয়েছে":"যোগ হয়েছে — যাচাইয়ের অপেক্ষায়","ok");
+      toast("যোগ হয়েছে — যাচাইয়ের অপেক্ষায়","ok");
     };
     $$("[data-delrec]").forEach(b=>b.onclick=async()=>{
       const i=Number(b.dataset.delrec);
@@ -3703,7 +3757,8 @@ function initPage() {
   /* ── আমার সব তথ্য নামান ── */
   function sheetExport(){
     const data={account:{...STORE.account},donor:{...STORE.donor},
-      donations:RAW.donations,mine:RAW.mine,notifs:loadNotifs(),activity:RAW.activity};
+      donations:RAW.donations,verifiedDonations:RAW.verifiedDonations,
+      mine:RAW.mine,notifs:loadNotifs(),activity:RAW.activity};
     const s=sheet("আমার সব তথ্য নামান",`
       <div class="note i">${ICON.info(17)}<span>আপনার অ্যাকাউন্ট, ডোনার তথ্য, রক্তদান, আবেদন ও কার্যক্রম JSON/CSV ফাইলে নামাতে পারবেন।</span></div>
       <button class="opt on" data-k="json" style="width:100%;text-align:left"><i class="dot"></i>
@@ -3872,8 +3927,18 @@ function initPage() {
       case "editBloodGroup":sheetGroupChange();break;
       case "editWa":editField({key:"whatsapp",title:"WhatsApp",label:"WhatsApp নম্বর",store:"donor",max:11,
         validate:v=>!v||phoneOK(v)||"সঠিক ১১ সংখ্যার নম্বর দিন"});break;
-      case "editLast":editField({key:"lastDonation",title:"সর্বশেষ রক্তদান",label:"তারিখ",type:"date",store:"donor",
-        max2:iso(now()),hint:"মনে না থাকলে খালি রাখুন।"});break;
+      case "editLast":{
+        /* Approved donors cannot self-set their last donation; it changes only
+           through admin/moderator donation verification. */
+        if(dStatus()==="approved"){
+          sheet("সর্বশেষ রক্তদান",`<div class="note i">${ICON.info(17)}<span>অনুমোদিত ডোনারের সর্বশেষ রক্তদানের তারিখ পরিবর্তন হয় শুধু অ্যাডমিন/মডারেটরের রক্তদান-যাচাই অনুমোদনের মাধ্যমে। নিজে থেকে বদলানো যাবে না — নইলে ৯০ দিনের বিশ্রাম/প্রস্তুতি ভুল দেখাতে পারে।</span></div>
+            <div class="f"><label>সর্বশেষ রক্তদান</label><input value="${esc(d.lastDonation?dL(d.lastDonation):"মনে নেই")}" disabled></div>`,
+            `<button class="btn" data-close style="flex:1">বুঝেছি</button>`);
+          break;
+        }
+        editField({key:"lastDonation",title:"সর্বশেষ রক্তদান",label:"তারিখ",type:"date",store:"donor",
+          max2:iso(now()),hint:"মনে না থাকলে খালি রাখুন।"});break;
+      }
       case "editHealth":editField({key:"health",title:"স্বাস্থ্য তথ্য",label:"শারীরিক অবস্থা / রোগ",textarea:true,store:"donor"});break;
       case "leaveDonor":if(await confirmS({title:"ডোনার তালিকা থেকে সরে যাবেন?",
         desc:"অ্যাকাউন্ট থাকবে, শুধু ডোনার তথ্য ও কার্ড সরে যাবে। চাইলে আবার যুক্ত হতে পারবেন।",ok:"সরে যান",danger:true})){
@@ -4929,7 +4994,9 @@ function initPage() {
            না; pending আবেদনে আগের মতোই লেখা হয়। */
         if(d.status!=="approved") payload.bloodGroup = d.bloodGroup||"";
         payload.donorId = d.donorId||"";
-        payload.lastDonation = d.lastDonation||"";
+        /* Approved donors' last donation is admin-controlled (donors/{id}),
+           never editable from the user's users/{uid} record. */
+        payload.lastDonation = d.status==="approved" ? null : (d.lastDonation||"");
         payload.whatsapp = d.whatsapp||"";
         payload.health = d.health||"";
         payload.available = d.available!==false;
@@ -5293,8 +5360,16 @@ function initPage() {
       STORE.donor.whatsapp=""; STORE.donor.lastDonation="";
       STORE.donor.health=""; STORE.donor.appliedAt="";
       STORE.donor.available=true;
+    } else if(_dStatus==="rejected"||_dStatus==="none"){
+      /* Admin-এর স্পষ্ট rejected/none অবস্থা সরাসরি status-এ আনা হয়, যাতে
+         notification/UI pending এ আটকে না থাকে। pending/approved আসল অবস্থা
+         members/queue/donors রেকর্ড থেকেই hydrate করা হয়। */
+      STORE.donor.status=_dStatus;
+      if(_dStatus==="none")STORE.donor.is=false;
     }
-    if(_last !== undefined && _last !== null) STORE.donor.lastDonation = String(_last||"");
+    /* Approved donors: last donation is admin-controlled via donors/{id} and is
+       never overwritten from a stale user-side lastDonation field. */
+    if(!(STORE.donor.is && STORE.donor.status==="approved") && _last !== undefined && _last !== null) STORE.donor.lastDonation = String(_last||"");
     if(_wa !== undefined && _wa !== null) STORE.donor.whatsapp = String(_wa||"");
     if(_health !== undefined && _health !== null) STORE.donor.health = String(_health||"");
     if(row.available !== undefined) STORE.donor.available = !!row.available;
@@ -5310,6 +5385,8 @@ function initPage() {
       /* `mine` is applied by setMyApplicationsFromUser() so it is always
          scoped to this Auth UID and merged with the live requests listener. */
       ["donations","activity"].forEach(k=>{ if(Array.isArray(row.data[k]))RAW[k]=row.data[k]; });
+      if(row.data.verifiedDonations&&typeof row.data.verifiedDonations==="object"&&!Array.isArray(row.data.verifiedDonations))
+        RAW.verifiedDonations=row.data.verifiedDonations;
       const reads=row.data.noticeReads;
       STORE.noticeReads=reads&&typeof reads==="object"?Object.fromEntries(Object.entries(reads).filter(([,v])=>v===true)):{};
       try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
@@ -5341,6 +5418,7 @@ function initPage() {
         STORE.donor.is=true; STORE.donor.status="approved";
         STORE.donor.donorId = donor.id || donor.donorId || STORE.donor.donorId || "";
         STORE.donor.bloodGroup = donor.bloodGroup || donor.group || STORE.donor.bloodGroup;
+        STORE.donor.totalDonations = Math.max(0,Number(donor.totalDonations ?? donor.donations ?? 0))||0;
         if(donor.lastDonationDate) STORE.donor.lastDonation = donor.lastDonationDate;
         else if(donor.lastDonation) STORE.donor.lastDonation = donor.lastDonation;
         else if(donor.last) STORE.donor.lastDonation = donor.last;
@@ -5349,6 +5427,7 @@ function initPage() {
         if(donor.healthNotes) STORE.donor.health = donor.healthNotes;
         try{ persistLocalAccount(); }catch(e){}
         try{ await pushAccountToRtdb(); }catch(e){}
+        startDonorRecListener();
         return true;
       }
       // 2) members (pending)
@@ -5363,7 +5442,8 @@ function initPage() {
       if(member){
         STORE.donor.is=true;
         const st = String(member.status||member.donorStatus||"pending").toLowerCase();
-        STORE.donor.status = st==="approved" ? "approved" : "pending";
+        STORE.donor.status = st==="approved" ? "approved" : st==="rejected" ? "rejected" : "pending";
+        STORE.donor.totalDonations = Math.max(0,Number(member.totalDonations ?? member.donations ?? 0))||0;
         /* Donor UID শুধু approved হলে রাখা হয়; pending হলে approve-র আগে না রাখা */
         STORE.donor.donorId = st==="approved" ? (member.donorId || member.id || STORE.donor.donorId || "") : "";
         STORE.donor.bloodGroup = member.bloodGroup || member.group || STORE.donor.bloodGroup;
@@ -5386,6 +5466,7 @@ function initPage() {
           /* pending queue — Donor UID এখনো তৈরি হয়নি; approve-র পরে Admin সেট করবে */
           STORE.donor.donorId = "";
           STORE.donor.bloodGroup = q.group || q.bloodGroup || STORE.donor.bloodGroup;
+          STORE.donor.totalDonations = 0;
           if(q.last) STORE.donor.lastDonation = q.last;
           else if(q.lastDonation) STORE.donor.lastDonation = q.lastDonation;
           if(q.whatsapp) STORE.donor.whatsapp = q.whatsapp;
@@ -5403,6 +5484,22 @@ function initPage() {
     if(!needsSetup()) return;
     if(document.querySelector(".sheet")) return;
     setTimeout(sheetSetup, 200);
+  }
+  function startDonorRecListener(){
+    stopDonorRecListener();
+    const id=String(STORE.donor.donorId||"").trim();
+    if(!id||STORE.donor.status!=="approved")return;
+    /* Live donor record: admin-approved donation totals / last donation update
+       the donor panel immediately without a page reload. */
+    stopDonorRecListener=watchRow(NODES.donors,id,row=>{
+      if(!row)return;
+      STORE.donor.totalDonations=Math.max(0,Number(row.totalDonations??row.donations??0))||0;
+      if(row.lastDonationDate)STORE.donor.lastDonation=row.lastDonationDate;
+      else if(row.lastDonation)STORE.donor.lastDonation=row.lastDonation;
+      else if(row.last)STORE.donor.lastDonation=row.last;
+      persistLocalAccount();
+      if(!PUBLIC_MODE){try{paintTop();go(CUR,SUB,false);}catch(e){console.warn("donor rec refresh",e)}}
+    });
   }
   function watchMyProfile(uid, authUser){
     if(!uid)return;
@@ -5428,6 +5525,7 @@ function initPage() {
       if(!STORE.donor.is){
         try{ await hydrateDonorFromRtdb(uid); }catch(e){ console.warn("hydrate in watch:", e && e.message); }
       }
+      startDonorRecListener();
       try{ pullSharedPublic(); }catch(e){ console.warn("resync personal data:", e && e.message); }
       persistLocalAccount();
       RTDB_PULLING=false;
@@ -5621,8 +5719,10 @@ export function donorPublicPatch(
        Change Blood Group Request পাঠাতে হয়; Admin Approve করলে Admin/Moderator
        প্যানেল থেকেই donors/{id}/bloodGroup আপডেট হয় (RTDB rules-ও এটি owner-এর
        জন্য অপরিবর্তনীয় রাখে)। */
+    /* lastDonationDate ইচ্ছা করেই নেই — রক্তদান-যাচাইয়ে Admin নিয়ন্ত্রিত।
+       Owner-এর প্যাচে সেটি না লিখলে রক্তদান-পরবর্তী ৯০ দিনের বিশ্রাম/প্রস্তুতি
+       অনুমোদন ছাড়া বদলানো যাবে না। */
     whatsapp: String(d.whatsapp || ""),
-    lastDonationDate: String(d.lastDonation || ""),
     available: d.available !== false,
     photo: String(a.photo || ""),
   };

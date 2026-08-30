@@ -217,6 +217,8 @@ export function subscribe(fn: (list: Notif[]) => void): () => void {
 
 /* ── seen-state (কোন RTDB পরিবর্তন ইতিমধ্যে notify করা হয়েছে) ── */
 export type SeenState = {
+  /** কোন user-এর notification context (seen + notifications) এই storage-তে আছে */
+  uid?: string;
   booted?: boolean;
   reqStatus: Record<string, string>;
   incoming: Record<string, number>;
@@ -251,6 +253,29 @@ export function saveSeen(s: SeenState) {
   }
 }
 
+/**
+ * কোনো user-এর notification context নতুন করে শুরু করা।
+ *
+ * Notification ও seen-state একটাই browser-level storage-এ রাখা হয়। দুই
+ * আলাদা অ্যাকাউন্ট একই ব্রাউজারে লগইন করলে পুরোনো অ্যাকাউন্টের
+ * “pending → rejected” অবস্থা নতুন অ্যাকাউন্টের উপর চাপিয়ে দেওয়া উচিত নয় —
+ * তাই UID বদলালে পুরোনো notification-সহ context reset করা হয়।
+ */
+export function resetNotificationContext(uid: string): void {
+  const key = String(uid || "").trim();
+  if (!key) return;
+  try {
+    localStorage.removeItem(STORE_KEY);
+  } catch (e) {
+    /* ignore */
+  }
+  memory = null;
+  writeRaw([]);
+  emit();
+  broadcast();
+  saveSeen({ reqStatus: {}, incoming: {}, uid: key });
+}
+
 /* ── matching predicate (pure — টেস্টযোগ্য) ─────────────────────────
    জরুরি আবেদনের notification শুধু সেই ডোনারদের জন্য যাদের blood group
    মেলে, Availability ON, non-suspended, approved এবং ownerUid আছে। */
@@ -278,6 +303,7 @@ export default {
   subscribe,
   loadSeen,
   saveSeen,
+  resetNotificationContext,
   donorMatchesRequest,
   sanitizeKey,
   notifExpiry,
