@@ -11,7 +11,7 @@ import "../lib/store";
 import { initFirebase as initSharedFirebase, NODES, getAuthInstance } from "../lib/firebase";
 import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
 import { authErrorMessage, resolveUserRole, panelForRole, setOrChangePassword } from "../lib/authx";
-import { getRow, setRow, updateRow, removeRow, listOnce, watchList, watchRow, findBy, nowIso, nextDonorId, updatePaths, serverTime, getPath, setPath, removePath, watchPath } from "../lib/rtdb";
+import { getRow, setRow, updateRow, removeRow, listOnce, watchList, watchRow, findBy, nowIso, nextDonorId, updatePaths, serverTime, getPath, setPath, removePath, watchPath, releaseDonorSerial } from "../lib/rtdb";
 import { ageText, ageFromDob, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
@@ -3223,6 +3223,7 @@ function initPage() {
       if(!uid||authUid!==uid)throw new Error("অ্যাডমিন লগইন সেশন পাওয়া যায়নি");
       const donor=await ownAdminDonorRow(),id=String((donor&&(donor.id||donor.donorId))||"");
       const paths={};if(id)paths[`donors/${id}`]=null;
+      if(id) try{ await releaseDonorSerial(id); }catch(_e){}
       ["donorStatus","donorId","lastDonation","health","whatsapp","available","appliedAt","cardTheme","groupChange"]
         .forEach(k=>paths[`users/${uid}/${k}`]=null);
       paths[`users/${uid}/data/panel/isDonor`]=false;

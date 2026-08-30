@@ -23,7 +23,7 @@ import {
   requestPasswordReset,
   setOrChangePassword,
 } from "../lib/authx";
-import { getRow, setRow, updateRow, watchRow, watchList, addRow, findBy, listOnce, nowIso, updatePaths, removeRow, incrementField, ensureFieldAtLeast, serverTime, nextDonorId } from "../lib/rtdb";
+import { getRow, setRow, updateRow, watchRow, watchList, addRow, findBy, listOnce, nowIso, updatePaths, removeRow, incrementField, ensureFieldAtLeast, serverTime, nextDonorId, releaseDonorSerial } from "../lib/rtdb";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
@@ -164,6 +164,7 @@ svg{display:block;flex:none}
 .scr>*:first-child{margin-top:0}
 .scr>h2,.ptitle{margin:0 0 12px;padding:0 2px;font-size:1.1rem;font-weight:800;line-height:1.3}
 .ptitle small{display:block;margin-top:3px;font-size:.78rem;font-weight:600;color:var(--mut)}
+.ptitle + .sec-t{margin-top:0}
 .sec-t{margin:20px 0 8px;padding:0 2px;font-size:.72rem;font-weight:800;color:var(--mut);letter-spacing:.4px}
 .scr>.sec-t:first-child{margin-top:0}
 
@@ -2443,8 +2444,8 @@ function initPage() {
     $("#s-home").innerHTML=`
       <h2 class="ptitle">${a.name?`${greet}, ${esc(a.name.split(" ")[0])}`:greet}
         <small>${now().toLocaleDateString(LOC(),{weekday:"long",day:"numeric",month:"long"})}</small></h2>
-      ${statusCard}${alert}${stats}${ready}
       ${noticeBlock}
+      ${statusCard}${alert}${stats}${ready}
       <div class="card pad0">
         <div style="padding:13px 15px 4px"><b style="font-size:.88rem">দ্রুত কাজ</b></div>
         <button class="row" data-nav="find"><span class="ic">${ICON.search(19)}</span>
@@ -4298,7 +4299,9 @@ function initPage() {
               || (!!accountEmail&&String(x&&x.email||"").trim().toLowerCase()===accountEmail)
               || (!!accountPhone&&String(x&&x.phone||"").replace(/\\s+/g,"")===accountPhone);
             const donors=await listOnce(NODES.donors);
-            donors.filter(x=>sameOwner(x)||String(x&&x.id||"")===String(leftId)).forEach(x=>{if(x.id)paths[NODES.donors+"/"+x.id]=null});
+            donors.filter(x=>sameOwner(x)||String(x&&x.id||"")===String(leftId)).forEach(x=>{
+              if(x.id){ paths[NODES.donors+"/"+x.id]=null; try{ releaseDonorSerial(x.id); }catch(_e){} }
+            });
             const profile=uid?await getRow(NODES.users,uid):null;
             const memberId=String(profile&&profile.donorMemberId||"").trim();
             if(memberId){paths[NODES.members+"/"+memberId]=null;paths[NODES.queue+"/"+memberId]=null;}
@@ -5087,7 +5090,9 @@ function initPage() {
     const donors=await listOnce(NODES.donors);
     /* নতুন record UID/ownerUid দিয়ে মেলে; পুরোনো donor record-এ UID না থাকলে
        একই account-এর সংরক্ষিত email/phone দিয়ে fallback করে মেলানো হয়। */
-    donors.filter(d=>ownerMatches(d) || emailMatches(d) || phoneMatches(d)).forEach(d=>{ if(d.id) paths[`donors/${d.id}`]=null; });
+    donors.filter(d=>ownerMatches(d) || emailMatches(d) || phoneMatches(d)).forEach(d=>{
+      if(d.id){ paths[`donors/${d.id}`]=null; try{ releaseDonorSerial(d.id); }catch(_e){} }
+    });
 
     // donations/{id} — Admin-এর approved donation log-এর এই donor-এর রেকর্ডসমূহ
     /* ownerUid মিললেই মুছে ফেলা হয় (date/place দিয়ে মেলানো রেকর্ডেও ownerUid থাকে) —

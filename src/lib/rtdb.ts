@@ -94,39 +94,187 @@ export async function probeRow(
   }
 }
 
-/** Donor UID-এর serial counter node — `_meta/donorCounter/<year>`-এ ধারাবাহিক নম্বর। */
+/** Legacy year counter — নতুন ইস্যুতে ব্যবহার হয় না; পুরোনো rules-এর সাথে সামঞ্জস্য। */
 export const DONOR_COUNTER_NODE = "_meta/donorCounter";
+/** In-flight serial reservation — `_meta/donorSerials/<0001>`। Occupancy নয়; শুধু concurrent claim। */
+export const DONOR_SERIALS_NODE = "_meta/donorSerials";
 
-/** RTDB-তে ফরম্যাট করা Donor UID: CBDC-<year>-<0001> */
+const DONOR_ID_RE = /^CBDC-(\d{4})-(\d{4})$/i;
+/** তাজা in-flight claim — এই সময়ের মধ্যে দ্বিতীয় registration একই serial নেয় না। */
+const CLAIM_FRESH_MS = 45_000;
+
+/** RTDB-তে ফরম্যাট করা Donor UID: CBDC-<issueYear>-<global 4-digit serial>। */
 export function formatDonorId(seq: number | string, year: number = new Date().getFullYear()): string {
-  return `CBDC-${year}-${String(Number(seq) || 0).padStart(4, "0")}`;
+  const n = Math.max(0, Math.floor(Number(seq) || 0));
+  return `CBDC-${year}-${String(n).padStart(4, "0")}`;
+}
+
+/** CBDC-YYYY-XXXX থেকে global serial (XXXX)। malformed হলে 0। Existing ID বদলায় না। */
+export function parseDonorSerial(id: unknown): number {
+  const m = String(id || "").trim().match(DONOR_ID_RE);
+  if (!m) return 0;
+  const n = Number(m[2]);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function serialKey(seq: number): string {
+  return String(seq).padStart(4, "0");
+}
+
+function parseClaimKey(k: string): number {
+  const s = String(k || "").trim();
+  if (/^\d{1,6}$/.test(s)) {
+    const n = Number(s);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+  return parseDonorSerial(s);
+}
+
+function isFreshClaim(val: any): boolean {
+  if (!val) return false;
+  const at = Date.parse(String((val && (val.at || val.claimedAt)) || ""));
+  if (!Number.isFinite(at)) return false; // পুরোনো/অসম্পূর্ণ claim গ্যাপ আটকায় না
+  return Date.now() - at < CLAIM_FRESH_MS;
 }
 
 /**
- * পরবর্তী ধারাবাহিক Donor UID তৈরি করে (যেমন CBDC-2026-0001, CBDC-2026-0002 …)।
- * Realtime Database-এ atomic transaction (`_meta/donorCounter/<year>`) ব্যবহার করা হয়,
- * তাই একসাথে অনেকগুলো Account তৈরি হলেও কোনো নম্বর duplicate হয় না।
- * কোথাও random/number-from-uid ব্যবহার হয় না।
+ * Occupancy = শুধু বিদ্যমান donor রেকর্ডের ID (id / donorId)।
+ * পুরোনো ID কখনো rewrite হয় না; শুধু serial বের করে used set তৈরি।
+ */
+function collectSerialsFromDonors(rows: Row[]): { used: Set<number>; malformed: string[]; duplicates: string[] } {
+  const used = new Set<number>();
+  const seen = new Map<number, string>();
+  const malformed: string[] = [];
+  const duplicates: string[] = [];
+  for (const r of rows || []) {
+    const a = String(r.donorId || "").trim();
+    const b = String(r.id || "").trim();
+    const candidates = a && b && a !== b ? [a, b] : [a || b];
+    for (const raw of candidates) {
+      if (!raw) continue;
+      const serial = parseDonorSerial(raw);
+      if (!serial) {
+        if (raw) malformed.push(raw);
+        continue;
+      }
+      if (seen.has(serial) && seen.get(serial) !== raw) duplicates.push(raw);
+      seen.set(serial, raw);
+      used.add(serial);
+    }
+  }
+  return { used, malformed, duplicates };
+}
+
+async function readDonorsOrThrow(): Promise<Row[]> {
+  const d = db();
+  if (!d) throw new Error("Realtime Database সংযোগ নেই।");
+  const snap = await get(ref(d, "donors"));
+  return snapToList(snap.val());
+}
+
+/** Existing ID audit — কখনোই existing ID বদলায় না; শুধু console report। */
+export async function auditDonorIds(): Promise<{ used: number[]; gaps: number[]; malformed: string[]; duplicates: string[] }> {
+  const rows = await readDonorsOrThrow();
+  const { used, malformed, duplicates } = collectSerialsFromDonors(rows);
+  const nums = [...used].sort((a, b) => a - b);
+  const max = nums.length ? nums[nums.length - 1] : 0;
+  const gaps: number[] = [];
+  for (let i = 1; i <= max; i++) if (!used.has(i)) gaps.push(i);
+  try {
+    console.info("[donor-id audit]", {
+      count: nums.length,
+      max,
+      gaps: gaps.slice(0, 80),
+      gapCount: gaps.length,
+      malformed,
+      duplicates,
+    });
+  } catch { /* ignore */ }
+  return { used: nums, gaps, malformed, duplicates };
+}
+
+function smallestFreeSerial(used: Set<number>): number {
+  const max = used.size ? Math.max(...used) : 0;
+  for (let i = 1; i <= max; i++) if (!used.has(i)) return i;
+  return max + 1;
+}
+
+function mergeFreshClaims(used: Set<number>, claims: any): void {
+  if (!claims || typeof claims !== "object") return;
+  for (const k of Object.keys(claims)) {
+    const n = parseClaimKey(k);
+    if (n > 0 && isFreshClaim(claims[k])) used.add(n);
+  }
+}
+
+/**
+ * পরবর্তী Donor UID: CBDC-<currentYear>-<global serial>।
+ * Serial বছর বদলালে reset হয় না। Missing serial (delete/gap) সবচেয়ে ছোটটা আগে।
+ * সব gap শেষে max+1। Concurrent claim atomic। Existing donor ID অপরিবর্তিত।
  */
 export async function nextDonorId(year: number = new Date().getFullYear()): Promise<string> {
   const d = db();
   if (!d) throw new Error("Realtime Database সংযোগ নেই।");
-  const counterRef = ref(d, `${DONOR_COUNTER_NODE}/${year}`);
-  let seq = 1;
   try {
-    const res = await runTransaction(counterRef, (current) => {
-      const n = Number(current ?? 0) || 0;
-      return n + 1;
-    }, { applyLocally: false });
-    const val = res?.snapshot?.val();
-    seq = Math.max(1, Number(val ?? 1) || 1);
+    await auditDonorIds();
   } catch (e) {
-    console.warn("nextDonorId transaction failed:", (e as Error)?.message);
-    // Transaction ব্যর্থ হলে আমরা কখনোই random UID তৈরি করি না —
-    // কারণ সিরিয়াল ভেঙে যাবে। স্পষ্ট error দিয়ে ফিরে আসি।
-    throw new Error("Donor UID তৈরি করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।");
+    console.warn("donor-id audit:", (e as Error)?.message);
   }
-  return formatDonorId(seq, year);
+
+  for (let attempt = 0; attempt < 32; attempt++) {
+    let donors: Row[];
+    try {
+      donors = await readDonorsOrThrow();
+    } catch (e) {
+      throw new Error("Donor তালিকা পড়া যায়নি — নতুন ID ইস্যু করা হয়নি, যাতে duplicate না হয়।");
+    }
+    const { used } = collectSerialsFromDonors(donors);
+    let claims: any = null;
+    try {
+      const snap = await get(ref(d, DONOR_SERIALS_NODE));
+      claims = snap.val();
+    } catch (e) {
+      console.warn("donorSerials read:", (e as Error)?.message);
+    }
+    mergeFreshClaims(used, claims);
+
+    const seq = smallestFreeSerial(used);
+    if (seq < 1) continue;
+    const key = serialKey(seq);
+    const claimRef = ref(d, `${DONOR_SERIALS_NODE}/${key}`);
+    try {
+      const res = await runTransaction(claimRef, (current) => {
+        if (current && isFreshClaim(current)) return undefined;
+        return { at: nowIso(), year, seq };
+      }, { applyLocally: false });
+      if (!res?.committed) continue;
+
+      // Claim-এর পর আবার living donors চেক — কেউ এই serial ধরে থাকলে ছাড়িয়ে পরেরটা।
+      const again = collectSerialsFromDonors(await readDonorsOrThrow());
+      if (again.used.has(seq)) {
+        try { await remove(claimRef); } catch { /* ignore */ }
+        continue;
+      }
+      return formatDonorId(seq, year);
+    } catch (e) {
+      console.warn("nextDonorId claim failed:", (e as Error)?.message);
+      continue;
+    }
+  }
+  throw new Error("Donor UID তৈরি করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।");
+}
+
+/** Donor delete হলে serial সাথে সাথে ব্যবহারযোগ্য। অন্য ID স্পর্শ করে না। */
+export async function releaseDonorSerial(id: unknown): Promise<void> {
+  const serial = parseDonorSerial(id);
+  if (!serial) return;
+  const d = db();
+  if (!d) return;
+  try {
+    await remove(ref(d, `${DONOR_SERIALS_NODE}/${serialKey(serial)}`));
+  } catch (e) {
+    console.warn("releaseDonorSerial:", (e as Error)?.message);
+  }
 }
 
 /** RTDB snapshot map → `{id, ...value}` array (নাল-নিরাপদ)। */
