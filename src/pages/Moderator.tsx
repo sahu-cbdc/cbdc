@@ -10,7 +10,7 @@ import { useEffect } from "react";
 import "../lib/store";
 import { initFirebase as initSharedFirebase, NODES } from "../lib/firebase";
 import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
-import { authErrorMessage, resolveUserRole, panelForRole } from "../lib/authx";
+import { authErrorMessage, resolveUserRole, panelForRole, setOrChangePassword } from "../lib/authx";
 import { getRow, setRow, updateRow, removeRow, watchList, watchRow, findBy, nowIso, nextDonorId, updatePaths, serverTime } from "../lib/rtdb";
 import { ageText, ageFromDob, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
@@ -3236,7 +3236,7 @@ function initPage() {
         msg.textContent=["খুব দুর্বল","দুর্বল","মোটামুটি","ভালো","শক্তিশালী"][sc]};
       s.q("#pok").onclick=async()=>{
         const p0=s.q("#p0").value,p1=s.q("#p1").value,p2=s.q("#p2").value;
-        if(!p0)return toast("বর্তমান পাসওয়ার্ড দিন","er");
+        /* Google-only অ্যাকাউন্টে বর্তমান পাসওয়ার্ড থাকবে না — authx পরিচালনা করে */
         if(p1.length<6)return toast("নতুন পাসওয়ার্ড কমপক্ষে ৬ অক্ষর","er");
         if(p1!==p2)return toast("দুটি পাসওয়ার্ড মিলছে না","er");
         try{
@@ -3360,17 +3360,15 @@ function initPage() {
   
   
   /* ---------- forgot password (OTP verification) ---------- */
-  /* Firebase Authentication — change password (re-auth + updatePassword) */
+  /* Firebase Authentication — change password (re-auth + updatePassword)।
+     Google-only অ্যাকাউন্টে পাসওয়ার্ড না থাকলে একই UID-তে password লিংক হয়। */
   async function panelChangePassword(currentPassword,newPassword){
     const shared=initSharedFirebase();
-    const {EmailAuthProvider, reauthenticateWithCredential, updatePassword}=await import("firebase/auth");
     const user=shared.auth && shared.auth.currentUser;
     if(!user)throw new Error("লগইন অবস্থায় নেই। আবার লগইন করুন।");
     const email=user.email||ME.email;
     if(!email)throw new Error("এই অ্যাকাউন্টে ইমেইল নেই।");
-    const cred=EmailAuthProvider.credential(email,currentPassword);
-    await reauthenticateWithCredential(user,cred);
-    await updatePassword(user,newPassword);
+    await setOrChangePassword(user, email, currentPassword, newPassword);
   }
   /* পাসওয়ার্ড ভুলে গেলে — সাইটের আলাদা full-page UI (/forgot-password)।
      সেখান থেকেই Firebase-এর built-in reset link পাঠানো হয়; কোনো custom OTP নেই। */

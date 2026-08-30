@@ -15,6 +15,7 @@ import { waitForAuthUser } from "../lib/authState";
 import { navigateToPage, pagePath, appBase } from "../lib/router";
 import {
   authErrorMessage,
+  authErrorCode,
   googleSignInWithFallback,
   consumeGoogleRedirect,
   ensureUserProfile,
@@ -24,6 +25,8 @@ import {
   setPendingGoogleProfile,
   getPendingGoogleProfile,
   isProfileComplete,
+  googleCredentialFromError,
+  signInMethodsForEmail,
   photoForUid,
   loadUserProfile,
   resolveUserRole,
@@ -4520,6 +4523,10 @@ function initPage() {
          Email পরিবর্তনযোগ্য নয় (readonly)। মোবাইল/জন্ম তারিখ ইত্যাদি বাকি
          তথ্য ওয়েবসাইটের ফর্ম থেকেই আসে। */
       let googleProfile = null;  // {uid,email,name,photo}
+      /* Google দিয়ে লগইন করলে ইমেইল/পাসওয়ার্ড অ্যাকাউন্টে `account-exists` হলে
+         সেই OAuth credential-টি মনে রাখা হয় — ইমেইল/পাসওয়ার্ড দিয়ে লগইনের পর
+         `linkWithCredential` দিয়ে একই account-এ Google যোগ করা হয় (duplicate নয়)। */
+      let pendingGoogleLink = null; // {email, credential}
       function setSignupGoogleMode(profile){
         googleProfile = profile || null;
         setPendingGoogleProfile(profile || null);
@@ -4571,6 +4578,7 @@ function initPage() {
           uiAlert("Google লগইনের জন্য Firebase সংযোগ প্রয়োজন। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।", {type:"error", title:"সংযোগ নেই"});
           return null;
         }
+        pendingGoogleLink = null; /* নতুন Google ফ্লো — আগের অর্ধেক link state বাদ */
         const res = await googleSignInWithFallback(auth, intent === "signup" ? "signup" : "login");
         if(!res) return null;
         /* Firebase Auth session যাচাই — popup সফল হলে currentUser সাথে সাথেই বসে,
@@ -4700,7 +4708,9 @@ function initPage() {
          দ্রুততা: RTDB read একসাথে (parallel) পাঠানো হয় ও একই ডেটা দ্বিতীয়বার পড়া হয় না —
          তাই Google account select-এর পর অপ্রয়োজনীয় দীর্ঘ loading হয় না। */
       async function continueGoogleAuth(p, intent){
-        showAppLoading(); /* সফল/ব্যর্থ — দুই ক্ষেত্রেই পরিষ্কার অবস্থা দেখানো হয় */
+        /* Google authentication সম্পন্ন হওয়ার পর অতিরিক্ত loading popup/loader
+           দেখানো হয় না — নিচের RTDB/role যাচাই ব্যাকগ্রাউন্ডে সম্পন্ন হয় এবং
+           সফল হলেই সরাসরি নির্ধারিত প্যানেলে নেভিগেট করা হয়। */
         try{
           /* uid দিয়ে প্রোফাইল + email দিয়ে legacy খোঁজা — দুটোই একসাথে শুরু হয় */
           const memberByUidP = findUserByUid(p.uid);
@@ -4808,6 +4818,23 @@ function initPage() {
 
 
       /* --- Google flow ব্যর্থ হলে পরিষ্কার বাংলা এরর + সঠিক পদক্ষেপ --- */
+      function startGooglePasswordLink(err){
+        const pending = googleCredentialFromError(err);
+        if(!pending || !pending.email || !pending.credential) return false;
+        pendingGoogleLink = pending;
+        const _u = $("#username");
+        if(_u) _u.value = pending.email;
+        const _pw = $("#password");
+        if(_pw) _pw.value = "";
+        const _msg = $("#loginMessage");
+        if(_msg){ _msg.className = "hidden"; _msg.textContent = ""; }
+        showView("login");
+        showMessage(_msg,
+          "এই Google অ্যাকাউন্টটি আগে এই ইমেইলে ইমেইল/পাসওয়ার্ড অ্যাকাউন্ট দিয়ে তৈরি। একই ইমেইল ও পাসওয়ার্ড দিয়ে লগইন করলে Google লগইনও এই একই অ্যাকাউন্টে যুক্ত হয়ে যাবে।",
+          "error");
+        setTimeout(()=>{ if(_pw) _pw.focus(); }, 120);
+        return true;
+      }
       function handleGoogleAuthError(err, flowLabel){
         console.warn("Google " + flowLabel + ":", err);
         setGoogleIntent(null);
@@ -4818,7 +4845,9 @@ function initPage() {
           return;
         }
         if(code === "auth/account-exists-with-different-credential"){
-          /* একই ইমেইলে আগেই অ্যাকাউন্ট আছে — ডুপ্লিকেট তৈরি না করে লগইনে পাঠাই */
+          /* একই ইমেইলে আগেই ইমেইল/পাসওয়ার্ড অ্যাকাউন্ট আছে — ডুপ্লিকেট তৈরি না
+             করে পাসওয়ার্ড দিয়ে লগইন করালে Google credential-টি একই UID-এ যুক্ত হয়ে যায়। */
+          if(startGooglePasswordLink(err)) return;
           const exEmail = String((err && err.customData && err.customData.email) || "").toLowerCase();
           if(exEmail){
             const _u = $("#username");
@@ -5237,6 +5266,21 @@ function initPage() {
             email=found;
           }
           const cred=await signInWithEmailAndPassword(auth,email,password);
+          /* Google → Email/Password account-এ যুক্ত করা:
+             Google select-এর সময় account-exists-এ OAuth credential জমা রাখা হয়;
+             একই ইমেইল + সঠিক পাসওয়ার্ড দিয়ে লগইন হলে সেই Google-কে একই UID-এ
+             link করা হয়, ফলে দুটো পদ্ধতিই এই অ্যাকাউন্টে কাজ করে (duplicate নয়)। */
+          if(pendingGoogleLink){
+            if(cred && cred.user && cred.user.uid && pendingGoogleLink.email === email){
+              try{
+                const {linkWithCredential} = await import("firebase/auth");
+                await linkWithCredential(cred.user, pendingGoogleLink.credential);
+              }catch(e){ console.warn("google link on login:", (e && e.code) || "", (e && e.message) || "", e); }
+            } else {
+              console.warn("google link on login: email mismatch, cleared pending credential.");
+            }
+            pendingGoogleLink = null;
+          }
           const profile = await loadUserProfile(cred.user.uid);
           const resolved=await resolveRole({uid:cred.user.uid, email, name: (profile&&profile.name) || cred.user.displayName || email});
           const photo = photoForUid(profile, cred.user.photoURL || "");
@@ -5274,7 +5318,17 @@ function initPage() {
         }catch(err){
           if(_btn){ _btn.disabled=false; _btn.innerHTML=_orig; }
           console.warn("login failed:",err&&err.code,err&&err.message);
-          const msg=authErrorMessage(err,{fallback:"লগইন করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।"});
+          const code=(err&&err.code)||"";
+          let msg=authErrorMessage(err,{fallback:"লগইন করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।"});
+          /* Google দিয়ে তৈরি অ্যাকাউন্টে পাসওয়ার্ড এখনো সেট হয়নি — সঠিক পদক্ষেপ জানাই */
+          if((code==="auth/invalid-credential"||code==="auth/invalid-login-credentials"||code==="auth/user-not-found") && email){
+            try{
+              const methods=await signInMethodsForEmail(auth, email);
+              if(methods.includes("google.com") && !methods.includes("password")){
+                msg="এই ইমেইল দিয়ে Google অ্যাকাউন্ট তৈরি হয়েছে। 'Google দিয়ে লগইন করুন' দিয়ে প্রবেশ করুন; প্যানেলে 'পাসওয়ার্ড পরিবর্তন' থেকে পাসওয়ার্ড সেট করলে ইমেইল/পাসওয়ার্ড লগইনও চালু হবে।";
+              }
+            }catch(_fe){}
+          }
           showMessage($("#loginMessage"),msg,"error");
         }
       });
@@ -5338,10 +5392,15 @@ function initPage() {
           console.warn("Google redirect resume:", err);
           setGoogleIntent(null);
           /* এটি ব্যবহারকারীর নিজের শুরু করা flow — তাই কারণটি জানানো দরকার,
-             কিন্তু শুধু লগইন পেজে; হোমপেজে অকারণ popup নয়। */
-          const msg = authErrorMessage(err);
-          showView("login");
-          showMessage($("#loginMessage"), msg, "error");
+             কিন্তু শুধু লগইন পেজে; হোমপেজে অকারণ popup নয়।
+             account-exists হলে পাসওয়ার্ড দিয়ে লগইন করালে একই অ্যাকাউন্টে Google যুক্ত হয়। */
+          if(authErrorCode(err) === "auth/account-exists-with-different-credential"){
+            handleGoogleAuthError(err, "লগইন");
+          } else {
+            const msg = authErrorMessage(err);
+            showView("login");
+            showMessage($("#loginMessage"), msg, "error");
+          }
           return;
         }
         if(!red){

@@ -19,6 +19,7 @@ import {
   loadUserProfile,
   isProfileComplete,
   requestPasswordReset,
+  setOrChangePassword,
 } from "../lib/authx";
 import { getRow, setRow, updateRow, watchRow, watchList, addRow, findBy, listOnce, nowIso, updatePaths, removeRow, incrementField, ensureFieldAtLeast, serverTime, nextDonorId } from "../lib/rtdb";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
@@ -4347,7 +4348,8 @@ function initPage() {
     s.q("#ok").onclick=async()=>{
       const p0=s.q("#p0").value,p1=s.q("#p1").value,p2=s.q("#p2").value,e=s.q("#pe");
       e.classList.add("hide");
-      if(!p0){toast("বর্তমান পাসওয়ার্ড দিন","er");return}
+      /* Google-only account-এ বর্তমান পাসওয়ার্ড থাকবে না — সেটা authx-এর
+         setOrChangePassword স্বাভাবিকভাবে পরিচালনা করে (password link)। */
       if(p1.length<6){e.textContent="নতুন পাসওয়ার্ড কমপক্ষে ৬ অক্ষর";e.classList.remove("hide");return}
       if(p1!==p2){e.textContent="দুটি পাসওয়ার্ড মিলছে না";e.classList.remove("hide");return}
       try{
@@ -4446,17 +4448,16 @@ function initPage() {
   }
   
   /* ---------- forgot password ---------- */
-  /* Firebase Authentication — change password (re-auth + updatePassword) */
+  /* Firebase Authentication — change password (re-auth + updatePassword)।
+     Google দিয়ে তৈরি অ্যাকাউন্টে পাসওয়ার্ড না থাকলে linkWithCredential দিয়ে
+     একই UID-তে পাসওয়ার্ড যুক্ত হয় — তখন Email/Password লগইনও চালু হয়। */
   async function donorChangePassword(currentPassword,newPassword){
     const shared=initSharedFirebase();
-    const {EmailAuthProvider, reauthenticateWithCredential, updatePassword}=await import("firebase/auth");
     const user=shared.auth && shared.auth.currentUser;
     if(!user)throw new Error("লগইন অবস্থায় নেই। আবার লগইন করুন।");
     const email=user.email||STORE.account.email;
     if(!email)throw new Error("এই অ্যাকাউন্টে ইমেইল নেই।");
-    const cred=EmailAuthProvider.credential(email,currentPassword);
-    await reauthenticateWithCredential(user,cred);
-    await updatePassword(user,newPassword);
+    await setOrChangePassword(user, email, currentPassword, newPassword);
   }
   /* পাসওয়ার্ড ভুলে গেলে — ইউজার ইতিমধ্যে লগইন করা, তাই আলাদা full-page UI-তে
      ইমেইল চাওয়া হয় না। Firebase Auth-এর অ্যাকাউন্ট ইমেইলে সরাসরি reset link

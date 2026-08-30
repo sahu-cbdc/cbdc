@@ -29,7 +29,7 @@ Firebase config এক জায়গায় রাখা হয়েছে:
 ```ts
 export const firebaseConfig = {
   apiKey: "AIzaSy...",
-  authDomain: "chokbazarbloodclub-69d5f.firebaseapp.com",
+  authDomain: "auth.chawkbazarbloodclub.com", // custom Firebase Auth domain
   projectId: "chokbazarbloodclub-69d5f",
   databaseURL: "https://chokbazarbloodclub-69d5f-default-rtdb.firebaseio.com",
   // ...
@@ -60,17 +60,17 @@ Project: **`chokbazarbloodclub-69d5f`** (`.firebaserc`-এও সেট কর�
   1. Firebase Console → Authentication → Sign-in method → **Google: Enabled**
      (এবং সেখানে "Project public-facing name" = **চকবাজার ব্লাড ডোনার্স ক্লাব** দিন)।
   2. Firebase Console → Authentication → Settings → **Authorized domains**-এ
-     সাইট যে ডোমেইনে চলে (যেমন `cbdc-a9418.web.app`, `chokbazarbloodclub-69d5f.firebaseapp.com`,
-     কাস্টম ডোমেইন, প্রয়োজনে `localhost`) যোগ করা। অনুমোদিত ডোমেইন ছাড়া
+     সাইট যে ডোমেইনে চলে (যেমন `cbdc-a9418.web.app`, `chawkbazarbloodclub.com`,
+     custom Firebase Auth domain `auth.chawkbazarbloodclub.com`, প্রয়োজনে `localhost`) যোগ করা। অনুমোদিত ডোমেইন ছাড়া
      `auth/unauthorized-domain` আসে এবং সাইন-ইন শেষ হয় না। কোডে production
      authorized domain দুটি (`chawkbazarbloodclub.com`, `www.chawkbazarbloodclub.com`)
      `src/lib/authx.ts`-এর `AUTHORIZED_HOSTS`-এ যাচাই করা আছে; এই ডোমেইনে থাকলেও
      অস্বীকৃতি এলে আরও নির্দিষ্ট diagnostic বার্তা দেখানো হয়।
   3. সাইটটি যদি ভিন্ন হোস্টিং/প্রেভিউ ডোমেইনে চলে, সেটিও যোগ করতে হবে।
-  **দ্রষ্টব্য:** `chokbazarbloodclub-69d5f.firebaseapp.com/__/auth/handler`
-  হলো বাধ্যতামূলক প্রযুক্তিগত redirect — এটি বদলানো যাবে না; ব্র্যান্ডিং
-  নিয়ন্ত্রিত হয় "Project public-facing name" ও Google OAuth consent screen দিয়ে
-  (নিচের ২.২ দেখুন)।
+  **দ্রষ্টব্য:** `auth.chawkbazarbloodclub.com/__/auth/handler`
+  হলো custom Firebase Auth domain-এর বাধ্যতামূলক প্রযুক্তিগত redirect —
+  এটি মেলানো যাবে না; ব্র্যান্ডিং নিয়ন্ত্রিত হয় "Project public-facing name" ও
+  Google OAuth consent screen দিয়ে (নিচের ২.২ দেখুন)।
 - **API key restriction** দিলে `Identity Toolkit API` ও `Token Service API`
   allowed রাখুন এবং deploy করা ডোমেইনকে HTTP referrer allowlist-এ যোগ করুন।
 - ঐচ্ছিক env override (`VITE_FIREBASE_API_KEY` ইত্যাদি) সেট করলে সবগুলোই দিতে হয়;
@@ -92,7 +92,7 @@ Google লগইনের "Choose an account" স্ক্রিনে যেন
 | Firebase Console → Authentication → Sign-in method → Google → **Project public-facing name** | **চকবাজার ব্লাড ডোনার্স ক্লাব** |
 | Google Cloud Console → OAuth consent screen → **App name** | **চকবাজার ব্লাড ডোনার্স ক্লাব** |
 | OAuth consent screen → Authorized domains | সাইটের ডোমেইন + `firebaseapp.com` |
-| Google Cloud → Credentials → OAuth client (Web) → Authorized redirect URIs | `https://chokbazarbloodclub-69d5f.firebaseapp.com/__/auth/handler` (এটিই থাকবে — বদলাবেন না) |
+| Google Cloud → Credentials → OAuth client (Web) → Authorized redirect URIs | `https://auth.chawkbazarbloodclub.com/__/auth/handler` (custom Firebase Auth domain) |
 
 বিস্তারিত ধাপ: `docs/GOOGLE_LOGIN_BRANDING.md`।
 
