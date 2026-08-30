@@ -947,6 +947,7 @@ function initPage() {
   "জরুরি আবেদনের বিজ্ঞপ্তি":"Emergency request alerts",
   "বিজ্ঞপ্তির সংখ্যা দেখান":"Show notification count",
   "আবেদন প্রত্যাহার করবেন?":"Withdraw your application?",
+  "আবেদনটি প্রত্যাহার হবে; পরে আবার আবেদন করতে পারবেন। আগের অনুমোদিত স্ট্যাটাস ও রক্তদানের ইতিহাস অক্ষত থাকে।":"The application will be withdrawn; you can apply again later. Your previous approved status and donation history stay intact.",
   "এটি আপনার বর্তমান ইমেইল":"That is already your email",
   "ইমেইল পরিবর্তনের অনুরোধ":"Email change requested",
   "WhatsApp নম্বর সঠিক নয়":"That WhatsApp number isn't valid",
@@ -1083,6 +1084,13 @@ function initPage() {
   "আবেদন জমা হয়েছে":"Request submitted",
   "জীবন বাঁচিয়েছেন":"lives saved",
   "আবেদন প্রত্যাহার":"Withdraw application",
+  "আবেদন বাতিল হয়েছে":"Application cancelled",
+  "আপনার রক্তদাতা আবেদনটি বাতিল করা হয়েছে":"Your donor application has been cancelled",
+  "আবার আবেদন করুন":"Apply again",
+  "চাইলে আবার আবেদন করতে পারেন।":"You can apply again anytime.",
+  "প্রত্যাহারের কারণ":"Reason for withdrawal",
+  "কারণ না লিখেও প্রত্যাহার করা যাবে":"Optional — you can withdraw without a reason",
+  "প্রত্যাহার করুন":"Withdraw it",
   "প্রমাণ দিলে ভালো":"Proof helps",
   "যাচাইকৃত রক্তদান":"Verified donations",
   "প্রদর্শনের ঘনত্ব":"Display density",
@@ -1659,6 +1667,9 @@ function initPage() {
       bloodGroup:"", whatsapp:"", lastDonation:"", totalDonations:0, totalBags:0,
       health:"",
       available:true, appliedAt:"", cardTheme:"green",
+      /* অ্যাডমিন/মডারেটর ডোনার আবেদন বাতিল করলে সংরক্ষিত বাতিলের কারণ
+         (users/{uid}/donorRejectNote) — বাতিল অবস্থায় ডোনার প্যানেলে দেখানো হয়। */
+      donorRejectNote:"",
       /* রক্তের গ্রুপ পরিবর্তনের অনুরোধ — users/{uid}/groupChange থেকে sync হয়।
          {id,from,to,reason,proof,status:"pending"|"approved"|"rejected",at,note} */
       groupChange:null
@@ -2094,7 +2105,7 @@ function initPage() {
        ভুলভাবে জানানো হয় না। */
     else if(seen.donorStatus==="pending"&&ds==="rejected")
       addNotif({id:"donor-rej",title:"ডোনার আবেদন বাতিল",
-        body:"আপনার রক্তদাতা আবেদনটি বাতিল করা হয়েছে।",type:"rejected",go:"req:become"});
+        body:STORE.donor.donorRejectNote?`কারণ: ${STORE.donor.donorRejectNote}`:"আপনার রক্তদাতা আবেদনটি বাতিল করা হয়েছে।",type:"rejected",go:"req:become"});
     if(ds)seen.donorStatus=ds;
     /* ৪) রক্তের গ্রুপ পরিবর্তন অনুমোদিত — donors record-এর bloodGroup বদলালে */
     if(d.is&&d.status==="approved"&&seen.bloodGroup&&seen.bloodGroup!==d.bloodGroup&&d.bloodGroup)
@@ -2239,6 +2250,9 @@ function initPage() {
   const donorPill=()=>{
     if(!isDonor())return "";
     if(dStatus()==="pending")return `<span class="pill a">যাচাই চলছে</span>`;
+    /* বাতিল করা আবেদন কখনোই প্রস্তুত/বিশ্রামে ডোনার হিসেবে দেখানো হবে না —
+       বাতিলের পর pending status সম্পূর্ণ clear থাকে। */
+    if(dStatus()==="rejected")return `<span class="pill r">আবেদন বাতিল হয়েছে</span>`;
     if(!STORE.donor.available)return `<span class="pill m">প্রাপ্যতা বন্ধ</span>`;
     if(restLeft()>0)return `<span class="pill a">${tp(`বিশ্রামে · আর ${bn(restLeft())} দিন`,`Resting · ${restLeft()} days left`)}</span>`;
     return `<span class="pill g">রক্তদানে প্রস্তুত</span>`;
@@ -2346,7 +2360,7 @@ function initPage() {
           <button class="btn w" style="margin-top:12px" data-act="become">রক্তদাতা হিসেবে যুক্ত হন</button></div>`
       : `<div class="card">
           <div class="per"><span class="bg" style="width:46px;height:46px;border-radius:12px;font-size:1rem">${esc(d.bloodGroup)}</span>
-            <div class="i"><b>${esc(dv("name"))}</b><small>${d.donorId?esc(d.donorId)+" · ":""}${esc(dv("area"))}${d.donorId?"":dStatus()&&dStatus()!=="none"?" · অ্যাডমিন অনুমোদনের অপেক্ষায়":""}</small></div></div>
+            <div class="i"><b>${esc(dv("name"))}</b><small>${d.donorId?esc(d.donorId)+" · ":""}${esc(dv("area"))}${d.donorId?"":dStatus()==="pending"?" · অ্যাডমিন অনুমোদনের অপেক্ষায়":""}</small></div></div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin:11px 0">${donorPill()}
             ${dStatus()==="approved"?`<span class="pill b n">${ICON.checkC(12)} যাচাইকৃত</span>`:""}</div>
           <div style="display:flex;gap:8px">
@@ -2852,6 +2866,16 @@ function initPage() {
         জমা দিয়েছেন ${dL(d.appliedAt)} · সাধারণত ২৪–৪৮ ঘণ্টা লাগে।</span></div>
       ${donorRows()}
       <button class="btn gh w" style="margin-top:12px" data-act="withdraw">আবেদন প্রত্যাহার</button></div>`;
+    /* বাতিল করা আবেদন — কখনোই "অনুমোদিত" বা "অনুমোদনের অপেক্ষায়" দেখানো হবে না।
+       অ্যাডমিন কারণ লিখে বাতিল করলে সেটি এখানে দেখানো হয়; চাইলে আবার আবেদন করা যায়। */
+    if(dStatus()==="rejected"){
+      const rjNote=String(d.donorRejectNote||"").trim();
+      return `<div class="card">
+      <div class="note r">${ICON.x(17)}<span><b>আপনার রক্তদাতা আবেদনটি বাতিল করা হয়েছে</b><br>
+        ${rjNote?`বাতিলের কারণ: ${esc(rjNote)}<br>`:""}চাইলে আবার আবেদন করতে পারেন।</span></div>
+      ${donorRows()}
+      <button class="btn w" style="margin-top:12px" data-act="become">আবার আবেদন করুন</button></div>`;
+    }
     return `<div class="card">
       <div class="note g">${ICON.checkC(17)}<span><b>আপনি অনুমোদিত রক্তদাতা</b><br>${esc(d.donorId)}</span></div>
       ${donorRows()}
@@ -3615,6 +3639,7 @@ function initPage() {
       a.area=$("#bc_area").value;
       a.phone=$("#bc_phone").value.trim();
       d.is=true; d.status="pending";
+      d.donorRejectNote="";
       d.bloodGroup=finalBloodGroup;
       d.lastDonation=$("#bc_last").value||"";
       d.health=$("#bc_health").value.trim()||"";
@@ -3658,6 +3683,7 @@ function initPage() {
             [`users/${uid}/health`]:d.health,[`users/${uid}/whatsapp`]:d.whatsapp,
             [`users/${uid}/donorStatus`]:"approved",[`users/${uid}/donorId`]:donorId,
             [`users/${uid}/available`]:true,[`users/${uid}/appliedAt`]:at,
+            [`users/${uid}/donorRejectNote`]:null,
             [`donors/${donorId}`]:{id:donorId,donorId,uid,ownerUid:uid,name:a.name,gender:a.gender,
               dob:a.dob,area:a.area,district,phone:a.phone,whatsapp:d.whatsapp,bloodGroup:d.bloodGroup,
               lastDonationDate:d.lastDonation,
@@ -3686,6 +3712,8 @@ function initPage() {
         paths[`users/${uid}/bloodGroup`]=d.bloodGroup;
         paths[`users/${uid}/donorStatus`]="pending";
         paths[`users/${uid}/donorId`]=null;
+        /* নতুন আবেদনে পুরোনো বাতিলের কারণ আর থাকে না */
+        paths[`users/${uid}/donorRejectNote`]=null;
         paths[`users/${uid}/lastDonation`]=d.lastDonation;
         paths[`users/${uid}/whatsapp`]=d.whatsapp;
         paths[`users/${uid}/health`]=d.health;
@@ -4089,25 +4117,64 @@ function initPage() {
         }
         await save();
         await logAct("ডোনার তালিকা থেকে সরে গেছেন","");go("set","donor");toast("সরে গেছেন","ok")}break;
-      case "withdraw":if(await confirmS({title:"আবেদন প্রত্যাহার করবেন?",desc:"পরে আবার আবেদন করতে পারবেন।",ok:"প্রত্যাহার",danger:true})){
-        const oldDonor={...STORE.donor},uid=String(firebaseCurrentUid()||RTDB_UID||"").trim();
-        STORE.donor.is=false;STORE.donor.status="none";STORE.donor.donorId="";
-        try{
-          if(!uid)throw new Error("Firebase Auth session পাওয়া যায়নি");
-          const profile=await getRow(NODES.users,uid),paths={
-            [`users/${uid}/donorStatus`]:null,[`users/${uid}/donorId`]:null,
-            [`users/${uid}/lastDonation`]:null,[`users/${uid}/health`]:null,
-            [`users/${uid}/whatsapp`]:null,[`users/${uid}/available`]:null,
-            [`users/${uid}/appliedAt`]:null,
-            [`queue/PD-${uid.replace(/[^A-Za-z0-9]/g,"").slice(-40)}`]:null
-          };
-          const memberId=String(profile&&profile.donorMemberId||"");
-          if(memberId){paths[`members/${memberId}/status`]=null;paths[`queue/${memberId}`]=null;}
-          await updatePaths(paths);
-          await save();
-          if(CUR==="become"){reqTab="become";go("req");}else{rReq();}
-          toast("আবেদন প্রত্যাহার করা হয়েছে","ok");
-        }catch(e){Object.assign(STORE.donor,oldDonor);await save();toast("আবেদন প্রত্যাহার করা যায়নি","er");}
+      /* আবেদন প্রত্যাহার — কারণ ঐচ্ছিক; কারণ না লিখেও প্রত্যাহার করা যায়,
+         লিখলে সেটি কার্যকলাপে সংরক্ষিত থাকে। প্রত্যাহারে pending state
+         users/{uid}, queue ও members — সব source থেকেই পরিষ্কার হয়, তাই
+         refresh বা sync করলেও আবেদন আর "অনুমোদনের অপেক্ষায়" ফিরে আসে না। */
+      case "withdraw":{
+        const ws=sheet("আবেদন প্রত্যাহার করবেন?",`
+          <p class="mut" style="font-size:.83rem">আবেদনটি প্রত্যাহার হবে; পরে আবার আবেদন করতে পারবেন। আগের অনুমোদিত স্ট্যাটাস ও রক্তদানের ইতিহাস অক্ষত থাকে।</p>
+          <div class="f" style="margin-top:10px"><label>প্রত্যাহারের কারণ <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
+            <textarea id="wd_reason" rows="2" placeholder="কারণ না লিখেও প্রত্যাহার করা যাবে"></textarea></div>`,
+          `<button class="btn gh" data-close>ফিরে যান</button>
+           <button class="btn red" id="wd_ok">প্রত্যাহার করুন</button>`);
+        ws.q("#wd_ok").onclick=async()=>{
+          /* কারণ ঐচ্ছিক — কোনো required validation নেই */
+          const reason=String(ws.q("#wd_reason").value||"").trim();
+          const oldDonor={...STORE.donor},uid=String(firebaseCurrentUid()||RTDB_UID||"").trim();
+          const oldWithdrawUid=DONOR_WITHDRAW_UID;
+          ws.close();
+          /* Local state আগে পরিষ্কার — ব্যর্থ হলে oldDonor দিয়ে ফেরানো হয় */
+          STORE.donor.is=false;STORE.donor.status="none";STORE.donor.donorId="";
+          STORE.donor.whatsapp="";STORE.donor.lastDonation="";
+          STORE.donor.health="";STORE.donor.appliedAt="";STORE.donor.available=true;
+          STORE.donor.donorRejectNote="";
+          DONOR_WITHDRAW_UID=uid;
+          try{
+            if(!uid)throw new Error("Firebase Auth session পাওয়া যায়নি");
+            const profile=await getRow(NODES.users,uid),paths={
+              [`users/${uid}/donorStatus`]:null,[`users/${uid}/donorId`]:null,
+              [`users/${uid}/lastDonation`]:null,[`users/${uid}/health`]:null,
+              [`users/${uid}/whatsapp`]:null,[`users/${uid}/available`]:null,
+              [`users/${uid}/appliedAt`]:null,[`users/${uid}/donorRejectNote`]:null,
+              [`queue/PD-${uid.replace(/[^A-Za-z0-9]/g,"").slice(-40)}`]:null
+            };
+            const memberId=String(profile&&profile.donorMemberId||"");
+            if(memberId){paths[`members/${memberId}`]=null;paths[`queue/${memberId}`]=null;}
+            await updatePaths(paths);
+            /* বাকি সব same-owner donor আবেদন/সদস্য রেকর্ডও পরিষ্কার (queue ও
+               members node staff-only read; সাধারণ ডোনারে এই list খালি আসে —
+               তখন উপরের deterministic মুছে ফেলাই যথেষ্ট)। */
+            try{
+              const accountEmail=String(STORE.account.email||"").trim().toLowerCase();
+              const accountPhone=String(STORE.account.phone||"").replace(/\s+/g,"");
+              const ownRecord=x=>String(x&&(x.ownerUid||x.uid||x.userId)||"").trim()===uid
+                ||(!!accountEmail&&String(x&&x.email||"").trim().toLowerCase()===accountEmail)
+                ||(!!accountPhone&&String(x&&x.phone||"").replace(/\s+/g,"")===accountPhone);
+              const [queues,members]=await Promise.all([listOnce(NODES.queue),listOnce(NODES.members)]);
+              const extra={};
+              queues.filter(q=>q&&q.kind==="donor"&&ownRecord(q)).forEach(q=>{if(q.id)extra[`queue/${q.id}`]=null});
+              members.filter(m=>ownRecord(m)).forEach(m=>{if(m.id)extra[`members/${m.id}`]=null});
+              if(Object.keys(extra).length)await updatePaths(extra);
+            }catch(e2){ console.warn("withdraw sweep:",e2&&e2.message); }
+            await save();
+            /* কারণ লিখলে সংরক্ষিত থাকে — কার্যকলাপ (users/{uid}/data/activity) */
+            try{ await logAct("আবেদন প্রত্যাহার",reason?("কারণ: "+reason):"কারণ দেওয়া হয়নি","donor"); }catch(e3){ console.warn("withdraw log:",e3&&e3.message); }
+            if(CUR==="become"){reqTab="become";go("req");}else{rReq();}
+            toast("আবেদন প্রত্যাহার করা হয়েছে","ok");
+          }catch(e){Object.assign(STORE.donor,oldDonor);await save();toast("আবেদন প্রত্যাহার করা যায়নি","er");}
+          finally{ DONOR_WITHDRAW_UID=oldWithdrawUid; }
+        };
       }break;
   
       case "forgotPass":sheetForgot();break;
@@ -5072,6 +5139,9 @@ function initPage() {
      দিয়ে সঙ্গে সঙ্গে এই স্ক্রিনে চলে আসে — দুই দিকেই লাইভ। */
   let RTDB_UID="";
   let RTDB_PULLING=false;
+  /* আবেদন প্রত্যাহার চলাকালীন hydrate যেন পুরোনো/দেরিতে আসা members/queue
+     snapshot থেকে pending state আবার না ফিরিয়ে আনে — সেই guard। */
+  let DONOR_WITHDRAW_UID="";
   async function pushAccountToRtdb(){
     const uid=firebaseCurrentUid();
     if(!uid||uid!==RTDB_UID||RTDB_PULLING)return;
@@ -5477,6 +5547,9 @@ function initPage() {
     /* রক্তের গ্রুপ পরিবর্তনের অনুরোধ — একমাত্র উৎস users/{uid}/groupChange।
        Admin Approve/Reject করলে এই field-ই বদলায়, watchRow দিয়ে realtime এখানে আসে। */
     STORE.donor.groupChange = row.groupChange && typeof row.groupChange==="object" ? {...row.groupChange} : null;
+    /* বাতিলের কারণ (Admin/Moderator ডোনার আবেদন বাতিল করলে সংরক্ষিত) —
+       বাতিল অবস্থায় ডোনার প্যানেলে দেখানো হয়; নতুন আবেদনে মুছে যায়। */
+    STORE.donor.donorRejectNote = String(row.donorRejectNote||"").trim();
     if(STORE.donor.groupChange&&STORE.donor.groupChange.status==="approved"&&STORE.donor.groupChange.to){
       STORE.donor.bloodGroup=String(STORE.donor.groupChange.to);
     }
@@ -5499,6 +5572,10 @@ function initPage() {
      hardcode/demo নয়, RTDB-র বাস্তব রেকর্ড থেকেই hydrate; duplicate তৈরি নয় */
   async function hydrateDonorFromRtdb(uid){
     if(!uid || STORE.donor.is) return false;
+    /* প্রত্যাহার চলাকালীন পুরোনো/দেরিতে আসা snapshot থেকে pending state
+       আর ফিরিয়ে আনা হয় না — নইলে প্রত্যাহারের পরেও "অনুমোদনের অপেক্ষায়"
+       আবার দেখা যেত। */
+    if(DONOR_WITHDRAW_UID)return false;
     try{
       const accountEmail = String(STORE.account.email || "").trim().toLowerCase();
       const accountPhone = String(STORE.account.phone || "").replace(/\s+/g, "");
@@ -5540,8 +5617,13 @@ function initPage() {
         }
       }catch(e){}
       if(member){
+        const st = String(member.status||member.donorStatus||"").trim().toLowerCase();
+        /* Pending members রেকর্ড কেবল স্পষ্ট status থাকলেই hydrate হয়। status
+           মুছে ফেলা (null/empty) legacy রেকর্ড মানে আবেদনটি আগেই প্রত্যাহার/
+           পরিষ্কার করা হয়েছে — সেটিকে আর pending ভাবা হয় না, তাই refresh বা
+           sync করলেও "অনুমোদনের অপেক্ষায়" ফিরে আসে না। */
+        if(st==="pending"||st==="approved"||st==="rejected"){
         STORE.donor.is=true;
-        const st = String(member.status||member.donorStatus||"pending").toLowerCase();
         STORE.donor.status = st==="approved" ? "approved" : st==="rejected" ? "rejected" : "pending";
         STORE.donor.totalDonations = Math.max(0,Number(member.totalDonations ?? member.donations ?? 0))||0;
         STORE.donor.totalBags = Math.max(0,Number(member.totalBags ?? 0))||0;
@@ -5557,8 +5639,12 @@ function initPage() {
         try{ persistLocalAccount(); }catch(e){}
         try{ await pushAccountToRtdb(); }catch(e){}
         return true;
+        }
+        /* status নেই/মুছে ফেলা legacy member রেকর্ড — pending নয়; নিচের
+           queue-যাচাইয়ে স্পষ্ট pending আবেদন থাকলে শুধু সেটিই গণ্য হয়। */
       }
       // 3) queue (pending donor request)
+      if(DONOR_WITHDRAW_UID)return false;
       try{
         const allQ = await listOnce(NODES.queue);
         const q = allQ.find(x=> x.kind==="donor" && (String(x.ownerUid)===String(uid) || String(x.uid)===String(uid) || legacyOwner(x))) || allQ.find(x=> String(x.uid)===String(uid) && x.group);
