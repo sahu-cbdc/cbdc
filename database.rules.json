@@ -140,7 +140,7 @@
         "approvedAt"
       ],
       "$id": {
-        ".write": "auth != null && root.child('admins').child(auth.uid).exists() && (root.child('admins').child(auth.uid).child('role').val() === 'admin' || (!data.exists() && root.child('admins').child(auth.uid).child('role').val() === 'moderator'))",
+        ".write": "(auth != null && root.child('admins').child(auth.uid).exists() && (root.child('admins').child(auth.uid).child('role').val() === 'admin' || (!data.exists() && root.child('admins').child(auth.uid).child('role').val() === 'moderator')) || (!newData.exists() && auth != null && data.child('ownerUid').val() === auth.uid))",
         ".validate": "!newData.exists() || (newData.child('livesSaved').val() === 1 && newData.child('donorId').isString() && newData.child('ownerUid').isString() && newData.child('date').isString() && newData.child('place').isString())"
       }
     },

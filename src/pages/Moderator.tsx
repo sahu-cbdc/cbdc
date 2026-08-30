@@ -3803,6 +3803,22 @@ function initPage() {
         if(q.kind==="group"&&owner){
           markGroupChangeStatus(owner,"rejected",note,paths);
         }
+        if(q.kind==="donation"&&owner){
+          /* বাতিল হওয়া রক্তদান হারিয়ে যায় না — donor-এর নিজের রেকর্ডে
+             status:"rejected" (+ঐচ্ছিক কারণ) লেখা হয়, তাই ডোনার প্যানেলের
+             detail page-এ status/কারণ দেখা যায় এবং সেখান থেকে আবার পাঠানো/
+             মুছে ফেলা যায়। refresh/sync করলেও অবস্থা একই থাকে। */
+          try{
+            const u=await getRow(NODES.users,owner).catch(()=>null);
+            const arr=Array.isArray(u&&u.data&&u.data.donations)?u.data.donations:[];
+            const di=arr.findIndex(x=>x&&String(x.date||"")===String(q.date||"")&&String(x.place||"")===String(q.place||""));
+            if(di>=0){
+              paths[`users/${owner}/data/donations/${di}/status`]="rejected";
+              paths[`users/${owner}/data/donations/${di}/rejectedAt`]=nowIso();
+              if(note)paths[`users/${owner}/data/donations/${di}/rejectNote`]=String(note).slice(0,200);
+            }
+          }catch(e){ console.warn("donation reject write-back:",e&&e.message); }
+        }
         if(q.kind==="donor"&&owner){
           paths[`users/${owner}/donorStatus`]="rejected";
           /* বাতিলের কারণ (ঐচ্ছিক) সংরক্ষিত হয় — ডোনার প্যানেলে বাতিল অবস্থায় দেখানো হয় */
