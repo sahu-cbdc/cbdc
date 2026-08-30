@@ -16,6 +16,11 @@ import { ageText, ageFromDob, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
 import { uploadImage as imgbbUploadImage } from "../lib/imgbb";
+import {
+  donationVerKey,
+  safeDonationId,
+  makeApprovedDonationRecord,
+} from "../lib/donationLog";
 import SITE from "../config/site";
 import { noticeVisibleTo, noticeReadKey, markNoticeRead, markAllNoticesRead, watchNoticeReads } from "../lib/notice";
 
@@ -3679,39 +3684,14 @@ function initPage() {
     if(note)paths[`users/${ownerUid}/groupChange/note`]=String(note).slice(0,200);
     return paths;
   }
-  /* Approved Donation log helper — 1 donation event = 1 life; bags stay separate. */
-  function donationVerKey(date,place){
-    const s=String(date||"")+"|"+String(place||"");
-    let h=0;for(let i=0;i<s.length;i++)h=((h<<5)-h+s.charCodeAt(i))|0;
-    return "v"+(h>>>0).toString(36);
-  }
-  function safeDonationId(owner,date,place,raw){
-    const rawId=String(raw||"").trim();
-    if(rawId&&rawId.length>=8&&!/[/\\\n]/.test(rawId))return rawId;
-    const base=String(owner||"unknown").replace(/[^A-Za-z0-9]/g,"").slice(-8)||"unknown";
-    return "DN-"+base+"-"+String(date||"nodate").replace(/[^0-9]/g,"")+"-"+donationVerKey(date,place).replace(/^v/,"");
-  }
-  async function makeApprovedDonationRecord(q,d){
-    const owner=String(q.ownerUid||q.uid||"").trim();
-    let proof=String(q.proofUrl||q.proof||"").trim();
-    if(!proof&&owner){
-      try{
-        const u=await getRow(NODES.users,owner).catch(()=>null);
-        const arr=Array.isArray(u&&u.data&&u.data.donations)?u.data.donations:[];
-        const hit=arr.find(x=>x&&String(x.date||"")===String(q.date||"")&&String(x.place||"")===String(q.place||""));
-        proof=String(hit&&hit.proof||"").trim();
-      }catch(e){}
-    }
-    return {
-      id:safeDonationId(owner,q.date,q.place,q.id),
-      donorId:(d&&d.id)||String(q.donorId||""),ownerUid:owner,
-      name:(d&&d.name)||q.name||"",group:(d&&d.group)||q.group||"",area:(d&&d.area)||q.area||"",
-      photo:(d&&d.photo)||q.photo||"",phone:(d&&d.phone)||q.phone||"",
-      place:q.place,date:q.date,bags:Math.max(1,Math.floor(Number(q.bags)||1)),
-      proof,patient:String(q.patient||"").trim(),note:String(q.note||"").trim(),
-      livesSaved:1,approvedAt:nowIso(),approvedBy:ME.name||"মডারেটর",updatedAt:nowIso(),source:"queue",
-      submittedAt:String(q.at||"")};
-  }
+  /* Approved Donation log helper — 1 donation event = 1 life; bags stay separate.
+     The pure implementation is shared from src/lib/donationLog.ts. */
+  const donationIo={
+    listOnce:(node:string)=>listOnce(node),
+    getRow:(node:string,id:string)=>getRow(node,id),
+    updatePaths:(paths:Record<string,any>)=>updatePaths(paths)
+  };
+  const makeApprovedRecord=(q:any,d:any)=>makeApprovedDonationRecord(q,d,ME.name||"মডারেটর",donationIo);
   async function decide(id,ok,note,quiet){
     const i=DB.queue.findIndex(x=>x.id===id);if(i<0)return;
     const q=DB.queue[i];
@@ -3756,7 +3736,7 @@ function initPage() {
           const count=(Number(d.donations)||0)+1;
           const totalBags=(Number(d.totalBags)||0)+bags;
           const last=!d.last||q.date>d.last?q.date:d.last;
-          const record=await makeApprovedDonationRecord(q,d);
+          const record=await makeApprovedRecord(q,d);
           approvedDonation={d,count,totalBags,last,record};
           paths[`donations/${record.id}`]=record;
           paths[`donors/${d.id}/donations`]=count;
@@ -3776,7 +3756,7 @@ function initPage() {
             paths[`users/${owner}/data/verifiedDonations/${vkey}`]={date:q.date,place:q.place,bags,livesSaved:1,at:nowIso(),proof:record.proof||""};
           }
         } else {
-          const record=await makeApprovedDonationRecord(q,null);
+          const record=await makeApprovedRecord(q,null);
           paths[`donations/${record.id}`]=record;
           approvedDonation={d:null,count:0,totalBags:0,last:"",record};
         }

@@ -17,6 +17,15 @@ import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERR
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage, getImgbbKey, saveImgbbKey } from "../lib/imgbb";
+import {
+  donationVerKey,
+  safeDonationId,
+  donorStatsFromRecords,
+  makeApprovedDonationRecord,
+  writeApprovedDonation,
+  deleteApprovedDonation,
+  backfillApprovedDonations,
+} from "../lib/donationLog";
 import { serverDeleteEntity, deletionMessage, bulkDeletionMessage, describeDeletionFailure, isAuthUid, runDedupeScan, type DeletionStep, type DeleteScope } from "../lib/accountDelete";
 import { noticeIsActive, noticeTarget } from "../lib/notice";
 
@@ -4102,7 +4111,7 @@ function initPage() {
           const count=(Number(d.donations)||0)+1;
           const totalBags=(Number(d.totalBags)||0)+bags;
           const last=!d.last||q.date>d.last?q.date:d.last;
-          const record=await makeApprovedDonationRecord(q,d);
+          const record=await makeApprovedRecord(q,d);
           approvedDonation={d,count,totalBags,last,record};
           paths[`donations/${record.id}`]=record;
           paths[`donors/${d.id}/donations`]=count;
@@ -4122,7 +4131,7 @@ function initPage() {
             paths[`users/${owner}/data/verifiedDonations/${vkey}`]={date:q.date,place:q.place,bags,livesSaved:1,at:nowIso(),proof:record.proof||""};
           }
         } else {
-          const record=await makeApprovedDonationRecord(q,null);
+          const record=await makeApprovedRecord(q,null);
           paths[`donations/${record.id}`]=record;
           approvedDonation={d:null,count:0,totalBags:0,last:"",record};
         }
@@ -4442,82 +4451,20 @@ function initPage() {
   /* ══════════════════ APPROVED DONATIONS (Admin) ══════════════════
      Authoritative approved-donation log lives in RTDB `donations`.
      Approve → record; View / Edit / Delete here; donor & user donor
-     statistics are recomputed from the same log (1 event = 1 life). */
-  function donationVerKey(date,place){
-    const s=String(date||"")+"|"+String(place||"");
-    let h=0;for(let i=0;i<s.length;i++)h=((h<<5)-h+s.charCodeAt(i))|0;
-    return "v"+(h>>>0).toString(36);
-  }
-  function safeDonationId(owner,date,place,raw){
-    const rawId=String(raw||"").trim();
-    if(rawId&&rawId.length>=8&&!/[/\\\n]/.test(rawId))return rawId;
-    const base=String(owner||"unknown").replace(/[^A-Za-z0-9]/g,"").slice(-8)||"unknown";
-    return "DN-"+base+"-"+String(date||"nodate").replace(/[^0-9]/g,"")+"-"+donationVerKey(date,place).replace(/^v/,"");
-  }
-  async function donationRecordsFor(donorId){
-    let rows=[];
-    try{rows=await listOnce(NODES.donations);}catch(e){console.warn("donation records:",e&&e.message)}
-    return rows.filter(r=>r&&String(r.donorId||"")===String(donorId||""));
-  }
-  function donorStatsFromRecords(records){
-    const recs=(records||[]).filter(Boolean);
-    return {
-      lives:recs.length,
-      bags:recs.reduce((s,r)=>s+Math.max(0,Math.floor(Number(r.bags)||0)),0),
-      last:recs.map(r=>String(r.date||"")).filter(Boolean).sort().pop()||""
-    };
-  }
+     statistics are recomputed from the same log (1 event = 1 life).
+
+     The pure write/delete/backfill logic lives in src/lib/donationLog.ts
+     and is shared with the Moderator panel + the test suite. */
+  const donationIo={
+    listOnce:(node:string)=>listOnce(node),
+    getRow:(node:string,id:string)=>getRow(node,id),
+    updatePaths:(paths:Record<string,any>)=>updatePaths(paths)
+  };
   function localDonorForRecord(record){
     return DB.donors.find(x=>String(x.id)===String(record.donorId||""))||null;
   }
-  /* এক বা একাধিক approved donation write + donor/user statistics — atomic এক batch */
-  async function writeApprovedDonationPath(record,oldRecord){
-    const donorId=String(record.donorId||""), owner=String(record.ownerUid||"");
-    const paths={};
-    const oldKey=donationVerKey(oldRecord&&oldRecord.date,oldRecord&&oldRecord.place);
-    const curKey=donationVerKey(record.date,record.place);
-    const oid=String((oldRecord&&oldRecord.id)||record.id||"");
-    paths[`donations/${record.id}`]=record;
-    /* latest full list for this donor (RTDB + this record) */
-    let all=await donationRecordsFor(donorId);
-    all=all.filter(r=>String(r.id)!==String(record.id||oid));
-    all.push(record);
-    if(oid&&oid!==record.id)paths[`donations/${oid}`]=null;
-    const stats=donorStatsFromRecords(all);
-    if(donorId){
-      paths[`donors/${donorId}/donations`]=stats.lives;
-      paths[`donors/${donorId}/totalDonations`]=stats.lives;
-      paths[`donors/${donorId}/totalBags`]=stats.bags;
-      paths[`donors/${donorId}/lastDonationDate`]=stats.last||"";
-    }
-    /* user-side mirror: verifiedDonations + ok flags */
-    if(owner){
-      const u=await getRow(NODES.users,owner).catch(()=>null);
-      const arr=Array.isArray(u&&u.data&&u.data.donations)?u.data.donations:[];
-      let matchedIdx=-1;
-      arr.forEach((x,i)=>{
-        const k=donationVerKey(x&&x.date,x&&x.place);
-        if(k===curKey){paths[`users/${owner}/data/donations/${i}/ok`]=true;matchedIdx=i;}
-        else if(oldKey&&k===oldKey){paths[`users/${owner}/data/donations/${i}/ok`]=false;matchedIdx=i;}
-      });
-      /* Admin edit date/place হলে ডোনারের নিজের রেকর্ডও আপডেট করে — synchronized */
-      if(matchedIdx>=0&&oldKey&&oldKey!==curKey){
-        paths[`users/${owner}/data/donations/${matchedIdx}/date`]=record.date;
-        paths[`users/${owner}/data/donations/${matchedIdx}/place`]=record.place;
-        paths[`users/${owner}/data/donations/${matchedIdx}/ok`]=true;
-      }
-      const old=(u&&u.data&&u.data.verifiedDonations)&&typeof u.data.verifiedDonations==="object"?
-        {...u.data.verifiedDonations}:{};
-      if(oldKey&&oldKey!==curKey)delete old[oldKey];
-      old[curKey]={date:record.date,place:record.place,bags:Number(record.bags)||1,
-        livesSaved:1,at:record.approvedAt||record.updatedAt||nowIso(),proof:record.proof||""};
-      paths[`users/${owner}/data/verifiedDonations`]=old;
-    }
-    return {paths,stats,all};
-  }
   async function saveApprovedDonation(record,oldRecord){
-    const donorId=String(record.donorId||""), owner=String(record.ownerUid||"");
-    const {paths,stats}=await writeApprovedDonationPath(record,oldRecord);
+    const {paths,stats}=await writeApprovedDonation(record,oldRecord,donationIo);
     await updatePaths(paths);
     DB.donations=DB.donations.filter(x=>String(x.id)!==String(record.id));
     DB.donations.unshift(record);
@@ -4526,33 +4473,10 @@ function initPage() {
     return stats;
   }
   async function deleteApprovedDonation(record){
-    const donorId=String(record.donorId||""), owner=String(record.ownerUid||"");
-    const paths={};
-    const oldKey=donationVerKey(record.date,record.place);
-    paths[`donations/${record.id}`]=null;
-    let all=await donationRecordsFor(donorId);
-    all=all.filter(r=>String(r.id)!==String(record.id));
-    const stats=donorStatsFromRecords(all);
-    if(donorId){
-      paths[`donors/${donorId}/donations`]=stats.lives;
-      paths[`donors/${donorId}/totalDonations`]=stats.lives;
-      paths[`donors/${donorId}/totalBags`]=stats.bags;
-      paths[`donors/${donorId}/lastDonationDate`]=stats.last||"";
-    }
-    if(owner){
-      const u=await getRow(NODES.users,owner).catch(()=>null);
-      const arr=Array.isArray(u&&u.data&&u.data.donations)?u.data.donations:[];
-      arr.forEach((x,i)=>{
-        if(donationVerKey(x&&x.date,x&&x.place)===oldKey)paths[`users/${owner}/data/donations/${i}/ok`]=false;
-      });
-      const old=(u&&u.data&&u.data.verifiedDonations)&&typeof u.data.verifiedDonations==="object"?
-        {...u.data.verifiedDonations}:{};
-      delete old[oldKey];
-      paths[`users/${owner}/data/verifiedDonations`]=old;
-    }
+    const {paths,stats}=await deleteApprovedDonation(record,donationIo);
     await updatePaths(paths);
     DB.donations=DB.donations.filter(x=>String(x.id)!==String(record.id));
-    const d=DB.donors.find(x=>String(x.id)===String(donorId));
+    const d=DB.donors.find(x=>String(x.id)===String(record.donorId||""));
     if(d){d.donations=stats.lives;d.totalDonations=stats.lives;d.totalBags=stats.bags;d.last=stats.last;}
     return stats;
   }
@@ -4562,76 +4486,22 @@ function initPage() {
     if(approvedDonationBackfillRun||!can("donation.manage"))return;
     approvedDonationBackfillRun=true;
     try{
-      const users=await listOnce(NODES.users).catch(()=>[]);
-      if(!users.length)return;
-      const existing=new Set((DB.donations||[]).map(r=>String(r.donorId||"")+"|"+String(r.date||"")+"|"+String(r.place||"")));
-      const paths={};const newRecords=[];const touched=new Set();
-      for(const u of users){
-        const owner=String(u.uid||u.id||"").trim();const vd=u&&u.data&&u.data.verifiedDonations;
-        if(!owner||!vd||typeof vd!=="object")continue;
-        const donor=DB.donors.find(x=>String(x.ownerUid||"")===owner);
-        if(!donor)continue;
-        const ownDon=(u.data&&Array.isArray(u.data.donations))?u.data.donations:[];
-        for(const [_,v] of Object.entries(vd)){
-          if(!v||!v.date||!v.place)continue;
-          const key=String(donor.id||"")+"|"+String(v.date)+"|"+String(v.place);
-          if(existing.has(key))continue;
-          const proof=String(v.proof||"")||(ownDon.find(x=>String(x.date||"")===String(v.date)&&String(x.place||"")===String(v.place))||{}).proof||"";
-          const rec={id:safeDonationId(owner,v.date,v.place),
-            donorId:donor.id,ownerUid:owner,name:donor.name,group:donor.group||donor.bloodGroup,
-            area:donor.area,photo:donor.photo,phone:donor.phone,
-            place:v.place,date:v.date,bags:Math.max(1,Math.floor(Number(v.bags)||1)),
-            proof,patient:"",note:"",livesSaved:1,
-            approvedAt:v.at||v.approvedAt||"",approvedBy:"আগের যাচাই",updatedAt:nowIso(),source:"legacy"};
-          paths[`donations/${rec.id}`]=rec;newRecords.push(rec);existing.add(key);touched.add(donor.id);
-        }
-      }
+      const {paths,newRecords,touched}=await backfillApprovedDonations(donationIo,DB.donations||[],DB.donors||[]);
       if(!newRecords.length)return;
-      /* recompute donor stats for every touched donor using latest RTDB list */
-      for(const donorId of touched){
-        const all=await donationRecordsFor(donorId);
-        const stats=donorStatsFromRecords(all.concat(newRecords.filter(r=>String(r.donorId)===String(donorId))));
-        paths[`donors/${donorId}/donations`]=stats.lives;
-        paths[`donors/${donorId}/totalDonations`]=stats.lives;
-        paths[`donors/${donorId}/totalBags`]=stats.bags;
-        paths[`donors/${donorId}/lastDonationDate`]=stats.last||"";
-      }
       await updatePaths(paths);
       newRecords.forEach(r=>{DB.donations.unshift(r)});
       for(const donorId of touched){
         const d=DB.donors.find(x=>String(x.id)===String(donorId));
         if(!d)continue;
-        const all=(await donationRecordsFor(donorId));
+        const all=(((await donationIo.listOnce(NODES.donations))||[]).filter(r=>r&&String(r.donorId||"")===String(donorId)));
         const stats=donorStatsFromRecords(all);
         d.donations=stats.lives;d.totalDonations=stats.lives;d.totalBags=stats.bags;d.last=stats.last;
       }
       logAudit("Approved Donations ব্যাকফিল",bn(newRecords.length)+"টি পুরোনো রক্তদান যুক্ত হয়েছে","donation");
     }catch(e){console.warn("approved donation backfill:",e&&e.message)}
   }
-  /* Approve-এর সময় queue থেকে তৈরি রেকর্ড (proof URL সহ) */
-  async function makeApprovedDonationRecord(q,d){
-    const owner=String(q.ownerUid||q.uid||"").trim();
-    let proof=String(q.proofUrl||q.proof||"").trim();
-    if(!proof&&owner){
-      try{
-        const u=await getRow(NODES.users,owner).catch(()=>null);
-        const arr=Array.isArray(u&&u.data&&u.data.donations)?u.data.donations:[];
-        const hit=arr.find(x=>x&&String(x.date||"")===String(q.date||"")&&String(x.place||"")===String(q.place||""));
-        proof=String(hit&&hit.proof||"").trim();
-      }catch(e){}
-    }
-    const donorId=(d&&d.id)||String(q.donorId||"");
-    const record={
-      id:safeDonationId(owner,q.date,q.place,q.id),
-      donorId,ownerUid:owner,
-      name:(d&&d.name)||q.name||"",group:(d&&d.group)||q.group||"",area:(d&&d.area)||q.area||"",
-      photo:(d&&d.photo)||q.photo||"",phone:(d&&d.phone)||q.phone||"",
-      place:q.place,date:q.date,bags:Math.max(1,Math.floor(Number(q.bags)||1)),
-      proof,patient:String(q.patient||"").trim(),note:String(q.note||"").trim(),
-      livesSaved:1,approvedAt:nowIso(),approvedBy:ME.name||"অ্যাডমিন",updatedAt:nowIso(),source:"queue",
-      submittedAt:String(q.at||"")};
-    return record;
-  }
+  /* Approve-এর সময় queue থেকে তৈরি রেকর্ড (proof URL সহ) — shared module */
+  const makeApprovedRecord=(q:any,d:any)=>makeApprovedDonationRecord(q,d,ME.name||"অ্যাডমিন",donationIo);
   let appFil={q:"",g:""};
   SUBP.approved=el=>{
     const list=(DB.donations||[]).slice().sort((a,b)=>String(b.date||b.approvedAt).localeCompare(String(a.date||a.approvedAt)));
