@@ -2443,8 +2443,8 @@ function initPage() {
     $("#s-home").innerHTML=`
       <h2 class="ptitle">${a.name?`${greet}, ${esc(a.name.split(" ")[0])}`:greet}
         <small>${now().toLocaleDateString(LOC(),{weekday:"long",day:"numeric",month:"long"})}</small></h2>
-      ${statusCard}${alert}${stats}${ready}
       ${noticeBlock}
+      ${statusCard}${alert}${stats}${ready}
       <div class="card pad0">
         <div style="padding:13px 15px 4px"><b style="font-size:.88rem">দ্রুত কাজ</b></div>
         <button class="row" data-nav="find"><span class="ic">${ICON.search(19)}</span>
