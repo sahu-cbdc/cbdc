@@ -1378,11 +1378,18 @@ const pageCss = `    @font-face {
     [data-theme="dark"] .app-message h3,[data-theme="dark"] .cmodal h3{color:var(--ink)}
     [data-theme="dark"] .modal-head,[data-theme="dark"] .app-modal-footer,[data-theme="dark"] .cmodal-footer{border-color:var(--line)}
     [data-theme="dark"] .menu-btn{color:var(--ink)}
-    .website-notice{margin:18px auto 0;max-width:1120px}
-    .website-notice-card{padding:15px 18px;border:1px solid #f0d59a;border-left:4px solid #b3760a;border-radius:14px;background:#fff9ea;color:#4d3a12;box-shadow:0 2px 8px rgba(20,29,26,.05)}
-    .website-notice-card h3{margin:0 0 3px;font-size:1rem;color:#8a5c07}
+    /* Website notice (banner) — responsive: width aligned to content, height capped
+       with internal scroll so long/multiple notices never dominate the viewport or
+       push the search section out of sight; box/text never overflow small screens. */
+    .website-notice{margin:18px auto 46px;width:min(1120px,calc(100% - 40px));max-height:44vh;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#e6d3ad transparent}
+    .website-notice::-webkit-scrollbar{width:6px}
+    .website-notice::-webkit-scrollbar-thumb{background:#e6d3ad;border-radius:99px}
+    .website-notice-card{padding:15px 18px;border:1px solid #f0d59a;border-left:4px solid #b3760a;border-radius:14px;background:#fff9ea;color:#4d3a12;box-shadow:0 2px 8px rgba(20,29,26,.05);overflow-wrap:anywhere;word-break:break-word}
+    .website-notice-card+.website-notice-card{margin-top:10px}
+    .website-notice-card h3{margin:0 0 3px;font-size:1rem;color:#8a5c07;line-height:1.35}
     .website-notice-card p{margin:0;font-size:.82rem;line-height:1.7}
-    @media(max-width:680px){.website-notice{margin:13px 14px 0}.website-notice-card{padding:12px 14px}}
+    @media(max-width:680px){.website-notice{margin:13px 14px 34px;width:calc(100% - 28px);max-height:42vh}.website-notice-card{padding:12px 14px}}
+    @media(max-width:380px){.website-notice-card{padding:11px 13px}.website-notice-card h3{font-size:.9rem}.website-notice-card p{font-size:.78rem}}
     [data-theme="dark"] .website-notice-card{background:#2a2109;border-color:#67501b;color:#ead7a5}
     [data-theme="dark"] .website-notice-card h3{color:#f1cb68}`;
 
