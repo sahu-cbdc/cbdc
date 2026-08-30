@@ -4622,7 +4622,7 @@ function initPage() {
          partitioning / redirect ফেরার মুহূর্তে) `auth.currentUser` একটু দেরিতে
          বসে। তাই ফ্লো এগনোর আগে ছোট একটি অপেক্ষা — এতে "সাইন-ইন হলো কিন্তু
          সেশন তৈরি হলো না" সমস্যাটি থাকে না। */
-      function awaitAuthUser(timeoutMs=4000){
+      function awaitAuthUser(timeoutMs=500){
         /* নতুন auth listener তৈরি হয় না — shared `src/lib/authState.ts`-এর
            একটিমাত্র listener-এর `waitForAuthUser` ব্যবহার হয়। */
         if(!auth) return Promise.resolve(null);
@@ -4640,7 +4640,7 @@ function initPage() {
         if(!res) return null;
         /* Firebase Auth session যাচাই — popup সফল হলে currentUser সাথে সাথেই বসে,
            তাই এই অপেক্ষা সাধারণত ০ মিলিসেকেন্ড; শুধু ব্যতিক্রমী ব্রাউজারের জন্য। */
-        const sessionUser = await awaitAuthUser(2500);
+        const sessionUser = await awaitAuthUser(500);
         const u = sessionUser || res.user;
         if(!u || !u.uid){
           throw Object.assign(new Error("session"),{code:"auth/internal-error"});
@@ -5374,10 +5374,12 @@ function initPage() {
             pendingGoogleLink = null;
           }
           const profile = await loadUserProfile(cred.user.uid);
-          const resolved=await resolveRole({uid:cred.user.uid, email, name: (profile&&profile.name) || cred.user.displayName || email});
+          const resolved=await resolveRole({uid:cred.user.uid, email, name: (profile&&profile.name) || cred.user.displayName || email}, undefined, profile);
           const photo = photoForUid(profile, cred.user.photoURL || "");
           if(cred.user && cred.user.uid && !isProfileComplete(profile)){
             try{
+              const ensureOpts: any = { provider: "password" };
+              if (profile) ensureOpts.existing = profile;
               await ensureUserProfile({
                 uid:cred.user.uid,
                 email:(cred.user.email||email),
@@ -5388,7 +5390,7 @@ function initPage() {
                 gender: profile&&profile.gender,
                 area: profile&&profile.area,
                 username: profile&&profile.username
-              }, {provider:"password"});
+              }, ensureOpts);
             }catch(e){ console.warn("profile upsert:", e&&e.message); }
           }
           if(_btn){ _btn.disabled=false; _btn.innerHTML=_orig; }
@@ -5415,8 +5417,12 @@ function initPage() {
           let msg="লগইন করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।";
           if(code==="auth/user-not-found"){
             msg="এই তথ্য দিয়ে কোনো অ্যাকাউন্ট পাওয়া যায়নি।";
-          } else if(code==="auth/invalid-credential"||code==="auth/invalid-login-credentials"||code==="auth/wrong-password"||code==="auth/too-many-requests"){
-            msg="অনেকবার ভুল চেষ্টা হয়েছে। কিছুক্ষণ পর আবার চেষ্টা করুন অথবা পাসওয়ার্ড রিসেট করুন।";
+          } else if(code==="auth/wrong-password"||code==="auth/invalid-login-credentials"){
+            msg="পাসওয়ার্ড ভুল। পাসওয়ার্ড আবার যাচাই করে পুনরায় চেষ্টা করুন।";
+          } else if(code==="auth/invalid-credential"){
+            msg="ইমেইল / পাসওয়ার্ড সঠিক নয়। পুনরায় চেষ্টা করুন অথবা পাসওয়ার্ড রিসেট করুন।";
+          } else if(code==="auth/too-many-requests"){
+            msg="অনেকবার ভুল চেষ্টা হয়েছে। কিছুক্ষণ পর আবার চেষ্টা করুন অথবা পাসওয়ার্ড রিসেট করুন।";
           } else if(code==="auth/network-request-failed"){
             msg="ইন্টারনেট সংযোগ নেই। সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।";
           }

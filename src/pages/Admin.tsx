@@ -5817,7 +5817,7 @@ function initPage() {
     if(!au||!au.currentUser){
       dbState="auth";dbErr="";dbRender();
       /* সাময়িক auth handshake হচ্ছে থাকলে একটু পরে আবার চেষ্টা করা হয় */
-      dbWatchdog=setTimeout(()=>{dbWatchdog=null;if(!dbUnsub)dbEnsureListener();},1500);
+      dbWatchdog=setTimeout(()=>{dbWatchdog=null;if(!dbUnsub)dbEnsureListener();},200);
       return;
     }
     dbState="loading";dbErr="";dbRender();
