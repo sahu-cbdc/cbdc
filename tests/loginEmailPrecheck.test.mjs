@@ -19,3 +19,24 @@ test("Login still resolves email before signing in and reports auth errors", () 
   assert.match(home, /auth\/user-not-found/);
   assert.match(home, /এই তথ্য দিয়ে কোনো অ্যাকাউন্ট পাওয়া যায়নি/);
 });
+
+test("Login normalizes identifier: trims surrounding whitespace and lowercases (email + username)", () => {
+  // Leading/trailing spaces are stripped and the value is lowercased for both
+  // email and username; the password is taken verbatim (never trimmed).
+  assert.match(
+    home,
+    /const\s+identifier\s*=\s*String\s*\(\s*\$\(\s*"#username"\s*\)\s*\.value\s*\|\|\s*""\s*\)\s*\.trim\s*\(\s*\)\s*\.toLowerCase\s*\(\s*\)/
+  );
+  assert.match(home, /const\s+password\s*=\s*\$\(\s*"#password"\s*\)\s*\.value\s*;/);
+});
+
+test("Username login resolves the account email via loginIndex then signs in", () => {
+  assert.match(home, /if\s*\(\s*!email\.includes\s*\(\s*"@"\s*\)\s*\)\s*\{[\s\S]*?resolveEmailByIdentifier/);
+});
+
+test("loginIndex entries are claimed at signup and backfilled at login", () => {
+  // signup path: index the username/phone so username login works immediately
+  assert.match(home, /claimLoginEntries\s*\(\s*o\.email\s*,\s*o\.username\s*,\s*o\.phone\s*\)/);
+  // login path: backfill the index for accounts created before it existed
+  assert.match(home, /claimLoginEntries\s*\(\s*email\s*,\s*profile\.username\s*,\s*profile\.phone\s*\)/);
+});

@@ -8,7 +8,7 @@
  */
 import { useEffect } from "react";
 import "../lib/store";
-import { claimEmailIdentity, lookupEmailOwner } from "../lib/identity";
+import { claimEmailIdentity, lookupEmailOwner, claimLoginEntries } from "../lib/identity";
 import { resolveLegacyAccount } from "../lib/accountDelete";
 import { initFirebase as initSharedFirebase, isFirebaseReady } from "../lib/firebase";
 import { waitForAuthUser } from "../lib/authState";
@@ -5233,6 +5233,14 @@ function initPage() {
             });
           }
 
+          /* loginIndex — username/phone → email সূচি (username দিয়ে লগইনের জন্য)।
+             নতুন অ্যাকাউন্টে ensureUserProfile চলে না, তাই এখানেই atomic দাবি করা হয়;
+             idempotent (নিজের email-এ আবার দাবি no-op)। fail-open — ব্যর্থ হলেও
+             অ্যাকাউন্ট তৈরি আটকায় না। */
+          try{
+            await claimLoginEntries(o.email, o.username, o.phone);
+          }catch(e){ console.warn("loginIndex claim (signup):", e&&e.message); }
+
           /* Google দিয়ে অ্যাকাউন্ট তৈরি হলে Name ও Photo URL Firebase Auth প্রোফাইলেও
              সংরক্ষণ করা হয় (Email/UID ইতিমধ্যেই Auth-এ থাকে)। */
           if(isGoogle && auth && auth.currentUser && auth.currentUser.uid === uid){
@@ -5334,27 +5342,31 @@ function initPage() {
           password: {required:true, label:"পাসওয়ার্ড"}
         });
         if(!valid.ok){ $("#loginMessage").className="hidden"; $("#loginMessage").textContent=""; return; }
-        const u=$("#username").value.trim(), password=$("#password").value;
+        /* Identifier normalize: আগে-পরে থাকা extra space বাদ + lowercase।
+           Email ও Username — দুটোই একই নিয়মে মেলানো হয় (username case-insensitive
+           এবং সবসময় lowercase-এ সংরক্ষিত)। পাসওয়ার্ড কখনো trim/lowercase হয় না —
+           ব্যবহারকারী যা লিখেছে হুবহু পাঠানো হয়। */
+        const identifier=String($("#username").value||"").trim().toLowerCase();
+        const password=$("#password").value;
         const _btn = form.querySelector('button[type="submit"]');
         const _orig = _btn ? _btn.innerHTML : "";
         if(_btn){ _btn.disabled=true; _btn.innerHTML="লগইন হচ্ছে..."; }
         try{
           if(!fbReady || !auth) throw Object.assign(new Error("network"),{code:"auth/network-request-failed"});
           const {signInWithEmailAndPassword}=await import("firebase/auth");
-          // ইমেইল না দিলে RTDB loginIndex থেকে username/phone/donorId দিয়ে ইমেইল বের করি
-          let email=String(u).trim().toLowerCase();
+          /* Email + Password অথবা Username + Password — দুটোই একই Auth-এ শেষ হয়:
+             - ইমেইল হলে সরাসরি সাইন-ইন;
+             - username/phone হলে RTDB loginIndex (public read) দিয়ে email বের করে সাইন-ইন।
+             fetchSignInMethodsForEmail() precheck আর করা হয় না — Email Enumeration
+             Protection চালু থাকলে সেটি খালি list দেয় এবং সঠিক credential-এও ভুল করে
+             "কোনো অ্যাকাউন্ট পাওয়া যায়নি" দেখাত। Firebase-এর নিজস্ব error code-ই
+             (user-not-found / wrong-password / invalid-credential) সঠিক বার্তা দেয়। */
+          let email=identifier;
           if(!email.includes("@")){
             const found=await resolveEmailByIdentifier(email);
             if(!found) throw Object.assign(new Error("not-found"),{code:"auth/user-not-found"});
             email=found;
           }
-          /* ইমেইল দিয়ে লগইনে fetchSignInMethodsForEmail() দিয়ে account আছে কিনা আগে
-             যাচাই করা হতো — কিন্তু Firebase প্রজেক্টে Email Enumeration Protection চালু
-             থাকলে ওই API সবসময় খালি list ফেরত দেয় (অ্যাকাউন্ট থাকলেও)। ফলে সঠিক
-             ইমেইল/পাসওয়ার্ডেও ভুল করে "কোনো অ্যাকাউন্ট পাওয়া যায়নি" দেখানো হতো।
-             তাই এখন সরাসরি signInWithEmailAndPassword() চালানো হয় — Firebase-এর
-             নিজস্ব ত্রুটি কোডই (user-not-found / wrong-password / invalid-credential)
-             সঠিক বার্তার জন্য যথেষ্ট। */
           const cred=await signInWithEmailAndPassword(auth,email,password);
           /* Google → Email/Password account-এ যুক্ত করা:
              Google select-এর সময় account-exists-এ OAuth credential জমা রাখা হয়;
@@ -5372,6 +5384,14 @@ function initPage() {
             pendingGoogleLink = null;
           }
           const profile = await loadUserProfile(cred.user.uid);
+          /* loginIndex backfill — username/phone দিয়ে লগইনের সূচি না থাকলে (পুরোনো
+             অ্যাকাউন্ট) এখন authenticated অবস্থায় নিজের entry দাবি করে নিই, যাতে
+             পরবর্তীবার username দিয়েও লগইন করা যায়। fail-open: ব্যর্থ হলেও লগইন আটকায় না। */
+          if(profile && (profile.username || profile.phone)){
+            try{
+              await claimLoginEntries(email, profile.username, profile.phone);
+            }catch(e){ console.warn("loginIndex backfill:", e&&e.message); }
+          }
           const resolved=await resolveRole({uid:cred.user.uid, email, name: (profile&&profile.name) || cred.user.displayName || email}, undefined, profile);
           const photo = photoForUid(profile, cred.user.photoURL || "");
           if(cred.user && cred.user.uid && !isProfileComplete(profile)){
