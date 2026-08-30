@@ -4022,7 +4022,7 @@ function initPage() {
     const reasons=["তথ্য অসম্পূর্ণ","বয়স নিয়ম মানেনি","বিশ্রামের সময় শেষ হয়নি","স্বাস্থ্যগত কারণে অযোগ্য",
       "প্রমাণ সংযুক্ত নেই","ভুয়া বা সন্দেহজনক তথ্য","একই আবেদন আগে জমা হয়েছে"];
     const s=sheet("বাতিলের কারণ",`
-      <p class="hint2" style="margin-bottom:10px">কারণটি ব্যবহারকারীর অ্যাপে দেখানো হবে, তাই স্পষ্ট করে লিখুন। কারণ ছাড়া বাতিল করা যাবে না।</p>
+      <p class="hint2" style="margin-bottom:10px">বাতিলের কারণ <b>ঐচ্ছিক</b> — কারণ না দিয়েও বাতিল করা যাবে। কারণ লিখলে সেটি ব্যবহারকারীর অ্যাপে দেখানো হবে, তাই স্পষ্ট করে লিখুন।</p>
       <div class="strip wrap chips" id="rj_chips">
         ${reasons.map(r=>`<button data-r="${esc(r)}">${esc(r)}</button>`).join("")}</div>
       <textarea id="rj_txt" rows="3"></textarea>`,
@@ -4032,8 +4032,8 @@ function initPage() {
       s.querySelectorAll("#rj_chips button").forEach(x=>x.classList.remove("on"));
       b.classList.add("on");const t=s.q("#rj_txt");if(!t.value.trim())t.value=b.dataset.r});
     s.q("#rj_ok").onclick=async()=>{
+      /* কারণ ঐচ্ছিক — না দিলে কোনো "কারণ লিখতে হবে" validation error হয় না */
       const txt=s.q("#rj_txt").value.trim();
-      if(!txt)return toast("কারণ লিখতে হবে","er");
       const btn=s.q("#rj_ok");btn.disabled=true;
       const results=await Promise.all(ids.map(id=>decide(id,false,txt,true)));
       if(results.some(x=>x!==true)){btn.disabled=false;return toast("এক বা একাধিক পরিবর্তন RTDB-তে সংরক্ষণ করা যায়নি","er");}
@@ -4101,10 +4101,20 @@ function initPage() {
           paths[`users/${q.ownerUid}/donorStatus`]="approved";
           paths[`users/${q.ownerUid}/donorId`]=approvedDonorId;
           paths[`users/${q.ownerUid}/bloodGroup`]=q.group||"";
+          paths[`users/${q.ownerUid}/donorRejectNote`]=null;
           if(q.memberId){paths[`members/${q.memberId}/status`]="approved";paths[`members/${q.memberId}/donorId`]=approvedDonorId;}
+          /* অনুমোদনের পর একই ব্যক্তির অন্য pending donor আবেদন রেকর্ড আর
+             queue-তে থাকে না — refresh করলেও সেগুলো pending হিসেবে ফিরে আসে না */
+          DB.queue.filter(x=>x&&x.kind==="donor"&&String(x.ownerUid||x.uid||"").trim()===String(q.ownerUid)&&x.id!==id)
+            .forEach(x=>{paths[`queue/${x.id}`]=null;});
         }
       } else if(q.kind==="donation"&&ok){
-        const d=DB.donors.find(x=>x.id===q.donorId||x.name===q.name);
+        /* ownerUid → donorId → নাম ক্রমে মেলানো — শুধু নাম মিললে একই নামের
+           অন্য donor-এর পরিসংখ্যান বেড়ে যেতে পারে */
+        const qw=String(q.ownerUid||q.uid||"").trim();
+        const d=DB.donors.find(x=>qw&&String(x.ownerUid||"")===qw)
+          ||DB.donors.find(x=>q.donorId&&x.id===q.donorId)
+          ||DB.donors.find(x=>x.name===q.name);
         if(d){
           /* One approved donation event = one life. Bag quantity is kept as a
              separate statistic (`totalBags`), never used for lives saved. */
@@ -4174,9 +4184,41 @@ function initPage() {
         if(q.kind==="group"&&owner){
           markGroupChangeStatus(owner,"rejected",note,paths);
         }
+        if(q.kind==="donation"&&owner){
+          /* বাতিল হওয়া রক্তদান হারিয়ে যায় না — donor-এর donationNotes-এ
+             stable verKey দিয়ে status:"rejected" (+ঐচ্ছিক কারণ) লেখা হয়।
+             array-index নয়, key-ভিত্তিক — লেখার আগে donor রেকর্ড সরালেও
+             ভুল রেকর্ডে লেখা হয় না। ডোনার প্যানেল detail page-এ status/কারণ
+             দেখা যায়, সেখান থেকেই আবার পাঠানো/মুছে ফেলা যায়। */
+          const vkey=donationVerKey(q.date,q.place);
+          if(vkey){
+            paths[`users/${owner}/data/donationNotes/${vkey}`]={status:"rejected",
+              note:String(note||"").slice(0,200),at:nowIso()};
+          }
+        }
         if(q.kind==="donor"&&owner){
           paths[`users/${owner}/donorStatus`]="rejected";
-          if(q.memberId)paths[`members/${q.memberId}/status`]="rejected";
+          /* বাতিলের কারণ (ঐচ্ছিক) সংরক্ষিত হয় — ডোনার প্যানেলে বাতিল অবস্থায় দেখানো হয় */
+          if(note)paths[`users/${owner}/donorRejectNote`]=String(note).slice(0,200);
+          /* বাতিলে এই owner-এর সব pending queue ও members state সম্পূর্ণ পরিষ্কার
+             হয় — refresh/sync করলেও একই আবেদন আর pending হিসেবে ফিরে আসে না। */
+          try{
+            const u=await getRow(NODES.users,owner).catch(()=>null);
+            const ownerEmail=String((u&&u.email)||"").trim().toLowerCase();
+            const ownerPhone=String((u&&u.phone)||"").replace(/\s+/g,"");
+            const sameOwner=m=>String(m&&(m.uid||m.ownerUid||m.userId)||"").trim()===owner
+              ||(!!ownerEmail&&String(m&&m.email||"").trim().toLowerCase()===ownerEmail)
+              ||(!!ownerPhone&&String(m&&m.phone||"").replace(/\s+/g,"")===ownerPhone);
+            if(q.memberId)paths[`members/${q.memberId}`]=null;
+            const members=await listOnce(NODES.members);
+            members.filter(sameOwner).forEach(m=>{if(m.id)paths[`members/${m.id}`]=null;});
+            DB.queue.filter(x=>x&&x.kind==="donor"&&String(x.ownerUid||x.uid||"").trim()===owner&&x.id!==id)
+              .forEach(x=>{paths[`queue/${x.id}`]=null;});
+          }catch(e){
+            /* members পড়া না গেলে অন্তত লিঙ্ক করা রেকর্ডটি rejected করা হয় */
+            console.warn("donor reject cleanup:",e&&e.message);
+            if(q.memberId)paths[`members/${q.memberId}/status`]="rejected";
+          }
         }
       }
       paths[`queue/${id}`]=null;
@@ -4204,6 +4246,11 @@ function initPage() {
     if(approvedRequest)DB.live.unshift(approvedRequest);
     if(approvedGroup){const d=DB.donors.find(x=>String(x.ownerUid)===String(approvedGroup.ownerUid));if(d)d.group=approvedGroup.to;}
     DB.queue.splice(i,1);
+    /* ডোনার সিদ্ধান্তের পর একই ব্যক্তির বাকি pending donor আবেদনও তালিকা থেকে সরে */
+    if(q.kind==="donor"){
+      const dupOwner=String(q.ownerUid||q.uid||"").trim();
+      if(dupOwner)DB.queue=DB.queue.filter(x=>!(x&&x.kind==="donor"&&String(x.ownerUid||x.uid||"").trim()===dupOwner&&x.id!==q.id));
+    }
     logAudit(ok?QK[q.kind].t+" অনুমোদন":QK[q.kind].t+" বাতিল",id+(note?" — "+note.slice(0,40):""),q.kind);
     if(!quiet){
       try{await persist();}

@@ -9,7 +9,9 @@
 import { useEffect } from "react";
 import "../lib/store";
 import { initFirebase as initSharedFirebase, NODES } from "../lib/firebase";
-import { releaseEmailIdentity } from "../lib/identity";
+import { releaseEmailIdentity, claimEmailIdentity, lookupEmailOwner } from "../lib/identity";
+import { donationVerKey as verKeyOf } from "../lib/donationLog";
+import { releaseLoginEntries, claimLoginKey, claimLoginEntries, releaseLoginKey, lookupLoginKey } from "../lib/identity";
 import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
 import {
   authErrorMessage,
@@ -947,6 +949,7 @@ function initPage() {
   "জরুরি আবেদনের বিজ্ঞপ্তি":"Emergency request alerts",
   "বিজ্ঞপ্তির সংখ্যা দেখান":"Show notification count",
   "আবেদন প্রত্যাহার করবেন?":"Withdraw your application?",
+  "আবেদনটি প্রত্যাহার হবে; পরে আবার আবেদন করতে পারবেন। আগের অনুমোদিত স্ট্যাটাস ও রক্তদানের ইতিহাস অক্ষত থাকে।":"The application will be withdrawn; you can apply again later. Your previous approved status and donation history stay intact.",
   "এটি আপনার বর্তমান ইমেইল":"That is already your email",
   "ইমেইল পরিবর্তনের অনুরোধ":"Email change requested",
   "WhatsApp নম্বর সঠিক নয়":"That WhatsApp number isn't valid",
@@ -1083,6 +1086,13 @@ function initPage() {
   "আবেদন জমা হয়েছে":"Request submitted",
   "জীবন বাঁচিয়েছেন":"lives saved",
   "আবেদন প্রত্যাহার":"Withdraw application",
+  "আবেদন বাতিল হয়েছে":"Application cancelled",
+  "আপনার রক্তদাতা আবেদনটি বাতিল করা হয়েছে":"Your donor application has been cancelled",
+  "আবার আবেদন করুন":"Apply again",
+  "চাইলে আবার আবেদন করতে পারেন।":"You can apply again anytime.",
+  "প্রত্যাহারের কারণ":"Reason for withdrawal",
+  "কারণ না লিখেও প্রত্যাহার করা যাবে":"Optional — you can withdraw without a reason",
+  "প্রত্যাহার করুন":"Withdraw it",
   "প্রমাণ দিলে ভালো":"Proof helps",
   "যাচাইকৃত রক্তদান":"Verified donations",
   "প্রদর্শনের ঘনত্ব":"Display density",
@@ -1659,6 +1669,9 @@ function initPage() {
       bloodGroup:"", whatsapp:"", lastDonation:"", totalDonations:0, totalBags:0,
       health:"",
       available:true, appliedAt:"", cardTheme:"green",
+      /* অ্যাডমিন/মডারেটর ডোনার আবেদন বাতিল করলে সংরক্ষিত বাতিলের কারণ
+         (users/{uid}/donorRejectNote) — বাতিল অবস্থায় ডোনার প্যানেলে দেখানো হয়। */
+      donorRejectNote:"",
       /* রক্তের গ্রুপ পরিবর্তনের অনুরোধ — users/{uid}/groupChange থেকে sync হয়।
          {id,from,to,reason,proof,status:"pending"|"approved"|"rejected",at,note} */
       groupChange:null
@@ -1707,6 +1720,9 @@ function initPage() {
     if(d.saved)STORE.saved=d.saved;
   }catch(e){}}
   load();
+  /* Donor Panel-এ English UI এখনো চালু নয় (Coming Soon) — পুরোনো cached
+     "en" preference থাকলেও প্যানেল সবসময় বাংলায় দেখায়। */
+  STORE.prefs.lang="bn";
   lastPersistedStore=JSON.parse(JSON.stringify(STORE));
   
   /* ══════════ DATA (real — Realtime Database is the source of truth) ══════════
@@ -1718,16 +1734,21 @@ function initPage() {
                               সংরক্ষিত হয়, তাই যেকোনো ডিভাইসে লগইন করলেই পাওয়া যায়
        • localStorage       → শুধু দ্রুত লোডের জন্য cache, উৎস নয় */
   const LS_DATA="cbdc.data";
-  const RAW={ donations:[], verifiedDonations:{}, incoming:[], mine:[], notifs:[], activity:[], sessions:[], donors:[], notices:[] };
+  const RAW={ donations:[], verifiedDonations:{}, donationNotes:{}, incoming:[], mine:[], notifs:[], activity:[], sessions:[], donors:[], notices:[] };
+  /* "আগের রক্তদান" detail page-এ দেখানো রেকর্ডের key (donationVerKey) */
+  let DONATION_DETAIL_ID="";
   /* Admin-driven verified donation mirror. `ok` on a user record is only a
      legacy display hint; this object is written exclusively by staff (RTDB
      rules block owner writes) and is the authority for a verified record. */
-  const donationVerKey=(x:any)=>{
-    const s=String(x&&(x.date||"")||"").trim()+"|"+String(x&&(x.place||"")||"").trim();
-    let h=0;
-    for(let i=0;i<s.length;i++) h=((h<<5)-h+s.charCodeAt(i))|0;
-    return "v"+(h>>>0).toString(36);
-  };
+  /* একরকম hash সব জায়গায় — lib/donationLog.ts-ই একমাত্র implementation,
+     এখানে শুধু record-wrapper (trim সহ; আগের স্থানীয় কপি ছিল) */
+  const donationVerKey=(x:any)=>verKeyOf(x&&x.date,x&&x.place);
+  /* Admin-এর লেখা বাতিল status/কারণ — users/{uid}/data/donationNotes/{verKey}
+     (staff লেখে, donor শুধু পড়ে; RAW.donations-এ কখনো merge করে ফেরত লেখা হয় না) */
+  const donNote=(x:any)=>{const n=RAW.donationNotes&&(RAW.donationNotes as any)[donationVerKey(x)];
+    return n&&typeof n==="object"?n:null};
+  const donRejected=(x:any)=>donNote(x)?.status==="rejected";
+  const donNoteText=(x:any)=>{const n=donNote(x);return String((n&&n.note)||"").trim()};
   function isVerifiedDonation(x:any){
     /* Authoritative source is the staff-maintained verifiedDonations object.
        A user-side `ok:true` flag is never trusted for the verified badge. */
@@ -1798,6 +1819,8 @@ function initPage() {
       });
       if(d.verifiedDonations&&typeof d.verifiedDonations==="object"&&!Array.isArray(d.verifiedDonations))
         RAW.verifiedDonations=d.verifiedDonations;
+      if(d.donationNotes&&typeof d.donationNotes==="object"&&!Array.isArray(d.donationNotes))
+        RAW.donationNotes=d.donationNotes;
     }catch(e){}
     if(!RAW.sessions.length){
       RAW.sessions=[{id:"s1",name:thisDevice(),place:"এই ডিভাইস",last:"বর্তমানে সক্রিয়",cur:true}];
@@ -1865,7 +1888,7 @@ function initPage() {
     Object.assign(STORE.security,{loginAlert:true,passwordChangedAt:""});
     STORE.noticeReads={};
     STORE.saved=[];
-    RAW.donations=[];RAW.verifiedDonations={};RAW.incoming=[];RAW.mine=[];RAW.notifs=[];RAW.activity=[];RAW.donors=[];
+    RAW.donations=[];RAW.verifiedDonations={};RAW.donationNotes={};RAW.incoming=[];RAW.mine=[];RAW.notifs=[];RAW.activity=[];RAW.donors=[];
     RAW.sessions=[{id:"s1",name:thisDevice(),place:"এই ডিভাইস",last:"বর্তমানে সক্রিয়",cur:true}];
     try{localStorage.removeItem(LS);localStorage.removeItem(LS_DATA);}catch(e){}
   }
@@ -1999,7 +2022,9 @@ function initPage() {
           }
         }
       });
-      RAW.donations.filter(x=>!isVerifiedOrLegacy(x)).forEach((x,i)=>{
+      /* বাতিল (rejected) রেকর্ড আর যাচাই-queue-তে ফেরত যায় না —
+         donor "আবার পাঠান" চাপলে তবেই পুনরায় pending হয় */
+      RAW.donations.filter(x=>!isVerifiedOrLegacy(x)&&!donRejected(x)).forEach((x,i)=>{
         const ownerKey=owner.replace(/[^A-Za-z0-9]/g,"").slice(-8)||"unknown";
         const id="DN-"+ownerKey+"-"+String(x.date||"").replace(/[^0-9]/g,"")+"-"+donationVerKey(x).replace(/^v/,"");
         if(!st.queue.some(q=>q.kind==="donation"&&q.id===id))st.queue.unshift({kind:"donation",id,
@@ -2042,6 +2067,10 @@ function initPage() {
       seen.bloodGroup=d.bloodGroup||"";
       seen.lastDonation=d.lastDonation||"";
       seen.groupChangeStatus=(d.groupChange&&d.groupChange.status)||"";
+      /* আগের বাতিল note গুলো baseline — নতুন ডিভাইসে পুরোনো বাতিলের ঝড় নয় */
+      seen.donRej={};
+      const _dn0=RAW.donationNotes&&typeof RAW.donationNotes==="object"?RAW.donationNotes:{};
+      Object.keys(_dn0).forEach(vk=>{ if(_dn0[vk]&&_dn0[vk].status==="rejected")seen.donRej[vk]=1; });
       seen.booted=true;
       saveSeen(seen);
       return;
@@ -2094,7 +2123,7 @@ function initPage() {
        ভুলভাবে জানানো হয় না। */
     else if(seen.donorStatus==="pending"&&ds==="rejected")
       addNotif({id:"donor-rej",title:"ডোনার আবেদন বাতিল",
-        body:"আপনার রক্তদাতা আবেদনটি বাতিল করা হয়েছে।",type:"rejected",go:"req:become"});
+        body:STORE.donor.donorRejectNote?`কারণ: ${STORE.donor.donorRejectNote}`:"আপনার রক্তদাতা আবেদনটি বাতিল করা হয়েছে।",type:"rejected",go:"req:become"});
     if(ds)seen.donorStatus=ds;
     /* ৪) রক্তের গ্রুপ পরিবর্তন অনুমোদিত — donors record-এর bloodGroup বদলালে */
     if(d.is&&d.status==="approved"&&seen.bloodGroup&&seen.bloodGroup!==d.bloodGroup&&d.bloodGroup)
@@ -2112,6 +2141,21 @@ function initPage() {
           type:"rejected",go:"set:donor"});
       seen.groupChangeStatus=gs;
     }
+    /* ৫ক) রক্তদান বাতিল — Admin/Moderator-এর লেখা donationNotes-এ নতুন
+       rejected entry এলে ডোনার জানানো হয় (আগে শুধু যাচাই-সফলে জানানো হত) */
+    const _dn=RAW.donationNotes&&typeof RAW.donationNotes==="object"?RAW.donationNotes:{};
+    Object.keys(_dn).forEach(vk=>{
+      const nn=_dn[vk];
+      if(!nn||nn.status!=="rejected")return;
+      if(seen.donRej&&seen.donRej[vk])return;
+      const rec=RAW.donations.find(y=>y&&donationVerKey(y)===vk);
+      addNotif({id:"dn-rej-"+sanitizeKey(vk),title:"রক্তদান যাচাই বাতিল হয়েছে",
+        body:String(nn.note||"").trim()
+          ?"কারণ: "+String(nn.note).trim()
+          :((rec&&(rec.date||"")+" · "+(rec.place||""))||"আপনার রক্তদানের রেকর্ডটি বাতিল করা হয়েছে।"),
+        type:"rejected",ref:vk,go:"set:adddonation"});
+      (seen.donRej||(seen.donRej={}))[vk]=1;
+    });
     /* ৫) রক্তদান যাচাই — donors record-এর last আমার যাচাইবিহীন রেকর্ডের সাথে মিললে */
     if(d.lastDonation&&seen.lastDonation&&seen.lastDonation!==d.lastDonation){
       const hit=RAW.donations.find(x=>x&&x.date===d.lastDonation);
@@ -2239,6 +2283,9 @@ function initPage() {
   const donorPill=()=>{
     if(!isDonor())return "";
     if(dStatus()==="pending")return `<span class="pill a">যাচাই চলছে</span>`;
+    /* বাতিল করা আবেদন কখনোই প্রস্তুত/বিশ্রামে ডোনার হিসেবে দেখানো হবে না —
+       বাতিলের পর pending status সম্পূর্ণ clear থাকে। */
+    if(dStatus()==="rejected")return `<span class="pill r">আবেদন বাতিল হয়েছে</span>`;
     if(!STORE.donor.available)return `<span class="pill m">প্রাপ্যতা বন্ধ</span>`;
     if(restLeft()>0)return `<span class="pill a">${tp(`বিশ্রামে · আর ${bn(restLeft())} দিন`,`Resting · ${restLeft()} days left`)}</span>`;
     return `<span class="pill g">রক্তদানে প্রস্তুত</span>`;
@@ -2346,7 +2393,7 @@ function initPage() {
           <button class="btn w" style="margin-top:12px" data-act="become">রক্তদাতা হিসেবে যুক্ত হন</button></div>`
       : `<div class="card">
           <div class="per"><span class="bg" style="width:46px;height:46px;border-radius:12px;font-size:1rem">${esc(d.bloodGroup)}</span>
-            <div class="i"><b>${esc(dv("name"))}</b><small>${d.donorId?esc(d.donorId)+" · ":""}${esc(dv("area"))}${d.donorId?"":dStatus()&&dStatus()!=="none"?" · অ্যাডমিন অনুমোদনের অপেক্ষায়":""}</small></div></div>
+            <div class="i"><b>${esc(dv("name"))}</b><small>${d.donorId?esc(d.donorId)+" · ":""}${esc(dv("area"))}${d.donorId?"":dStatus()==="pending"?" · অ্যাডমিন অনুমোদনের অপেক্ষায়":""}</small></div></div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin:11px 0">${donorPill()}
             ${dStatus()==="approved"?`<span class="pill b n">${ICON.checkC(12)} যাচাইকৃত</span>`:""}</div>
           <div style="display:flex;gap:8px">
@@ -2852,6 +2899,16 @@ function initPage() {
         জমা দিয়েছেন ${dL(d.appliedAt)} · সাধারণত ২৪–৪৮ ঘণ্টা লাগে।</span></div>
       ${donorRows()}
       <button class="btn gh w" style="margin-top:12px" data-act="withdraw">আবেদন প্রত্যাহার</button></div>`;
+    /* বাতিল করা আবেদন — কখনোই "অনুমোদিত" বা "অনুমোদনের অপেক্ষায়" দেখানো হবে না।
+       অ্যাডমিন কারণ লিখে বাতিল করলে সেটি এখানে দেখানো হয়; চাইলে আবার আবেদন করা যায়। */
+    if(dStatus()==="rejected"){
+      const rjNote=String(d.donorRejectNote||"").trim();
+      return `<div class="card">
+      <div class="note r">${ICON.x(17)}<span><b>আপনার রক্তদাতা আবেদনটি বাতিল করা হয়েছে</b><br>
+        ${rjNote?`বাতিলের কারণ: ${esc(rjNote)}<br>`:""}চাইলে আবার আবেদন করতে পারেন।</span></div>
+      ${donorRows()}
+      <button class="btn w" style="margin-top:12px" data-act="become">আবার আবেদন করুন</button></div>`;
+    }
     return `<div class="card">
       <div class="note g">${ICON.checkC(17)}<span><b>আপনি অনুমোদিত রক্তদাতা</b><br>${esc(d.donorId)}</span></div>
       ${donorRows()}
@@ -2886,7 +2943,8 @@ function initPage() {
     {id:"devices",title:"লগইন ও ডিভাইস",parent:"security"},
     {id:"activity",title:"কার্যকলাপ",parent:"security"},
     {id:"card",title:"ডোনার কার্ড",parent:"donor"},
-    {id:"adddonation",title:"রক্তদান যোগ করুন",parent:"donor"}
+    {id:"adddonation",title:"রক্তদান যোগ করুন",parent:"donor"},
+    {id:"donation",title:"রক্তদানের বিবরণ",parent:"donor"}
   ];
   const SETTINGS_MAP={};
   SETTINGS.forEach(s=>SETTINGS_MAP[s.id]=s);
@@ -3061,7 +3119,7 @@ function initPage() {
     P.adddonation=()=>{
       if(!isDonor())return emptyBox(ICON.drop(26),"আগে রক্তদাতা হিসেবে যুক্ত হন",
         "রক্তদানের হিসাব রাখতে আপনার রক্তের গ্রুপ ও তথ্য দরকার","become","রক্তদাতা হিসেবে যুক্ত হন");
-      const dn=RAW.donations||[], pend=dn.filter(x=>!isVerifiedDonation(x)).length, okc=dn.filter(x=>isVerifiedDonation(x)).length;
+      const dn=RAW.donations||[], pend=dn.filter(x=>!isVerifiedDonation(x)&&!donRejected(x)).length, okc=dn.filter(x=>isVerifiedDonation(x)).length;
       const rest=restLeft();
       return `
         <div class="intro">
@@ -3071,7 +3129,7 @@ function initPage() {
           <ol class="steps">
             <li><b>কী যোগ করবেন</b><span>আপনি অতীতে বা সম্প্রতি যে রক্তদান করেছেন তার তারিখ ও স্থান। একবারে একটি রক্তদান।</span></li>
             <li><b>কেন দরকার</b><span>এর ভিত্তিতেই ৯০ দিনের বিশ্রামের হিসাব হয় — বিশ্রামে থাকলে আপনাকে জরুরি ডাক পাঠানো হবে না।</span></li>
-            <li><b>প্রমাণ দিলে ভালো</b><span>ব্লাড ব্যাগের রসিদ বা ছবি থাকলে যাচাই দ্রুত হয়। না থাকলেও যোগ করা যাবে।</span></li>
+            <li><b>প্রমাণ ছবি আবশ্যক</b><span>ব্লাড ব্যাগের রসিদ বা ছবি ছাড়া রক্তদান যোগ করা যাবে না। প্রমাণ থাকলে যাচাই দ্রুত হয়।</span></li>
             <li><b>এরপর কী হয়</b><span>ক্লাবের স্বেচ্ছাসেবক যাচাই করবেন। যাচাই হলে <em>✓ যাচাইকৃত</em> লেখা উঠবে ও মোট গণনায় যোগ হবে।</span></li>
           </ol>
         </div>
@@ -3097,14 +3155,14 @@ function initPage() {
             <input id="ad_place" list="ad_places">
             <datalist id="ad_places">${HOSPITALS.map(h=>`<option value="${esc(h)}">`).join("")}</datalist>
             <span class="hint">যে হাসপাতাল বা ব্লাড ব্যাংকে দিয়েছেন</span></div>
-          <div class="f"><label>রোগীর নাম</label>
+          <div class="f"><label>রোগীর নাম <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
             <input id="ad_pat">
             <span class="hint">রোগীর অনুমতি ছাড়া পুরো নাম না লেখাই ভালো</span></div>
-          <div class="f"><label>মন্তব্য</label>
+          <div class="f"><label>মন্তব্য <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
             <input id="ad_note"></div>
-          <div class="f"><label>প্রমাণ (ছবি)</label>
+          <div class="f"><label>প্রমাণ (ছবি) <i>*</i></label>
             <input id="ad_file" type="file" accept="image/*">
-            <span class="hint">রসিদ / ব্যাগের ছবি · সর্বোচ্চ ৪ MB · ঐচ্ছিক</span></div>
+            <span class="hint">রসিদ / ব্যাগের ছবি · সর্বোচ্চ ৪ MB · আবশ্যক — প্রমাণ ছাড়া যোগ করা যাবে না</span></div>
           <label class="chk"><input type="checkbox" id="ad_ok">
             <span>আমি নিশ্চিত করছি তথ্যগুলো সত্য এবং আমি নিজেই এই রক্তদান করেছি।</span></label>
           <div style="display:flex;gap:8px;margin-top:12px">
@@ -3114,26 +3172,70 @@ function initPage() {
   
         <div class="sec-t">নীতিমালা</div>
         <div class="card pad0">
-          ${[["৯০ দিনের নিয়ম","শেষ রক্তদানের পর অন্তত ৯০ দিন বিরতি দিতে হবে। এর মধ্যে নতুন তারিখ দিলে সতর্কবার্তা দেখাবে।"],
+          ${[["৯০ দিনের নিয়ম","শেষ রক্তদানের পর অন্তত ৯০ দিন বিরতি দিতে হবে — হোমের কাউন্টডাউন অনুযায়ী পরবর্তী তারিখ দেখানো হয়।"],
              ["একই দান দুইবার নয়","একই তারিখ ও একই স্থানের রেকর্ড দ্বিতীয়বার যোগ করা যাবে না।"],
              ["মিথ্যা তথ্য","ভুল তথ্য দিলে রেকর্ড বাতিল হবে এবং বারবার হলে ডোনার তালিকা থেকে সরিয়ে দেওয়া হতে পারে।"],
              ["তথ্য কারা দেখবে","তারিখ ও মোট সংখ্যা আপনার কার্ডে দেখা যায়। রোগীর নাম ও প্রমাণের ছবি শুধু যাচাইকারী স্বেচ্ছাসেবক দেখতে পান।"],
-             ["ভুল হলে","যাচাইয়ের আগে নিজেই মুছতে পারবেন। যাচাই হয়ে গেলে ক্লাবকে জানাতে হবে।"]]
+             ["ভুল হলে","ভুল রেকর্ড আগের রক্তদান তালিকা বা বিবরণ পেজ থেকে নিজেই মুছে ফেলা যাবে।"]]
             .map(([t,d],i)=>`<button class="row" data-faq="p${i}">
               <span class="tx"><b>${esc(t)}</b><small class="hide" id="fap${i}">${esc(d)}</small></span>
               <span class="rt">${ICON.right(17)}</span></button>`).join("")}
         </div>
   
         <div class="sec-t">আগের রক্তদান</div>
-        ${dn.length?`<div class="card pad0">${dn.slice(0,6).map((x,i)=>`
-          <div class="row"><span class="ic" style="background:${isVerifiedDonation(x)?"var(--grn-s)":"var(--amb-s)"};color:${isVerifiedDonation(x)?"var(--grn)":"var(--amb)"}">${isVerifiedDonation(x)?ICON.checkC(18):ICON.clock(18)}</span>
+        ${dn.length?`<div class="card pad0">${dn.map((x,i)=>{
+          const rej=donRejected(x);
+          const ver=isVerifiedDonation(x);
+          return `<div class="row" data-drec="${donationVerKey(x)}" role="button" style="cursor:pointer">
+          <span class="ic" style="background:${ver?"var(--grn-s)":rej?"var(--red-s)":"var(--amb-s)"};color:${ver?"var(--grn)":rej?"var(--red)":"var(--amb)"}">${ver?ICON.checkC(18):rej?ICON.x(18):ICON.clock(18)}</span>
             <span class="tx"><b>${esc(dL(x.date))}</b><small>${esc(x.place)} · ${bn(x.bags||1)} ব্যাগ</small></span>
-            <span class="rt">${isVerifiedDonation(x)?`<small class="mut">যাচাইকৃত</small>`
-              :`<button class="lnk" data-delrec="${i}" style="color:var(--red-d)">মুছুন</button>`}</span></div>`).join("")}</div>`
+            <span class="rt">${ver?`<small class="mut">যাচাইকৃত</small>`
+              :rej?`<small style="color:var(--red)">বাতিল</small>`
+              :`<button class="lnk" data-delrec="${donationVerKey(x)}" style="color:var(--red-d)">মুছুন</button>`}</span></div>`;}).join("")}</div>`
           :`<div class="card"><p class="mut" style="font-size:.83rem;margin:0">এখনো কোনো রক্তদান যোগ করা হয়নি।</p></div>`}
         <div class="note i" style="margin-top:12px">${ICON.info(17)}<span>প্রশ্ন থাকলে ক্লাবের হটলাইনে কল করুন — <b>${SITE.phone}</b></span></div>`;
     };
   
+    /* ── রক্তদানের বিবরণ (আগের রক্তদানের একটি record-এর detail page) ──
+       যাচাইকৃত: সম্পূর্ণ তথ্য + proof image + verification status + Delete।
+       Admin বাতিল করলে: status "বাতিল" + বাতিলের কারণ + আবার পাঠান / Delete।
+       বাতিল হওয়া record হারিয়ে যায় না — donor নিজের record/status দেখতে পারে। */
+    P.donation=()=>{
+      if(!isDonor())return emptyBox(ICON.drop(26),"আগে রক্তদাতা হিসেবে যুক্ত হন","","become","রক্তদাতা হিসেবে যুক্ত হন");
+      const x=(RAW.donations||[]).find(r=>donationVerKey(r)===DONATION_DETAIL_ID);
+      /* Data নেই → graceful empty state — কোনো crash/broken view নয় */
+      if(!x)return emptyBox(ICON.file(26),"রেকর্ডটি পাওয়া যায়নি","রেকর্ডটি মুছে ফেলা হয়ে থাকতে পারে","","");
+      const ver=isVerifiedDonation(x), rej=donRejected(x), rejNote=donNoteText(x);
+      const st=ver?`<span class="pill g">${ICON.checkC(12)} যাচাইকৃত</span>`
+        :rej?`<span class="pill r">${ICON.x(12)} বাতিল</span>`
+        :`<span class="pill a">${ICON.clock(12)} যাচাইয়ের অপেক্ষায়</span>`;
+      return `
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <b style="font-size:.92rem">${esc(dL(x.date))}</b>${st}</div>
+        ${rej&&rejNote?`<div class="note r" style="margin-top:10px">${ICON.x(16)}
+          <span><b>বাতিলের কারণ:</b> ${esc(rejNote)}</span></div>`:""}
+        <div style="margin-top:10px">
+          ${rowLine("স্থান / হাসপাতাল",x.place||"—")}
+          ${rowLine("কত ব্যাগ",bn(x.bags||1)+" ব্যাগ")}
+          ${rowLine("রোগীর নাম",x.pat||"—")}
+          ${rowLine("মন্তব্য",x.note||"—")}
+          ${rowLine("যাচাই",ver?"✓ যাচাইকৃত":rej?"বাতিল করা হয়েছে":"যাচাইয়ের অপেক্ষায়")}
+        </div>
+      </div>
+      ${x.proof?`<div class="sec-t">প্রমাণ (ছবি)</div>
+      <div class="card"><a href="${esc(x.proof)}" target="_blank" rel="noopener">
+        <img src="${esc(x.proof)}" alt="রক্তদানের প্রমাণ ছবি"
+          style="width:100%;max-height:320px;object-fit:contain;border-radius:12px;border:1px solid var(--line);background:var(--card2)"></a></div>`
+        :`<div class="sec-t">প্রমাণ (ছবি)</div><div class="card"><p class="mut" style="font-size:.82rem;margin:0">প্রমাণ ছবি সংযুক্ত নেই।</p></div>`}
+      <div style="display:flex;gap:8px;margin-top:14px">
+        ${rej?`<button class="btn" style="flex:1" id="dn_resend">${ICON.check(15)} আবার পাঠান</button>`:""}
+        <button class="btn gh red" style="flex:1" id="dn_del">${ICON.trash(15)} মুছুন</button></div>
+      ${rej?`<div class="note i" style="margin-top:10px">${ICON.info(16)}
+        <span>বাতিল হওয়া রেকর্ড আর যাচাইয়ের তালিকায় থাকে না। সঠিক তথ্য/প্রমাণ দিয়ে
+        <b>আবার পাঠান</b> চাপলে রেকর্ডটি আবার যাচাইয়ের জন্য পাঠানো হবে।</span></div>`:""}`;
+    };
+
     P.card=()=>{
       if(!isDonor())return emptyBox(ICON.card(26),"কার্ড তৈরি করতে ডোনার তথ্য দিন","","become","রক্তদাতা হিসেবে যুক্ত হন");
       const side=STORE.donor.cardSide||"front";
@@ -3193,7 +3295,9 @@ function initPage() {
       <div class="sec-t">ভাষা</div>
       <div class="card"><div class="seg" id="plg">
         <button data-lg="bn" class="${STORE.prefs.lang==="bn"?"on":""}" data-noi18n>বাংলা</button>
-        <button data-lg="en" class="${STORE.prefs.lang==="en"?"on":""}" data-noi18n>English</button></div></div>
+        <button data-lg="en" data-noi18n>English</button></div>
+        <div class="note i hide" id="lg_note" style="margin-top:10px">${ICON.info(16)}
+          <span><b>English — Coming Soon</b><br>ইংরেজি ভাষা এখনো চালু হয়নি। বর্তমানে শুধু বাংলা ব্যবহার করা যাচ্ছে।</span></div></div>
       <div class="sec-t">অন্যান্য</div>
       <div class="card pad0">
         ${tgRow("অ্যানিমেশন","চলমান প্রভাব চালু/বন্ধ","prefs.anim")}
@@ -3262,12 +3366,53 @@ function initPage() {
     if(id==="prefs"){
       $$("#pth button").forEach(b=>b.onclick=async()=>{STORE.prefs.theme=b.dataset.th;await save();applyPrefs();renderSub("prefs")});
       $$("#pdn button").forEach(b=>b.onclick=async()=>{STORE.prefs.dense=b.dataset.dn==="1";await save();applyPrefs();renderSub("prefs")});
+      /* ভাষা — English এখনো চালু নয় (Coming Soon); বাংলা-ই একমাত্র ভাষা।
+         English নির্বাচন করলে message দেখায়, কোনো পরিবর্তন হয় না। */
       $$("#plg button").forEach(b=>b.onclick=async()=>{
-        if(STORE.prefs.lang===b.dataset.lg)return;
-        STORE.prefs.lang=b.dataset.lg;await save();applyLang();
-        toast(isEN()?"Language changed to English":"ভাষা বাংলা করা হয়েছে","ok");});
+        if(b.dataset.lg!=="en"){
+          const n=$("#lg_note");if(n)n.classList.add("hide");
+          if(STORE.prefs.lang===b.dataset.lg)return;
+          toast("ভাষা বাংলা করা হয়েছে","ok");return;
+        }
+        b.classList.remove("on");
+        $$("#plg button").forEach(x=>{if(x.dataset.lg==="bn")x.classList.add("on")});
+        const n=$("#lg_note");if(n)n.classList.remove("hide");
+        toast("English — Coming Soon · ইংরেজি এখনো চালু হয়নি");
+      });
     }
     if(id==="adddonation")bindAddDonation();
+    if(id==="donation"){
+      const del=$("#dn_del");
+      if(del)del.onclick=async()=>{
+        const x=(RAW.donations||[]).find(r=>donationVerKey(r)===DONATION_DETAIL_ID);
+        if(!x)return;
+        if(await deleteDonationRecord(x))go("set","adddonation");
+      };
+      const rs=$("#dn_resend");
+      if(rs)rs.onclick=async()=>{
+        const x=(RAW.donations||[]).find(r=>donationVerKey(r)===DONATION_DETAIL_ID);
+        if(!x)return;
+        if(!x.proof){toast("প্রমাণ ছবি ছাড়া আবার পাঠানো যাবে না","er");return}
+        if(!await confirmS({title:"আবার পাঠাবেন?",desc:"রেকর্ডটি আবার যাচাইয়ের জন্য পাঠানো হবে।",ok:"পাঠান"}))return;
+        /* বাতিল status সরিয়ে আবার pending করা হয় — proof থাকায় পুনরায়
+           যাচাইয়ের তালিকায় (queue) যায় */
+        delete x.status;delete x.rejectNote;delete x.rejectedAt; /* পুরোনো legacy ফিল্ড থাকলে */
+        delete (RAW.donationNotes as any)[donationVerKey(x)];
+        try{
+          const _uid=String(firebaseCurrentUid()||STORE.account.uid||"").trim();
+          if(_uid)await updatePaths({[`users/${_uid}/data/donationNotes/${donationVerKey(x)}`]:null});
+        }catch(e){ console.warn("resend note clear:",e&&e.message); }
+        try{ await saveData(); }
+        catch(saveErr){
+          console.warn("resend save:",saveErr&&saveErr.message);
+          toast("সংরক্ষণ করা যায়নি — ইন্টারনেট সংযোগ দেখে আবার চেষ্টা করুন","er");
+          return;
+        }
+        await logAct("রক্তদান পুনরায় পাঠানো",(x.date||"")+" · "+(x.place||""),"donor");
+        renderSub("donation");
+        toast("আবার পাঠানো হয়েছে — যাচাইয়ের অপেক্ষায়","ok");
+      };
+    }
     if(id==="card"){
       $$("#cth button").forEach(b=>b.onclick=async()=>{STORE.donor.cardTheme=b.dataset.ct;await save();renderSub("card")});
       $$("#csd button").forEach(b=>b.onclick=async()=>{STORE.donor.cardSide=b.dataset.cs;await save();renderSub("card")});
@@ -3440,7 +3585,10 @@ function initPage() {
          <button class="btn ${danger?"red":""}" id="cy">${esc(ok)}</button>`);
       s.q("#cy").onclick=()=>{s.close();res(true)};
       s.addEventListener("click",e=>{if(e.target.closest("[data-close]"))res(false)});
-      document.querySelector(".ov").addEventListener("click",()=>res(false));
+      /* এই confirm-এর নিজের overlay — আগে document.querySelector(".ov") প্রথম
+         (অন্য কোনো খোলা sheet-এর) overlay ধরে ফেলত */
+      const _ov=s.previousElementSibling;
+      if(_ov&&_ov.classList.contains("ov"))_ov.addEventListener("click",()=>res(false));
     });
   }
   async function logAct(title,detail,type="account"){
@@ -3615,6 +3763,7 @@ function initPage() {
       a.area=$("#bc_area").value;
       a.phone=$("#bc_phone").value.trim();
       d.is=true; d.status="pending";
+      d.donorRejectNote="";
       d.bloodGroup=finalBloodGroup;
       d.lastDonation=$("#bc_last").value||"";
       d.health=$("#bc_health").value.trim()||"";
@@ -3658,6 +3807,7 @@ function initPage() {
             [`users/${uid}/health`]:d.health,[`users/${uid}/whatsapp`]:d.whatsapp,
             [`users/${uid}/donorStatus`]:"approved",[`users/${uid}/donorId`]:donorId,
             [`users/${uid}/available`]:true,[`users/${uid}/appliedAt`]:at,
+            [`users/${uid}/donorRejectNote`]:null,
             [`donors/${donorId}`]:{id:donorId,donorId,uid,ownerUid:uid,name:a.name,gender:a.gender,
               dob:a.dob,area:a.area,district,phone:a.phone,whatsapp:d.whatsapp,bloodGroup:d.bloodGroup,
               lastDonationDate:d.lastDonation,
@@ -3686,6 +3836,8 @@ function initPage() {
         paths[`users/${uid}/bloodGroup`]=d.bloodGroup;
         paths[`users/${uid}/donorStatus`]="pending";
         paths[`users/${uid}/donorId`]=null;
+        /* নতুন আবেদনে পুরোনো বাতিলের কারণ আর থাকে না */
+        paths[`users/${uid}/donorRejectNote`]=null;
         paths[`users/${uid}/lastDonation`]=d.lastDonation;
         paths[`users/${uid}/whatsapp`]=d.whatsapp;
         paths[`users/${uid}/health`]=d.health;
@@ -3820,6 +3972,9 @@ function initPage() {
       toast("ফর্ম খালি করা হয়েছে");
     };
     if(aSave)aSave.onclick=async()=>{
+      /* দ্রুত একাধিকবার Submit-এ duplicate রক্তদান তৈরি হয় না —
+         চলাকালীন button disabled থাকে */
+      if(aSave.disabled)return;
       const date=$("#ad_date").value, place=$("#ad_place").value.trim();
       const er=m=>toast(m,"er");
       if(!date)return er("রক্তদানের তারিখ দিন");
@@ -3829,28 +3984,110 @@ function initPage() {
       let proof="";
       const fin=$("#ad_file");
       const f=fin&&fin.files&&fin.files[0];
-      if(f){
-        if(f.size>4*1024*1024)return er("ছবি ৪ MB-এর কম হতে হবে");
+      /* প্রমাণ (ছবি) আবশ্যক — প্রমাণ ছাড়া Submit করা যাবে না */
+      if(!f)return er("প্রমাণ ছবি দিন — প্রমাণ ছাড়া রক্তদান যোগ করা যাবে না");
+      if(f.size>4*1024*1024)return er("ছবি ৪ MB-এর কম হতে হবে");
+      const orig=aSave.innerHTML;
+      aSave.disabled=true;aSave.textContent="সংরক্ষণ হচ্ছে…";
+      try{
+        aSave.textContent="প্রমাণ আপলোড হচ্ছে…";
         try{ const up=await imgbbUploadImage(f); proof=up.url; }
         catch(e){ return er(e&&e.message?e.message:"ছবি আপলোড করা যায়নি"); }
+        /* User-submitted donation is always pending. It becomes verified/counted
+           only after an admin/moderator approves it in the moderation queue. No
+           client-side approval setting may auto-approve a user submission. */
+        RAW.donations.unshift({date,place,bags:Number($("#ad_bags").value)||1,
+          pat:$("#ad_pat").value.trim()||"",note:$("#ad_note").value.trim()||"",proof,ok:false});
+        try{ await saveData(); }
+        catch(saveErr){
+          console.warn("donation save:",saveErr&&saveErr.message);
+          toast("সংরক্ষণ করা যায়নি — ইন্টারনেট সংযোগ দেখে আবার চেষ্টা করুন","er");
+          return;
+        }
+        await logAct("রক্তদান যোগ",date+" · "+place,"donor");
+        renderSub("adddonation");
+        toast("যোগ হয়েছে — যাচাইয়ের অপেক্ষায়","ok");
+        /* সফল হলে success popup */
+        sheet("রক্তদান যোগ হয়েছে",`
+          <div style="text-align:center;padding:10px 0 4px">
+            <div style="width:56px;height:56px;margin:0 auto 12px;border-radius:50%;background:var(--grn-s);
+              color:var(--grn);display:grid;place-items:center">${ICON.checkC(26)}</div>
+            <b style="display:block;margin-bottom:5px">রক্তদানটি সফলভাবে যোগ হয়েছে</b>
+            <p class="mut" style="font-size:.82rem;margin:0 0 10px">${esc(dL(date))} · ${esc(place)}</p>
+            <div class="note i" style="text-align:left">${ICON.info(16)}
+              <span>ক্লাবের স্বেচ্ছাসেবক যাচাই করার পর <b>✓ যাচাইকৃত</b> লেখা উঠবে।
+              নিচের <b>আগের রক্তদান</b> তালিকায় রেকর্ডটিতে ক্লিক করে বিস্তারিত দেখতে পারবেন।</span></div></div>`,
+          `<button class="btn" data-close style="flex:1">বুঝেছি</button>`);
+      }finally{
+        aSave.disabled=false;aSave.innerHTML=orig;
       }
-      /* User-submitted donation is always pending. It becomes verified/counted
-         only after an admin/moderator approves it in the moderation queue. No
-         client-side approval setting may auto-approve a user submission. */
-      RAW.donations.unshift({date,place,bags:Number($("#ad_bags").value)||1,
-        pat:$("#ad_pat").value.trim()||"",note:$("#ad_note").value.trim()||"",proof,ok:false});
-      await saveData();
-      await logAct("রক্তদান যোগ",date+" · "+place,"donor");
-      renderSub("adddonation");
-      toast("যোগ হয়েছে — যাচাইয়ের অপেক্ষায়","ok");
     };
-    $$("[data-delrec]").forEach(b=>b.onclick=async()=>{
-      const i=Number(b.dataset.delrec);
-      if(!await confirmS({title:"রেকর্ডটি মুছবেন?",desc:"রক্তদানের রেকর্ড মুছে যাবে।",ok:"মুছুন",danger:true}))return;
-      RAW.donations.splice(i,1);await saveData();
-      await logAct("রক্তদানের রেকর্ড মুছে ফেলা হয়েছে","","donor");
-      renderSub("adddonation");toast("মুছে ফেলা হয়েছে");
+    /* আগের রক্তদান — প্রতিটি record click করলে আলাদা detail page খোলে */
+    $$("[data-drec]").forEach(row=>row.onclick=e=>{
+      if(e.target.closest("[data-delrec]"))return;   /* মুছুন বোতামে detail নয় */
+      const id=row.dataset.drec;
+      if(!id)return;
+      DONATION_DETAIL_ID=id;
+      go("set","donation");
     });
+    $$("[data-delrec]").forEach(b=>b.onclick=async()=>{
+      /* key-ভিত্তিক খোঁজা — re-render হলে index সরে গেলেও ভুল রেকর্ড মুছে না */
+      const rec=RAW.donations.find(x=>x&&donationVerKey(x)===b.dataset.delrec);
+      if(!rec)return;
+      if(await deleteDonationRecord(rec))renderSub("adddonation");
+    });
+  }
+
+  /* ── রক্তদানের রেকর্ড মুছে ফেলা (আগের রক্তদান list/detail থেকে) ──
+     Pending রেকর্ডের moderation queue item-ও একসাথে মুছে যায় — orphan থাকে না।
+     যাচাইকৃত রেকর্ড মুছলে ডোনারের তালিকা ও verifiedDonations mirror থেকে সরে;
+     admin-এর approved donations log admin-managed — সেটি অক্ষত থাকে। */
+  async function deleteDonationRecord(rec){
+    if(!rec)return false;
+    if(!await confirmS({title:"রেকর্ডটি মুছবেন?",desc:"রক্তদানের রেকর্ড মুছে যাবে।",ok:"মুছুন",danger:true}))return false;
+    const uid=String(firebaseCurrentUid()||STORE.account.uid||"").trim();
+    const vkey=donationVerKey(rec);
+    const wasVerified=isVerifiedDonation(rec);
+    RAW.donations=RAW.donations.filter(y=>y!==rec);
+    if(RAW.verifiedDonations&&typeof RAW.verifiedDonations==="object"&&RAW.verifiedDonations[vkey]){
+      delete RAW.verifiedDonations[vkey];
+    }
+    try{ await saveData(); }
+    catch(e){
+      console.warn("donation delete save:",e&&e.message);
+      toast("রেকর্ড সংরক্ষণ করা যায়নি — ইন্টারনেট সংযোগ দেখে আবার চেষ্টা করুন","er");
+      return false;
+    }
+    /* RTDB cleanup — pending queue item, বাতিল note ও verified হলে approved log
+       রেকর্ড + donors পরিসংখ্যান একসাথে; কোনো অংশ ব্যর্থ হলে বাকি অংশ থেকে যায় */
+    if(uid){
+      const ownerKey=uid.replace(/[^A-Za-z0-9]/g,"").slice(-8)||"unknown";
+      const dateDigits=String(rec.date||"").replace(/[^0-9]/g,"");
+      const dnId="DN-"+ownerKey+"-"+dateDigits+"-"+vkey.replace(/^v/,"");
+      const paths:any={ [`queue/${dnId}`]:null, [`users/${uid}/data/donationNotes/${vkey}`]:null };
+      if(wasVerified){
+        /* যাচাইকৃত রেকর্ড মুছলে Admin-এর approved log-এর এই রেকর্ডটিও যায়
+           (queue id ই approved log id — safeDonationId) এবং নিজের donor
+           পরিসংখ্যান ১টি রক্তদান/ব্যাগ সংখ্যা কমিয়ে sync থাকে */
+        paths[`donations/${dnId}`]=null;
+        try{
+          const d=(await listOnce(NODES.donors)).find(x=>String(x&&x.ownerUid||"")===uid
+            ||(STORE.donor.donorId&&String(x&&x.id||"")===String(STORE.donor.donorId)));
+          if(d&&d.id){
+            const bags=Math.max(1,Math.floor(Number(rec.bags)||1));
+            paths[`donors/${d.id}/donations`]=Math.max(0,(Number(d.donations)||0)-1);
+            paths[`donors/${d.id}/totalDonations`]=Math.max(0,(Number(d.totalDonations)||Number(d.donations)||0)-1);
+            paths[`donors/${d.id}/totalBags`]=Math.max(0,(Number(d.totalBags)||0)-bags);
+          }
+        }catch(e){ console.warn("donor stats read:",e&&e.message); }
+      }
+      try{ await updatePaths(paths); }
+      catch(e){ console.warn("donation rtdb cleanup:",e&&e.message);
+        toast("কিছু সার্ভার রেকর্ড মুছতে সমস্যা হয়েছে — অ্যাডমিনের সাথে যোগাযোগ করুন","er"); }
+    }
+    try{ await logAct("রক্তদানের রেকর্ড মুছে ফেলা হয়েছে",(rec.date||"")+" · "+(rec.place||""),"donor"); }catch(e){}
+    toast("মুছে ফেলা হয়েছে");
+    return true;
   }
 
   /* ── আমার সব তথ্য নামান ── */
@@ -4089,25 +4326,64 @@ function initPage() {
         }
         await save();
         await logAct("ডোনার তালিকা থেকে সরে গেছেন","");go("set","donor");toast("সরে গেছেন","ok")}break;
-      case "withdraw":if(await confirmS({title:"আবেদন প্রত্যাহার করবেন?",desc:"পরে আবার আবেদন করতে পারবেন।",ok:"প্রত্যাহার",danger:true})){
-        const oldDonor={...STORE.donor},uid=String(firebaseCurrentUid()||RTDB_UID||"").trim();
-        STORE.donor.is=false;STORE.donor.status="none";STORE.donor.donorId="";
-        try{
-          if(!uid)throw new Error("Firebase Auth session পাওয়া যায়নি");
-          const profile=await getRow(NODES.users,uid),paths={
-            [`users/${uid}/donorStatus`]:null,[`users/${uid}/donorId`]:null,
-            [`users/${uid}/lastDonation`]:null,[`users/${uid}/health`]:null,
-            [`users/${uid}/whatsapp`]:null,[`users/${uid}/available`]:null,
-            [`users/${uid}/appliedAt`]:null,
-            [`queue/PD-${uid.replace(/[^A-Za-z0-9]/g,"").slice(-40)}`]:null
-          };
-          const memberId=String(profile&&profile.donorMemberId||"");
-          if(memberId){paths[`members/${memberId}/status`]=null;paths[`queue/${memberId}`]=null;}
-          await updatePaths(paths);
-          await save();
-          if(CUR==="become"){reqTab="become";go("req");}else{rReq();}
-          toast("আবেদন প্রত্যাহার করা হয়েছে","ok");
-        }catch(e){Object.assign(STORE.donor,oldDonor);await save();toast("আবেদন প্রত্যাহার করা যায়নি","er");}
+      /* আবেদন প্রত্যাহার — কারণ ঐচ্ছিক; কারণ না লিখেও প্রত্যাহার করা যায়,
+         লিখলে সেটি কার্যকলাপে সংরক্ষিত থাকে। প্রত্যাহারে pending state
+         users/{uid}, queue ও members — সব source থেকেই পরিষ্কার হয়, তাই
+         refresh বা sync করলেও আবেদন আর "অনুমোদনের অপেক্ষায়" ফিরে আসে না। */
+      case "withdraw":{
+        const ws=sheet("আবেদন প্রত্যাহার করবেন?",`
+          <p class="mut" style="font-size:.83rem">আবেদনটি প্রত্যাহার হবে; পরে আবার আবেদন করতে পারবেন। আগের অনুমোদিত স্ট্যাটাস ও রক্তদানের ইতিহাস অক্ষত থাকে।</p>
+          <div class="f" style="margin-top:10px"><label>প্রত্যাহারের কারণ <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
+            <textarea id="wd_reason" rows="2" placeholder="কারণ না লিখেও প্রত্যাহার করা যাবে"></textarea></div>`,
+          `<button class="btn gh" data-close>ফিরে যান</button>
+           <button class="btn red" id="wd_ok">প্রত্যাহার করুন</button>`);
+        ws.q("#wd_ok").onclick=async()=>{
+          /* কারণ ঐচ্ছিক — কোনো required validation নেই */
+          const reason=String(ws.q("#wd_reason").value||"").trim();
+          const oldDonor={...STORE.donor},uid=String(firebaseCurrentUid()||RTDB_UID||"").trim();
+          const oldWithdrawUid=DONOR_WITHDRAW_UID;
+          ws.close();
+          /* Local state আগে পরিষ্কার — ব্যর্থ হলে oldDonor দিয়ে ফেরানো হয় */
+          STORE.donor.is=false;STORE.donor.status="none";STORE.donor.donorId="";
+          STORE.donor.whatsapp="";STORE.donor.lastDonation="";
+          STORE.donor.health="";STORE.donor.appliedAt="";STORE.donor.available=true;
+          STORE.donor.donorRejectNote="";
+          DONOR_WITHDRAW_UID=uid;
+          try{
+            if(!uid)throw new Error("Firebase Auth session পাওয়া যায়নি");
+            const profile=await getRow(NODES.users,uid),paths={
+              [`users/${uid}/donorStatus`]:null,[`users/${uid}/donorId`]:null,
+              [`users/${uid}/lastDonation`]:null,[`users/${uid}/health`]:null,
+              [`users/${uid}/whatsapp`]:null,[`users/${uid}/available`]:null,
+              [`users/${uid}/appliedAt`]:null,[`users/${uid}/donorRejectNote`]:null,
+              [`queue/PD-${uid.replace(/[^A-Za-z0-9]/g,"").slice(-40)}`]:null
+            };
+            const memberId=String(profile&&profile.donorMemberId||"");
+            if(memberId){paths[`members/${memberId}`]=null;paths[`queue/${memberId}`]=null;}
+            await updatePaths(paths);
+            /* বাকি সব same-owner donor আবেদন/সদস্য রেকর্ডও পরিষ্কার (queue ও
+               members node staff-only read; সাধারণ ডোনারে এই list খালি আসে —
+               তখন উপরের deterministic মুছে ফেলাই যথেষ্ট)। */
+            try{
+              const accountEmail=String(STORE.account.email||"").trim().toLowerCase();
+              const accountPhone=String(STORE.account.phone||"").replace(/\s+/g,"");
+              const ownRecord=x=>String(x&&(x.ownerUid||x.uid||x.userId)||"").trim()===uid
+                ||(!!accountEmail&&String(x&&x.email||"").trim().toLowerCase()===accountEmail)
+                ||(!!accountPhone&&String(x&&x.phone||"").replace(/\s+/g,"")===accountPhone);
+              const [queues,members]=await Promise.all([listOnce(NODES.queue),listOnce(NODES.members)]);
+              const extra={};
+              queues.filter(q=>q&&q.kind==="donor"&&ownRecord(q)).forEach(q=>{if(q.id)extra[`queue/${q.id}`]=null});
+              members.filter(m=>ownRecord(m)).forEach(m=>{if(m.id)extra[`members/${m.id}`]=null});
+              if(Object.keys(extra).length)await updatePaths(extra);
+            }catch(e2){ console.warn("withdraw sweep:",e2&&e2.message); }
+            await save();
+            /* কারণ লিখলে সংরক্ষিত থাকে — কার্যকলাপ (users/{uid}/data/activity) */
+            try{ await logAct("আবেদন প্রত্যাহার",reason?("কারণ: "+reason):"কারণ দেওয়া হয়নি","donor"); }catch(e3){ console.warn("withdraw log:",e3&&e3.message); }
+            if(CUR==="become"){reqTab="become";go("req");}else{rReq();}
+            toast("আবেদন প্রত্যাহার করা হয়েছে","ok");
+          }catch(e){Object.assign(STORE.donor,oldDonor);await save();toast("আবেদন প্রত্যাহার করা যায়নি","er");}
+          finally{ DONOR_WITHDRAW_UID=oldWithdrawUid; }
+        };
       }break;
   
       case "forgotPass":sheetForgot();break;
@@ -4396,7 +4672,7 @@ function initPage() {
         পরিবর্তন করলে <b>নতুন username দিয়ে লগইন</b> করতে হবে।</span></div>
       <div class="f"><label>বর্তমান</label><input value="@${esc(a.username)}" readonly></div>
       <div class="f"><label>নতুন username <i>*</i></label>
-        <input id="un" value="${esc(a.username)}" maxlength="20" autocapitalize="off" spellcheck="false">
+        <input id="un" placeholder="নতুন username লিখুন" maxlength="20" autocapitalize="off" spellcheck="false">
         <span class="hint" id="uh">৩–২০ অক্ষর · ছোট হাতের ইংরেজি, সংখ্যা, _ এবং .</span></div>`,
       `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="ok" disabled>পরিবর্তন করুন</button>`);
     const inp=s.q("#un"),h=s.q("#uh"),ok=s.q("#ok");let t;
@@ -4406,23 +4682,46 @@ function initPage() {
       if(v===a.username){h.textContent="এটি আপনার বর্তমান username";return}
       if(!/^[a-z0-9._]{3,20}$/.test(v)){h.className="hint er";h.textContent="৩–২০ অক্ষর · শুধু a-z 0-9 _ .";return}
       h.textContent="পরীক্ষা করা হচ্ছে…";
-      t=setTimeout(()=>{
-        if(TAKEN.includes(v)){h.className="hint er";h.textContent="এই username ইতিমধ্যে ব্যবহৃত"}
+      t=setTimeout(async()=>{
+        /* DB থেকেই যাচাই — loginIndex (claim-once সূচি); TAKEN শুধু সংরক্ষিত নাম */
+        const owner=await lookupLoginKey("username",v).catch(()=>null);
+        if(TAKEN.includes(v)||owner){h.className="hint er";h.textContent="এই username ইতিমধ্যে ব্যবহৃত"}
         else{h.className="hint ok";h.textContent="✓ পাওয়া যাচ্ছে";ok.disabled=false}
       },420);
     };
     ok.onclick=async()=>{
       const v=inp.value.trim().toLowerCase();
-      const old=a.username;ok.disabled=true;STORE.account.username=v;
+      const old=a.username;ok.disabled=true;
+      /* atomic claim — দুজনে একসাথে একই username নিতে পারে না */
+      const mail=String(a.email||"").trim();
+      const claim=await claimLoginKey("username",v,mail);
+      if(!claim.claimed){
+        ok.disabled=false;
+        h.className="hint er";
+        h.textContent=claim.reason==="conflict"?"এই username ইতিমধ্যে ব্যবহৃত":"এখন যাচাই করা যাচ্ছে না — আবার চেষ্টা করুন";
+        return;
+      }
+      STORE.account.username=v;
       try{
         await pushAccountToRtdb();
         await save();await logAct("Username পরিবর্তন","@"+v,"account");
+        /* পুরোনো username-এর দাবি ছাড়া */
+        await releaseLoginKey("username",old,mail);
         s.close();renderSub("account");toast("Username পরিবর্তন হয়েছে","ok");
-      }catch(e){STORE.account.username=old;ok.disabled=false;toast("Username RTDB-তে সংরক্ষণ করা যায়নি","er");}
+      }catch(e){
+        STORE.account.username=old;
+        await releaseLoginKey("username",v,mail).catch(()=>{});
+        if(old)await claimLoginKey("username",old,mail).catch(()=>{});
+        ok.disabled=false;toast("Username RTDB-তে সংরক্ষণ করা যায়নি","er");
+      }
     };
   }
   
-  /* ---------- email ---------- */
+  /* ---------- email ----------
+     সরাসরি Email পরিবর্তন — কোনো verification-email flow নেই।
+     Flow: বর্তমান Email → নতুন Email → Password → পরিবর্তন করুন।
+     Password সঠিক হলে (re-auth) Firebase Auth-এর updateEmail দিয়ে সাথে সাথে
+     ইমেইল পরিবর্তন হয় এবং RTDB + identityIndex-ও sync হয়। */
   function sheetEmail(){
     const a=STORE.account;
     if(a.photoSource==="google"){
@@ -4431,37 +4730,56 @@ function initPage() {
         <div class="f"><label>বর্তমান ইমেইল</label><input value="${esc(a.email)}" readonly></div>`,
         `<button class="btn gh" data-close>বন্ধ</button>`);return;
     }
-    let step=1;
-    const s=sheet("ইমেইল পরিবর্তন","","");
-    const draw=()=>{
-      if(step===1)s.q(".bd").innerHTML=`
-        <div class="f"><label>বর্তমান ইমেইল</label><input value="${esc(a.email)}" readonly></div>
-        <div class="f"><label>নতুন ইমেইল <i>*</i></label><input id="ne" type="email">
-          <span class="hint er hide" id="ee"></span></div>
-        <div class="f"><label>পাসওয়ার্ড দিয়ে নিশ্চিত করুন <i>*</i></label><input id="pw" type="password"></div>`;
-      if(step===2)s.q(".bd").innerHTML=`
-        <div style="text-align:center;padding:12px 0">
-          <div style="width:56px;height:56px;margin:0 auto 12px;border-radius:50%;background:var(--blu-s);
-            color:var(--blu);display:grid;place-items:center">${ICON.mail(26)}</div>
-          <b style="display:block;margin-bottom:5px">যাচাই মেইল পাঠানো হয়েছে</b>
-          <p class="mut" style="font-size:.82rem">${esc(s._new)} — ইনবক্স (ও স্প্যাম) দেখুন।<br>
-            লিংকে ক্লিক করলেই নতুন ইমেইল সক্রিয় হবে।</p>
-          <div class="note w" style="margin-top:14px;text-align:left">${ICON.info(16)}
-            <span>যাচাই না হওয়া পর্যন্ত <b>পুরোনো ইমেইলই</b> সক্রিয় থাকবে।</span></div></div>`;
-      s.q(".ft").innerHTML=step===1
-        ?`<button class="btn gh" data-close>বাতিল</button><button class="btn" id="go">যাচাই মেইল পাঠান</button>`
-        :`<button class="btn" data-close style="flex:1">বুঝেছি</button>`;
-      if(step===1)s.q("#go").onclick=async()=>{
-        const v=s.q("#ne").value.trim().toLowerCase(),p=s.q("#pw").value;
-        const er=s.q("#ee");er.classList.add("hide");
-        if(!mailOK(v)){er.textContent="সঠিক ইমেইল দিন";er.classList.remove("hide");return}
-        if(v===a.email){er.textContent="এটি আপনার বর্তমান ইমেইল";er.classList.remove("hide");return}
-        if(!p){toast("পাসওয়ার্ড দিন","er");return}
-        s._new=v;step=2;draw();await logAct("ইমেইল পরিবর্তনের অনুরোধ",v,"security");
-      };
+    const s=sheet("ইমেইল পরিবর্তন",`
+      <div class="f"><label>বর্তমান ইমেইল</label><input value="${esc(a.email)}" readonly></div>
+      <div class="f"><label>নতুন ইমেইল <i>*</i></label><input id="ne" type="email">
+        <span class="hint er hide" id="ee"></span></div>
+      <div class="f"><label>পাসওয়ার্ড দিয়ে নিশ্চিত করুন <i>*</i></label><input id="pw" type="password"
+        autocomplete="current-password"></div>`,
+      `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="go">পরিবর্তন করুন</button>`);
+    s.q("#go").onclick=async()=>{
+      const v=s.q("#ne").value.trim().toLowerCase(),p=s.q("#pw").value;
+      const er=s.q("#ee");er.classList.add("hide");
+      const fail=m=>{er.textContent=m;er.classList.remove("hide")};
+      if(!mailOK(v))return fail("সঠিক ইমেইল দিন");
+      if(v===a.email)return fail("এটি আপনার বর্তমান ইমেইল");
+      if(!p)return toast("পাসওয়ার্ড দিন","er");
+      const btn=s.q("#go"),orig=btn.innerHTML;
+      btn.disabled=true;btn.textContent="পরিবর্তন হচ্ছে…";
+      try{
+        const shared=initSharedFirebase();
+        const user=shared.auth&&shared.auth.currentUser;
+        if(!user)throw new Error("লগইন অবস্থায় নেই। আবার লগইন করুন।");
+        /* নতুন ইমেইল অন্য অ্যাকাউন্ট দাবি করে থাকলে আগেই থামাই */
+        const owner=await lookupEmailOwner(v);
+        if(owner&&String(owner)!==String(user.uid))throw new Error("এই ইমেইল অন্য একটি অ্যাকাউন্টে ব্যবহৃত");
+        /* ১) Password যাচাই (re-auth) — ভুল হলে ইমেইল বদলায় না */
+        const {EmailAuthProvider,reauthenticateWithCredential,updateEmail}=await import("firebase/auth");
+        await reauthenticateWithCredential(user,EmailAuthProvider.credential(user.email||a.email,p));
+        /* ২) Firebase Auth ইমেইল সরাসরি পরিবর্তন */
+        await updateEmail(user,v);
+        /* ৩) প্যানেল + RTDB + identity/login index sync */
+        const old=a.email;
+        /* পুরোনো email-এ দাবি করা username/phone entry ছেড়ে নতুন email দিয়ে
+           পুনর্দাবি — নইলে email বদলানোর পর সেগুলো আর সংরক্ষণ/ছাড়া যেত না */
+        try{
+          await releaseLoginEntries(old,a.username,a.phone);
+        }catch(e){ console.warn("login release old:",e&&e.message); }
+        a.email=v;a.emailVerified=false;
+        try{ await pushAccountToRtdb(); }catch(e){ console.warn("email rtdb push:",e&&e.message); }
+        try{ await releaseEmailIdentity(old,user.uid); }catch(e){ console.warn("identity release:",e&&e.message); }
+        try{ await claimEmailIdentity(v,user.uid); }catch(e){ console.warn("identity claim:",e&&e.message); }
+        try{ await claimLoginEntries(v,a.username,a.phone); }catch(e){ console.warn("login claim new:",e&&e.message); }
+        await save();
+        await logAct("ইমেইল পরিবর্তন",v,"security");
+        s.close();renderSub("account");
+        toast("ইমেইল পরিবর্তন হয়েছে","ok");
+      }catch(err){
+        btn.disabled=false;btn.innerHTML=orig;
+        const msg=authErrorMessage(err,{fallback:"ইমেইল পরিবর্তন করা যায়নি। সঠিক পাসওয়ার্ড ও ইন্টারনেট সংযোগ দিয়ে আবার চেষ্টা করুন।"});
+        fail(msg);
+      }
     };
-    s.querySelector(".bd").insertAdjacentHTML("afterend",`<div class="ft"></div>`);
-    draw();
   }
   
   /* ---------- phone ---------- */
@@ -4478,12 +4796,26 @@ function initPage() {
     s.q("#ok").onclick=async()=>{
       const v=s.q("#np").value.trim();
       if(!phoneOK(v)){const h=s.q("#ph");h.className="hint er";h.textContent="সঠিক ১১ সংখ্যার নম্বর দিন";return}
-      const old=a.phone;const ok=s.q("#ok");ok.disabled=true;STORE.account.phone=v;STORE.account.phoneVerified=false;
+      const old=a.phone;const ok=s.q("#ok");ok.disabled=true;
+      const mail=String(a.email||"").trim();
+      const claim=await claimLoginKey("phone",digits(v),mail);
+      if(!claim.claimed){
+        ok.disabled=false;
+        toast(claim.reason==="conflict"?"এই নম্বরে ইতিমধ্যে একটি অ্যাকাউন্ট আছে":"এখন সংরক্ষণ করা যাচ্ছে না — আবার চেষ্টা করুন","er");
+        return;
+      }
+      STORE.account.phone=v;STORE.account.phoneVerified=false;
       try{
         await pushAccountToRtdb();
         await save();await logAct("মোবাইল নম্বর পরিবর্তন",v,"security");
+        await releaseLoginKey("phone",digits(old),mail);
         s.close();renderSub("account");toast("নম্বর সংরক্ষণ হয়েছে","ok");
-      }catch(e){STORE.account.phone=old;ok.disabled=false;toast("নম্বর RTDB-তে সংরক্ষণ করা যায়নি","er");}
+      }catch(e){
+        STORE.account.phone=old;
+        await releaseLoginKey("phone",digits(v),mail).catch(()=>{});
+        if(old)await claimLoginKey("phone",digits(old),mail).catch(()=>{});
+        ok.disabled=false;toast("নম্বর RTDB-তে সংরক্ষণ করা যায়নি","er");
+      }
     };
   }
   
@@ -4751,11 +5083,26 @@ function initPage() {
       paths[`queue/${savedMemberId}`]=null;
     }
 
-    // donors/{id} — approved donor profile
+    // donors/{id} — approved donor profile (statistics সহ; website listing/search থেকেও সরে)
     const donors=await listOnce(NODES.donors);
     /* নতুন record UID/ownerUid দিয়ে মেলে; পুরোনো donor record-এ UID না থাকলে
        একই account-এর সংরক্ষিত email/phone দিয়ে fallback করে মেলানো হয়। */
     donors.filter(d=>ownerMatches(d) || emailMatches(d) || phoneMatches(d)).forEach(d=>{ if(d.id) paths[`donors/${d.id}`]=null; });
+
+    // donations/{id} — Admin-এর approved donation log-এর এই donor-এর রেকর্ডসমূহ
+    /* ownerUid মিললেই মুছে ফেলা হয় (date/place দিয়ে মেলানো রেকর্ডেও ownerUid থাকে) —
+       ফলে Admin/Moderator Panel-এর "অনুমোদিত রক্তদান" তালিকায় আর দেখা যায় না।
+       RTDB rules-এ owner-এর delete-only অনুমতি আছে (database.rules.json)। */
+    try{
+      const approved=await listOnce(NODES.donations);
+      approved.filter(x=>ownerMatches(x) || emailMatches(x)).forEach(x=>{ if(x&&x.id) paths[`donations/${x.id}`]=null; });
+    }catch(e){ console.warn("approved donation cleanup:",e&&e.message); }
+
+    // reports/{id} — এই donor-এর করা সমস্যা জানানো/অভিযোগ (owner delete rules-এ অনুমোদিত)
+    try{
+      const reports=await listOnce(NODES.reports);
+      reports.filter(x=>ownerMatches(x)).forEach(x=>{ if(x&&x.id) paths[`reports/${x.id}`]=null; });
+    }catch(e){ console.warn("report cleanup:",e&&e.message); }
 
     // members/{id} — অনুমোদন-প্রক্রিয়ার ডোনার আবেদন
     const members=await listOnce(NODES.members);
@@ -4772,12 +5119,26 @@ function initPage() {
     const selfQid="PD-"+String(STORE.donor.donorId||uid).replace(/[^A-Za-z0-9]/g,"").slice(-10);
     if(selfQid) paths[`queue/${selfQid}`]=null;
     (RAW.mine||[]).forEach(m=>{ if(m&&m.id) paths[`queue/${m.id}`]=null; });
+    /* রক্তদানের deterministic queue/approved-log id: DN-<uid8>-<date>-<verKey>
+       (safeDonationId-এর হুবহু একই স্কিম — পড়ার অনুমতি ছাড়াই নিজের row মুছে যায়)।
+       পুরোনো ভুল প্যাটার্ন (DN-<full-uid>-<date>) যদি আগের ভার্সনে লেখা থাকে সেটিও
+       পরিষ্কার করা হয়। pending ছাড়াও verified রেকর্ডের approved-log row
+       (donations/{dnId}) owner delete-only rule দিয়ে মুছে যায়। */
+    const delUid8=uid.replace(/[^A-Za-z0-9]/g,"").slice(-8)||"unknown";
     (RAW.donations||[]).forEach(x=>{
       if(x&&x.date){
-        const dn="DN-"+uid+"-"+String(x.date).replace(/-/g,"");
-        if(dn) paths[`queue/${dn}`]=null;
+        const dd=String(x.date).replace(/[^0-9]/g,"");
+        const vk=donationVerKey(x).replace(/^v/,"");
+        const dn="DN-"+delUid8+"-"+dd+"-"+vk;
+        paths[`queue/${dn}`]=null;
+        paths[`donations/${dn}`]=null;
+        /* legacy wrong-key cleanup */
+        paths[`queue/DN-${uid}-${String(x.date).replace(/-/g,"")}`]=null;
       }
     });
+    /* গ্রুপ-বদল অনুরোধ pending থাকলে তার queue row-ও যায় (id সংরক্ষিত আছে) */
+    const delGc=(userProfile&&userProfile.groupChange)&&typeof userProfile.groupChange==="object"?userProfile.groupChange:null;
+    if(delGc&&delGc.id&&String(delGc.status||"")==="pending") paths[`queue/${delGc.id}`]=null;
 
     // requests/{id} — ইউজার করা/জমা করা জরুরি রক্তের আবেদন
     const requests=await listOnce(NODES.requests);
@@ -4799,6 +5160,14 @@ function initPage() {
         if(claimEmail) await releaseEmailIdentity(claimEmail, uid);
       }
     }catch(e){ console.warn("identity release:", e&&e.message); }
+    /* loginIndex — username/phone দিয়ে লগইন সূচি থেকে নিজের entry ছাড়া
+       (নইলে মুছে যাওয়া username/নম্বর আর কেউ ব্যবহার করতে পারে না) */
+    try{
+      const delEmail=String((userProfile&&userProfile.email)||user.email||"").trim();
+      await releaseLoginEntries(delEmail,
+        (userProfile&&userProfile.username)||STORE.account.username||"",
+        (userProfile&&userProfile.phone)||STORE.account.phone||"");
+    }catch(e){ console.warn("loginIndex release:", e&&e.message); }
 
     /* ৩. RTDB সব একসাথে atomic মুছুন — এখানে সফল হলে তবেই Auth account delete হবে */
     if(Object.keys(paths).length) await updatePaths(paths);
@@ -5072,6 +5441,9 @@ function initPage() {
      দিয়ে সঙ্গে সঙ্গে এই স্ক্রিনে চলে আসে — দুই দিকেই লাইভ। */
   let RTDB_UID="";
   let RTDB_PULLING=false;
+  /* আবেদন প্রত্যাহার চলাকালীন hydrate যেন পুরোনো/দেরিতে আসা members/queue
+     snapshot থেকে pending state আবার না ফিরিয়ে আনে — সেই guard। */
+  let DONOR_WITHDRAW_UID="";
   async function pushAccountToRtdb(){
     const uid=firebaseCurrentUid();
     if(!uid||uid!==RTDB_UID||RTDB_PULLING)return;
@@ -5477,6 +5849,9 @@ function initPage() {
     /* রক্তের গ্রুপ পরিবর্তনের অনুরোধ — একমাত্র উৎস users/{uid}/groupChange।
        Admin Approve/Reject করলে এই field-ই বদলায়, watchRow দিয়ে realtime এখানে আসে। */
     STORE.donor.groupChange = row.groupChange && typeof row.groupChange==="object" ? {...row.groupChange} : null;
+    /* বাতিলের কারণ (Admin/Moderator ডোনার আবেদন বাতিল করলে সংরক্ষিত) —
+       বাতিল অবস্থায় ডোনার প্যানেলে দেখানো হয়; নতুন আবেদনে মুছে যায়। */
+    STORE.donor.donorRejectNote = String(row.donorRejectNote||"").trim();
     if(STORE.donor.groupChange&&STORE.donor.groupChange.status==="approved"&&STORE.donor.groupChange.to){
       STORE.donor.bloodGroup=String(STORE.donor.groupChange.to);
     }
@@ -5486,6 +5861,8 @@ function initPage() {
       ["donations","activity"].forEach(k=>{ if(Array.isArray(row.data[k]))RAW[k]=row.data[k]; });
       if(row.data.verifiedDonations&&typeof row.data.verifiedDonations==="object"&&!Array.isArray(row.data.verifiedDonations))
         RAW.verifiedDonations=row.data.verifiedDonations;
+      if(row.data.donationNotes&&typeof row.data.donationNotes==="object"&&!Array.isArray(row.data.donationNotes))
+        RAW.donationNotes=row.data.donationNotes;
       const reads=row.data.noticeReads;
       STORE.noticeReads=reads&&typeof reads==="object"?Object.fromEntries(Object.entries(reads).filter(([,v])=>v===true)):{};
       try{localStorage.setItem(LS_DATA,JSON.stringify(RAW))}catch(e){}
@@ -5499,6 +5876,10 @@ function initPage() {
      hardcode/demo নয়, RTDB-র বাস্তব রেকর্ড থেকেই hydrate; duplicate তৈরি নয় */
   async function hydrateDonorFromRtdb(uid){
     if(!uid || STORE.donor.is) return false;
+    /* প্রত্যাহার চলাকালীন পুরোনো/দেরিতে আসা snapshot থেকে pending state
+       আর ফিরিয়ে আনা হয় না — নইলে প্রত্যাহারের পরেও "অনুমোদনের অপেক্ষায়"
+       আবার দেখা যেত। */
+    if(DONOR_WITHDRAW_UID)return false;
     try{
       const accountEmail = String(STORE.account.email || "").trim().toLowerCase();
       const accountPhone = String(STORE.account.phone || "").replace(/\s+/g, "");
@@ -5540,8 +5921,13 @@ function initPage() {
         }
       }catch(e){}
       if(member){
+        const st = String(member.status||member.donorStatus||"").trim().toLowerCase();
+        /* Pending members রেকর্ড কেবল স্পষ্ট status থাকলেই hydrate হয়। status
+           মুছে ফেলা (null/empty) legacy রেকর্ড মানে আবেদনটি আগেই প্রত্যাহার/
+           পরিষ্কার করা হয়েছে — সেটিকে আর pending ভাবা হয় না, তাই refresh বা
+           sync করলেও "অনুমোদনের অপেক্ষায়" ফিরে আসে না। */
+        if(st==="pending"||st==="approved"||st==="rejected"){
         STORE.donor.is=true;
-        const st = String(member.status||member.donorStatus||"pending").toLowerCase();
         STORE.donor.status = st==="approved" ? "approved" : st==="rejected" ? "rejected" : "pending";
         STORE.donor.totalDonations = Math.max(0,Number(member.totalDonations ?? member.donations ?? 0))||0;
         STORE.donor.totalBags = Math.max(0,Number(member.totalBags ?? 0))||0;
@@ -5557,8 +5943,12 @@ function initPage() {
         try{ persistLocalAccount(); }catch(e){}
         try{ await pushAccountToRtdb(); }catch(e){}
         return true;
+        }
+        /* status নেই/মুছে ফেলা legacy member রেকর্ড — pending নয়; নিচের
+           queue-যাচাইয়ে স্পষ্ট pending আবেদন থাকলে শুধু সেটিই গণ্য হয়। */
       }
       // 3) queue (pending donor request)
+      if(DONOR_WITHDRAW_UID)return false;
       try{
         const allQ = await listOnce(NODES.queue);
         const q = allQ.find(x=> x.kind==="donor" && (String(x.ownerUid)===String(uid) || String(x.uid)===String(uid) || legacyOwner(x))) || allQ.find(x=> String(x.uid)===String(uid) && x.group);

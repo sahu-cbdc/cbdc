@@ -103,3 +103,128 @@ export async function releaseEmailIdentity(email: unknown, uid: string): Promise
     return false;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Login Index — username/phone দিয়ে লগইনের জন্য পাবলিক claim-once সূচি
+   ═══════════════════════════════════════════════════════════════════════════
+   loginIndex/username/<key> = <account email>
+   loginIndex/phone/<key>    = <account email>
+
+   - লগইন হয় Auth হওয়ার আগে, তাই এই সূচির read সবার জন্য খোলা — কিন্তু এখানে
+     শুধু username/phone → email ম্যাপিং থাকে, পূর্ণ প্রোফাইল কখনো নয়।
+   - একই key দ্বিতীয়বার claim করা যায় না (RTDB atomic write); নিজের email
+     দিয়ে claim করা key আবার set/release করা যায় (rules)।
+   - Email পরিবর্তন/অ্যাকাউন্ট ডিলিটে নিজের entry ছেড়ে দেওয়া হয়।
+   - সূচি না থাকলে (পুরোনো deployed rules) সব ফাংশন fail-open — আগের মতোই
+     users/{uid} query fallback কাজ করে।
+*/
+
+const LOGIN_PATH = "loginIndex";
+
+/** RTDB-নিরাপদ সূচি-কী (username বা phone digits)। */
+export function loginIndexKey(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[#.$/\[\]\\]/g, "_")
+    .slice(0, 190);
+}
+
+/** এই username/phone বর্তমানে কোন email দাবি করে আছে (না থাকলে null)। */
+export async function lookupLoginKey(
+  kind: "username" | "phone",
+  value: unknown,
+): Promise<string | null> {
+  const db = getRtdb();
+  const key = loginIndexKey(value);
+  if (!db || !key) return null;
+  try {
+    const snap = await get(child(ref(db, `${LOGIN_PATH}/${kind}`), key));
+    const v = snap.val();
+    return typeof v === "string" && v ? v : null;
+  } catch {
+    return null; /* পড়া না গেলে অজানা — কেউ নয় */
+  }
+}
+
+export type LoginClaim =
+  | { claimed: true }
+  | { claimed: false; reason: "conflict" | "unavailable" };
+
+/**
+ * username/phone atomic claim — প্রথম email-ই পায়; নিজের email আগে থেকে
+ * থাকলে no-op success। conflict মানে অন্য কোনো অ্যাকাউন্ট আগেই নিয়েছে।
+ */
+export async function claimLoginKey(
+  kind: "username" | "phone",
+  value: unknown,
+  email: unknown,
+): Promise<LoginClaim> {
+  const db = getRtdb();
+  const key = loginIndexKey(value);
+  const mail = String(email ?? "").trim().toLowerCase();
+  if (!db || !key || !mail) return { claimed: false, reason: "unavailable" };
+  try {
+    const res = await runTransaction(
+      ref(db, `${LOGIN_PATH}/${kind}/${key}`),
+      (current) => {
+        if (typeof current === "string" && current && current !== mail) return undefined;
+        return mail;
+      },
+    );
+    const owner = typeof res.snapshot.val() === "string" ? String(res.snapshot.val()) : "";
+    if (res.committed || owner === mail) return { claimed: true };
+    return { claimed: false, reason: "conflict" };
+  } catch (e) {
+    console.warn("login claim:", (e as Error)?.message);
+    return { claimed: false, reason: "unavailable" };
+  }
+}
+
+/**
+ * নিজের email দাবি করা entry ছাড়া (শুধু মালিক বা admin মুছতে পারে — rules)।
+ * Email পরিবর্তন/অ্যাকাউন্ট ডিলিটে ডাকা হয়; অন্যের entry কখনো মুছে না।
+ */
+export async function releaseLoginKey(
+  kind: "username" | "phone",
+  value: unknown,
+  email: unknown,
+): Promise<boolean> {
+  const db = getRtdb();
+  const key = loginIndexKey(value);
+  const mail = String(email ?? "").trim().toLowerCase();
+  if (!db || !key || !mail) return false;
+  try {
+    const snap = await get(child(ref(db, `${LOGIN_PATH}/${kind}`), key));
+    if (snap.val() !== mail) return false;
+    await remove(ref(db, `${LOGIN_PATH}/${kind}/${key}`));
+    return true;
+  } catch (e) {
+    console.warn("login release:", (e as Error)?.message);
+    return false;
+  }
+}
+
+/** এক অ্যাকাউন্টের সব login entry (username + phone) একসাথে claim করা। */
+export async function claimLoginEntries(
+  email: unknown,
+  username: unknown,
+  phone: unknown,
+): Promise<void> {
+  const mail = String(email ?? "").trim().toLowerCase();
+  if (!mail) return;
+  await claimLoginKey("username", username, mail);
+  await claimLoginKey("phone", phone, mail);
+}
+
+/** এক অ্যাকাউন্টের সব login entry (username + phone) একসাথে ছাড়া। */
+export async function releaseLoginEntries(
+  email: unknown,
+  username: unknown,
+  phone: unknown,
+): Promise<void> {
+  const mail = String(email ?? "").trim().toLowerCase();
+  if (!mail) return;
+  await releaseLoginKey("username", username, mail);
+  await releaseLoginKey("phone", phone, mail);
+}

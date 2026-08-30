@@ -57,7 +57,9 @@ export const donationNowIso = (): string => new Date().toISOString();
 
 /** Stable key for a user-side verified donation mirror (date|place). */
 export function donationVerKey(date: unknown, place: unknown): string {
-  const s = String(date || "") + "|" + String(place || "");
+  /* trim — Doner প্যানেলের নিজস্ব হিসাবের সাথে হুবহু এক হতে হয়, নইলে
+     date/place-এ বাড়তি স্পেস থাকলে verified mirror key আলাদা হয়ে যায় */
+  const s = String(date || "").trim() + "|" + String(place || "").trim();
   let h = 0;
   for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
   return "v" + (h >>> 0).toString(36);

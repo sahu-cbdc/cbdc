@@ -156,7 +156,7 @@ metadata** সেভ হয়।
 | `_meta` | counter | `donorCounter/<year>` — পরবর্তী ধারাবাহিক Donor UID-এর atomic counter | public read; authenticated increment |
 | `requests` | push id | patientName, bloodGroup, bags, urgency, status, workflowStatus, hospitalName, hospitalAddress, requesterName, phone, whatsapp, **patientDob**, createdAt, expiresAt, responders | anyone can create; public read; staff manage |
 | `members` | push id | donor sign-up application (status `pending`, **dob**) | anyone can create; owner/staff read |
-| `users` | **auth uid** | uid, name, username, email, phone, **dob**, gender, area, photoURL, provider, role, status, createdAt, **applicationCount**, `data:{donations,verifiedDonations,mine,notifs,activity,panel}` — `data/verifiedDonations` এখন Admin-এর **Approved Donations log-এর সাথে synchronized**; `data/panel`-এ Admin/Moderator প্যানেলের নিজের সেটিংস (security/privacy/notif/prefs), সেশন ও কার্যকলাপ | owner + staff; `approved` donorStatus admin-only; `verifiedDonations`-এ লেখা admin/moderator-only |
+| `users` | **auth uid** | uid, name, username, email, phone, **dob**, gender, area, photoURL, provider, role, status, createdAt, **applicationCount**, **donorStatus, donorId, donorMemberId, donorRejectNote** (ডোনার আবেদন বাতিলের ঐচ্ছিক কারণ — Admin/Moderator লেখে, ডোনার প্যানেল দেখে), `data:{donations,verifiedDonations,mine,notifs,activity,panel}` — `data/verifiedDonations` এখন Admin-এর **Approved Donations log-এর সাথে synchronized**; `data/panel`-এ Admin/Moderator প্যানেলের নিজের সেটিংস (security/privacy/notif/prefs), সেশন ও কার্যকলাপ | owner + staff; `approved` donorStatus admin-only; `verifiedDonations`-এ লেখা admin/moderator-only |
 | `donations` | donated-record id (`DN-...`) | **approved donation log** — donorId, ownerUid, name, bloodGroup, place, date, bags, **proof (ImgBB URL)**, livesSaved:1, approvedAt, approvedBy, patient, note, updatedAt | `admins` যারা staff (admin/moderator) read; admin সব write; moderator শুধু নতুন record তৈরি (approve-এর সময়), edit/delete নয় |
 | `admins` | **auth uid** | email, role (`admin`/`moderator`), permissions[], name, username, designation | own read; admin write |
 | `queue` | record id | kind (`donor`/`request`/`donation`), name, group, area, **dob**, phone, … | create খোলা (নতুন আবেদনের জন্য); পড়া/সম্পাদনা staff only |
@@ -419,3 +419,12 @@ VITE_IMGBB_API_KEY=...   # ImgBB fallback key (build-time)
   ব্র্যান্ড করা (কপি-পেস্ট করার মতো template HTML সহ)।
 - `docs/GOOGLE_LOGIN_BRANDING.md` — Google "Choose an account" স্ক্রিনে অ্যাপের নাম
   **Chawkbazar Blood Donor's Club** ও অফিশিয়াল লোগো দেখানোর ধাপ।
+
+## Security rules — সাম্প্রতিক alignment (bug-fix release)
+
+- `accounts/$id` — লিখতে পারে: admin (সম্পূর্ণ) + row-এর নিজের মালিক (`uid === auth.uid`, create/update/delete)। ডোনার প্যানেলের strict shared-commit save এখন rules-এর সাথে সাংঘর্ষিক নয়।
+- `users/$uid/data` — owner **বা যেকোনো staff** (admins row) লিখতে পারে; moderator-এর approve/reject write-back (data/mine, data/donationNotes) ব্যর্থ হয় না।
+- `donors/$id` — owner পরিসংখ্যান **কমাতে** পারে: `donations` ও `totalDonations` ঠিক ১ কমে, `totalBags` বর্তমান মানের মধ্যে, `lastDonationDate` অপরিবর্তিত — শুধুমাত্র নিজের যাচাইকৃত রেকর্ড মুছে ফেলার সময়। Identity ফিল্ড (id/donorId/uid/ownerUid/verified/suspended/status/group/bloodGroup) equality-locked।
+- `loginIndex` (নতুন) — `loginIndex/username|phone/<key> = <account email>`; read public (লগইনের আগে username/phone → email নির্ণয়), write claim-once (প্রথম email-ই পায়); overwrite/release শুধু দাবিকারী অ্যাকাউন্ট (auth.token.email) বা admin। একই username/phone-এ দ্বিতীয় অ্যাকাউন্ট atomic-ভাবে আটকায়।
+- `donations/$id` — owner **delete-only** (নিজের `ownerUid`-এর row), admin/moderator আগের মতো।
+- `users/{uid}/data/donationNotes/{verKey}` — Admin/Moderator রক্তদান বাতিলের status/কারণ এখানে লেখে (stable key — race-safe); ডোনার প্যানেল শুধু পড়ে।
