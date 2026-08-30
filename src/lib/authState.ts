@@ -54,7 +54,8 @@ function ensureListener(): void {
 /** বর্তমান Firebase Auth user (null = signed-out / এখনো লোড হয়নি)। */
 export function getAuthUser(): User | null {
   ensureListener();
-  return currentUser || (auth ? auth.currentUser : null) || null;
+  const fromAuth = auth ? auth.currentUser : null;
+  return fromAuth || currentUser || null;
 }
 
 /**
@@ -71,7 +72,8 @@ export function subscribeAuthUser(cb: AuthListener): () => void {
     try {
       setTimeout(() => {
         if (!listeners.has(cb)) return;
-        cb(currentUser);
+        const fromAuth = auth ? auth.currentUser : null;
+        cb(fromAuth || currentUser || null);
       }, 0);
     } catch {
       /* ignore */
@@ -86,7 +88,7 @@ export function subscribeAuthUser(cb: AuthListener): () => void {
  * Sign-in শেষে currentUser বসা পর্যন্ত অপেক্ষা (ছোট timeout-সহ)।
  * Return: User | null (null হলে signed-out / timeout / init-error)।
  */
-export async function waitForAuthUser(timeoutMs = 4000): Promise<User | null> {
+export async function waitForAuthUser(timeoutMs = 1000): Promise<User | null> {
   ensureListener();
   if (currentUser || (auth && auth.currentUser)) return getAuthUser();
   return new Promise((resolve) => {

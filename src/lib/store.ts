@@ -21,7 +21,7 @@
  */
 
 import { getAuthUser, subscribeAuthUser } from "./authState";
-import { NODES } from "./firebase";
+import { NODES, getAuthInstance } from "./firebase";
 import { watchList, setRow, removeRow } from "./rtdb";
 import { resolveAge } from "./age";
 
@@ -286,7 +286,11 @@ function watchAuthForPrivateNodes() {
        shared subscriber হিসেবে private cache/sync সামলানো হয়। */
     currentAuthUid = getAuthUser()?.uid || null;
     authUnsub = subscribeAuthUser((user) => {
-      const nextUid = user?.uid || null;
+      const au = getAuthInstance();
+      const authCurrent = au ? au.currentUser : null;
+      // Prevent false logout when auth.currentUser exists but subscriber got null briefly
+      if (!user && authCurrent && authCurrent.uid && currentAuthUid === authCurrent.uid) return;
+      const nextUid = (user && user.uid) ? user.uid : (authCurrent ? authCurrent.uid : null);
       if (nextUid === currentAuthUid && rtdbStarted) return;
       currentAuthUid = nextUid;
       const cleared = !nextUid && clearPrivateCacheOnLogout();
