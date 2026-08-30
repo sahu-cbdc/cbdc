@@ -517,6 +517,15 @@ button.row:hover,a.row:hover{background:var(--card2)}
 .reqc h4{margin:0 0 3px;font-size:.89rem;font-weight:800;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .reqc p{margin:2px 0 0;font-size:.75rem;color:var(--mut)}
 .reqc .a{display:flex;gap:6px;flex-wrap:wrap;margin-top:11px}
+.home-notices{display:grid;gap:10px;margin-bottom:12px}
+.home-notice{padding:14px 15px;border:1px solid #f0d59a;border-left:4px solid #b3760a;border-radius:var(--r2);
+  background:#fff9ea;color:#4d3a12;box-shadow:var(--sh)}
+.home-notice h3{margin:0 0 4px;font-size:.9rem;line-height:1.4;color:#8a5c07}
+.home-notice p{margin:0;font-size:.79rem;line-height:1.65;color:inherit;white-space:pre-wrap}
+.home-live-grid{display:grid;gap:10px;margin-bottom:12px}
+.home-live-card{margin-bottom:0}
+[data-theme="dark"] .home-notice{background:#2a2109;border-color:#67501b;color:#ead7a5}
+[data-theme="dark"] .home-notice h3{color:#f1cb68}
 
 .tl{padding-left:20px;position:relative}
 .tl:before{content:"";position:absolute;left:5px;top:6px;bottom:6px;width:2px;background:var(--line)}
@@ -2160,6 +2169,72 @@ function initPage() {
   const dStatus=()=>STORE.donor.status;
   const restLeft=()=>STORE.donor.lastDonation?Math.max(0,90-dayDiff(STORE.donor.lastDonation)):0;
   const myReqs=()=>DB().incoming.filter(r=>r.group===STORE.donor.bloodGroup);
+  function sharedPublicState(){
+    try{return window.CBDCShared?CBDCShared.load():{requests:[],notices:[]}}catch(e){return {requests:[],notices:[]}}
+  }
+  /* Home screen notice/live board reuse the main website's existing shared RTDB
+     data. No duplicate DB node or parallel system is introduced here. */
+  function homeWebsiteNotices(){
+    return (sharedPublicState().notices||[]).filter(n=>noticeVisibleTo(n,"website"));
+  }
+  function homeRequestExpired(r){
+    const t=r&&(r.expiresAt||r.neededBy);
+    if(!t)return false;
+    let d;
+    if(t&&t.toDate)d=t.toDate();
+    else if(t&&t.seconds)d=new Date(t.seconds*1000);
+    else d=new Date(t);
+    return d.getTime()<=Date.now();
+  }
+  function homeRemainingTimeText(expiresAt){
+    if(!expiresAt)return "";
+    let expTime=0;
+    if(expiresAt&&expiresAt.toDate)expTime=expiresAt.toDate().getTime();
+    else if(expiresAt&&expiresAt.seconds)expTime=expiresAt.seconds*1000;
+    else expTime=new Date(expiresAt).getTime();
+    const diffMs=expTime-Date.now();
+    if(diffMs<=0)return "সময় শেষ";
+    const totalMins=Math.floor(diffMs/60000),hours=Math.floor(totalMins/60),mins=totalMins%60;
+    if(hours>=24){const days=Math.floor(hours/24);return `বাকি ${bn(days)} দিন`;}
+    if(hours>0)return `বাকি ${bn(hours)} ঘণ্টা ${mins>0?bn(mins)+" মি.":""}`;
+    return `বাকি ${bn(mins)} মিনিট`;
+  }
+  function homeUrgencyPill(u){
+    const v=String(u||"");
+    if(v.includes("অতিজরুরি"))return ["r","অতিজরুরি"];
+    if(v.includes("আগামী"))return ["g","২৪ ঘণ্টা"];
+    if(v.includes("আজকের"))return ["a","আজকের মধ্যে"];
+    if(v.includes("জরুরি"))return ["a","জরুরি"];
+    return ["r","জরুরি"];
+  }
+  function homeLiveRequests(){
+    return (sharedPublicState().requests||[]).filter(r=>String(r&&r.status||"").trim().toLowerCase()==="approved"&&!homeRequestExpired(r));
+  }
+  function homeWaLink(value){
+    const wa=String(value||"").replace(/\D/g,"");
+    return wa?"https://wa.me/88"+wa.slice(1):"";
+  }
+  function homeEmergencyCard(r){
+    const group=r.bloodGroup||r.group||"";
+    const patient=r.patientName||r.patient||"";
+    const hospital=r.hospitalName||r.hospital||"";
+    const area=r.hospitalAddress||r.area||r.address||"";
+    const phone=r.phone||"";
+    const requester=r.requesterName||r.requester||"";
+    const time=r.createdAt?new Date(r.createdAt).toLocaleString("bn-BD",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"";
+    const remaining=homeRemainingTimeText(r.expiresAt||r.neededBy);
+    const [pillClass,pillText]=homeUrgencyPill(r.urgency||"");
+    const wa=homeWaLink(r.whatsapp||r.phone);
+    return `<div class="reqc mt home-live-card">
+      <h4>${esc(patient)} <span class="bg">${esc(group)}</span>
+        <span class="pill ${pillClass}">${esc(remaining||pillText)}</span></h4>
+      ${time?`<p>${ICON.clock(13)} ${esc(time)}</p>`:""}
+      <p>${ICON.hospital(13)} ${esc(hospital)}</p>
+      <p>${ICON.pin(13)} ${esc(area)} · ${bn(r.bags||1)} ব্যাগ</p>
+      <p>${ICON.phone(13)} ${esc(requester)}${phone?` — ${esc(phone)}`:""}</p>
+      <div class="a">${phone?`<a class="btn sm" href="tel:${esc(phone)}">${ICON.phone(14)} কল</a>`:""}
+        ${wa?`<a class="btn gh sm" href="${wa}" target="_blank" rel="noopener">${ICON.chat(14)} WhatsApp</a>`:""}</div></div>`;
+  }
   const unread=()=>effectiveNotifs().filter(n=>!n.read).length;   /* RTDB-backed per-user read state plus legacy event notices */
   const donorPill=()=>{
     if(!isDonor())return "";
@@ -2255,12 +2330,11 @@ function initPage() {
   function rHome(){
     const a=STORE.account,d=STORE.donor,don=DB().donations,inc=myReqs();
     /* Only admin-verified donation events count. donors/{id}.totalDonations is
-       the event count (1 event = 1 life); totalBags is the separate bag total.
-       User-side ok flags never drive statistics. */
+       the approved event count, so both "মোট রক্তদান" and "জীবন বাঁচিয়েছেন"
+       show the same number (1 event = 1 life). totalBags stays separate where
+       it is shown elsewhere. User-side ok flags never drive statistics. */
     const myDonationEvents=isDonor()&&dStatus()==="approved"
       ?Math.max(0,Number(STORE.donor.totalDonations ?? STORE.donor.donations ?? 0)):0;
-    const myDonationBags=isDonor()&&dStatus()==="approved"
-      ?Math.max(0,Number(STORE.donor.totalBags??0)):0;
     const hr=new Date().getHours();
     const greet=hr<12?"শুভ সকাল":hr<17?"শুভ দুপুর":hr<20?"শুভ সন্ধ্যা":"শুভ রাত্রি";
   
@@ -2290,8 +2364,8 @@ function initPage() {
   
     const nx=d.lastDonation?addD(d.lastDonation,90):null;
     const stats=isDonor()?`<div class="stats">
+      <div class="stat"><b>${bn(myDonationEvents)}</b><span>মোট রক্তদান</span></div>
       <div class="stat"><b style="color:var(--red)">${bn(myDonationEvents)}</b><span>জীবন বাঁচিয়েছেন</span></div>
-      <div class="stat"><b>${bn(myDonationBags)}</b><span>মোট ব্যাগ</span></div>
       <div class="stat"><b style="font-size:.9rem;padding:5px 0">${restLeft()?dS(nx):"এখনই"}</b><span>পরবর্তী রক্তদান</span></div>
       <div class="stat"><b>${bn(DB().mine.length)}</b><span>আমার আবেদন</span></div></div>`:"";
   
@@ -2305,6 +2379,13 @@ function initPage() {
         <p class="mut" style="margin-top:8px">${lf?tp(`${dL(nx)} তারিখে আবার রক্ত দিতে পারবেন।`,`You can donate again on ${dL(nx)}.`)
           :tp(`সর্বশেষ রক্তদানের পর ${bn(dd)} দিন পার হয়েছে।`,`${dd} days since your last donation.`)}</p></div>`;
     }
+    const websiteNotices=homeWebsiteNotices();
+    const liveBoardRequests=homeLiveRequests();
+    const noticeBlock=(websiteNotices.length?`<div class="sec-t">নোটিশ</div>
+      <div class="home-notices">${websiteNotices.map(n=>`<article class="home-notice">
+        <h3>${esc(n.title||"")}</h3><p>${esc(n.body||"")}</p></article>`).join("")}</div>`:"");
+    const liveBoardBlock=(liveBoardRequests.length?`<div class="sec-t">লাইভ সহায়তা বোর্ড</div>
+      <div class="home-live-grid">${liveBoardRequests.map(homeEmergencyCard).join("")}</div>`:"");
   
     const acts=DB().activity.slice(0,4);
     const actHTML=acts.length?`<div class="tl">${acts.map(x=>`<div class="tli ${x.type==="security"?"b":x.type==="donor"?"":"r"}">
@@ -2316,6 +2397,7 @@ function initPage() {
       <h2 class="ptitle">${a.name?`${greet}, ${esc(a.name.split(" ")[0])}`:greet}
         <small>${now().toLocaleDateString(LOC(),{weekday:"long",day:"numeric",month:"long"})}</small></h2>
       ${statusCard}${alert}${stats}${ready}
+      ${noticeBlock}
       <div class="card pad0">
         <div style="padding:13px 15px 4px"><b style="font-size:.88rem">দ্রুত কাজ</b></div>
         <button class="row" data-nav="find"><span class="ic">${ICON.search(19)}</span>
@@ -2325,6 +2407,7 @@ function initPage() {
         ${isDonor()?`<button class="row" data-act="adddon"><span class="ic">${ICON.drop(19)}</span>
           <span class="tx"><b>রক্তদান যোগ করুন</b><small>নতুন রক্তদানের রেকর্ড</small></span><span class="rt">${ICON.right(17)}</span></button>`:""}
       </div>
+      ${liveBoardBlock}
       <div class="card pad0">
         <div style="display:flex;align-items:center;padding:13px 15px 4px">
           <b style="font-size:.88rem;flex:1">সাম্প্রতিক কার্যক্রম</b>
@@ -5695,6 +5778,12 @@ function initPage() {
      বুটে খালি cache দেখে বারবার স্বাগতম ফর্ম দেখানো বন্ধ। */
   document.addEventListener("keydown",e=>{if(e.key==="Escape"){
     document.querySelector(".ov")?.click();}});
+  /* Home screen-এ website notice / live assistance board-এর active timers
+     (remaining time + expiry hide) main website-এর মতোই পর্যায়ক্রমে refresh. */
+  setInterval(()=>{
+    if(PUBLIC_MODE||CUR!=="home"||document.querySelector(".sheet"))return;
+    try{rHome()}catch(e){}
+  },15*1000);
   /* ২৪ ঘণ্টা পুরোনো notification স্বয়ংক্রিয় cleanup — আলাদা website
      notification storage থেকেই মুছে যায় (RTDB-তে কিছু লেখা হয় না) */
   setInterval(()=>{ try{ pruneExpired(); }catch(e){} }, 30*60*1000);
