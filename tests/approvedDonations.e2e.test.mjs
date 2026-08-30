@@ -418,7 +418,7 @@ test("12. Security: non-admin cannot access the section or perform edit/delete",
   assert.match(donIdRule[".write"], /role.*admin|moderator/);
 
   const admin = readFileSync(path.join(process.cwd(), "src/pages/Admin.tsx"), "utf8");
-  assert.match(admin, /approved:\{title:"Approved Donations",perm:"donation.manage"\}/);
+  assert.match(admin, /approved:\{title:"অনুমোদিত রক্তদান",perm:"donation.manage"\}/);
   assert.match(admin, /openApprovedDonation\(b\.dataset\.aid\)/);
   assert.match(admin, /editApprovedDonation\(id\)/);
   assert.match(admin, /deleteApprovedDonation\(r\)/);

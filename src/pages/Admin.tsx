@@ -2557,7 +2557,7 @@ function initPage() {
   /* sub-pages: opened from a screen, top bar turns into back + title */
   const SUBS={
     donors:{title:"রক্তদাতা তালিকা",perm:"donor.view"},
-    approved:{title:"Approved Donations",perm:"donation.manage"},
+    approved:{title:"অনুমোদিত রক্তদান",perm:"donation.manage"},
     live:{title:"চলমান আবেদন",perm:"request.view"},
     users:{title:"ব্যবহারকারী",perm:"user.view"},
     team:{title:"ডোনার ব্যবস্থাপনা",perm:"team.view"},
@@ -4226,7 +4226,7 @@ function initPage() {
       </div>`
     +sect("",[
         row("donor.view","donors","drop","রক্তদাতা তালিকা","খুঁজুন, সম্পাদনা করুন, স্থগিত করুন",bn(DB.donors.length)),
-        row("donation.manage","approved","checkC","Approved Donations","অনুমোদিত রক্তদান দেখুন, সম্পাদনা করুন ও মুছুন",bn(DB.donations.length)),
+        row("donation.manage","approved","checkC","অনুমোদিত রক্তদান","অনুমোদিত রক্তদান — দেখুন, সম্পাদনা ও মুছুন",bn(DB.donations.length)),
         row("user.view","users","users","ব্যবহারকারী ও অভিযোগ","অ্যাকাউন্ট ও রিপোর্ট",DB.reports.filter(r=>r.status!=="resolved").length?bn(DB.reports.filter(r=>r.status!=="resolved").length):""),
         row("user.view","inbox","mail","বার্তা","ওয়েবসাইটের যোগাযোগ ফর্ম",unread()?`<span class="tag r">${bn(unread())} নতুন</span>`:""),
         row("team.view","team","users","ডোনার ব্যবস্থাপনা","শুধু Website/Firebase অ্যাকাউন্ট-ওয়ালা ডোনার",bn(accountDonors().length)),
@@ -4274,7 +4274,7 @@ function initPage() {
         row("access.manage","access","key","অ্যাক্সেস ও ভূমিকা","অ্যাডমিন, মডারেটর বা ডোনার ভূমিকা পরিবর্তন",""),
         row("team.view","team","users","ডোনার ব্যবস্থাপনা","শুধু Website/Firebase অ্যাকাউন্ট-ওয়ালা ডোনার",bn(accountDonors().length)),
         row("team.view","donorid","card","ডোনার আইডি ব্যবস্থাপনা","সব ডোনার আইডি — অ্যাকাউন্ট না থাকলেও",bn(DB.donors.length)),
-        row("donation.manage","approved","checkC","Approved Donations","অনুমোদিত রক্তদান — দেখুন, সম্পাদনা, মুছুন",bn(DB.donations.length)),
+        row("donation.manage","approved","checkC","অনুমোদিত রক্তদান","অনুমোদিত রক্তদান — দেখুন, সম্পাদনা ও মুছুন",bn(DB.donations.length)),
         row("gallery.manage","gallery","cam","গ্যালারি","ওয়েবসাইটের গ্যালারিতে ছবি যোগ/মুছুন",bn(DB.gallery.length)),
         row("settings.manage","rules","gear","অনুমোদন ও সেটিংস","কোন কোন কাজে অনুমোদন লাগবে","")])
     +sect("ডেটাবেস",[
@@ -4497,7 +4497,7 @@ function initPage() {
         const stats=donorStatsFromRecords(all);
         d.donations=stats.lives;d.totalDonations=stats.lives;d.totalBags=stats.bags;d.last=stats.last;
       }
-      logAudit("Approved Donations ব্যাকফিল",bn(newRecords.length)+"টি পুরোনো রক্তদান যুক্ত হয়েছে","donation");
+      logAudit("অনুমোদিত রক্তদান ব্যাকফিল",bn(newRecords.length)+"টি পুরোনো রক্তদান যুক্ত হয়েছে","donation");
     }catch(e){console.warn("approved donation backfill:",e&&e.message)}
   }
   /* Approve-এর সময় queue থেকে তৈরি রেকর্ড (proof URL সহ) — shared module */
@@ -4511,7 +4511,7 @@ function initPage() {
       return true;
     });
     const totalBags=DB.donations.reduce((s,r)=>s+Math.max(0,Number(r.bags)||0),0);
-    el.innerHTML=ptitle("Approved Donations","অনুমোদিত রক্তদান — দেখুন, সম্পাদনা করুন ও মুছুন")
+    el.innerHTML=ptitle("অনুমোদিত রক্তদান","অনুমোদিত রক্তদান — দেখুন, সম্পাদনা ও মুছুন")
     +`<div class="astat">
         <button class="g"><b>${bn(DB.donations.length)}</b><span>জীবন বাঁচিয়েছে</span></button>
         <button class="b"><b>${bn(totalBags)}</b><span>মোট ব্যাগ</span></button>
@@ -4539,7 +4539,7 @@ function initPage() {
       const csv=toCSV(list.map(r=>[r.id,r.donorId,r.name,r.group,r.date,r.place,r.bags,r.proof?r.proof:"",r.submittedAt||"",r.approvedAt]),
         ["Donation ID","Donor ID","নাম","গ্রুপ","তারিখ","স্থান","ব্যাগ","প্রমাণ ছবি","Submitted","Approved"]);
       dlFile(`cbdc-approved-donations-${iso(now())}.csv`,csv);
-      logAudit("Approved Donations রপ্তানি","CSV","donation");toast("ফাইল নামছে","ok");
+      logAudit("অনুমোদিত রক্তদান রপ্তানি","CSV","donation");toast("ফাইল নামছে","ok");
     });
     el.querySelectorAll("[data-aid]").forEach(b=>b.onclick=()=>openApprovedDonation(b.dataset.aid));
   };
