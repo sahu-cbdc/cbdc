@@ -4109,7 +4109,12 @@ function initPage() {
             .forEach(x=>{paths[`queue/${x.id}`]=null;});
         }
       } else if(q.kind==="donation"&&ok){
-        const d=DB.donors.find(x=>x.id===q.donorId||x.name===q.name);
+        /* ownerUid → donorId → নাম ক্রমে মেলানো — শুধু নাম মিললে একই নামের
+           অন্য donor-এর পরিসংখ্যান বেড়ে যেতে পারে */
+        const qw=String(q.ownerUid||q.uid||"").trim();
+        const d=DB.donors.find(x=>qw&&String(x.ownerUid||"")===qw)
+          ||DB.donors.find(x=>q.donorId&&x.id===q.donorId)
+          ||DB.donors.find(x=>x.name===q.name);
         if(d){
           /* One approved donation event = one life. Bag quantity is kept as a
              separate statistic (`totalBags`), never used for lives saved. */
@@ -4180,20 +4185,16 @@ function initPage() {
           markGroupChangeStatus(owner,"rejected",note,paths);
         }
         if(q.kind==="donation"&&owner){
-          /* বাতিল হওয়া রক্তদান হারিয়ে যায় না — donor-এর নিজের রেকর্ডে
-             status:"rejected" (+ঐচ্ছিক কারণ) লেখা হয়, তাই ডোনার প্যানেলের
-             detail page-এ status/কারণ দেখা যায় এবং সেখান থেকে আবার পাঠানো/
-             মুছে ফেলা যায়। refresh/sync করলেও অবস্থা একই থাকে। */
-          try{
-            const u=await getRow(NODES.users,owner).catch(()=>null);
-            const arr=Array.isArray(u&&u.data&&u.data.donations)?u.data.donations:[];
-            const di=arr.findIndex(x=>x&&String(x.date||"")===String(q.date||"")&&String(x.place||"")===String(q.place||""));
-            if(di>=0){
-              paths[`users/${owner}/data/donations/${di}/status`]="rejected";
-              paths[`users/${owner}/data/donations/${di}/rejectedAt`]=nowIso();
-              if(note)paths[`users/${owner}/data/donations/${di}/rejectNote`]=String(note).slice(0,200);
-            }
-          }catch(e){ console.warn("donation reject write-back:",e&&e.message); }
+          /* বাতিল হওয়া রক্তদান হারিয়ে যায় না — donor-এর donationNotes-এ
+             stable verKey দিয়ে status:"rejected" (+ঐচ্ছিক কারণ) লেখা হয়।
+             array-index নয়, key-ভিত্তিক — লেখার আগে donor রেকর্ড সরালেও
+             ভুল রেকর্ডে লেখা হয় না। ডোনার প্যানেল detail page-এ status/কারণ
+             দেখা যায়, সেখান থেকেই আবার পাঠানো/মুছে ফেলা যায়। */
+          const vkey=donationVerKey(q.date,q.place);
+          if(vkey){
+            paths[`users/${owner}/data/donationNotes/${vkey}`]={status:"rejected",
+              note:String(note||"").slice(0,200),at:nowIso()};
+          }
         }
         if(q.kind==="donor"&&owner){
           paths[`users/${owner}/donorStatus`]="rejected";

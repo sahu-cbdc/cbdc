@@ -419,3 +419,12 @@ VITE_IMGBB_API_KEY=...   # ImgBB fallback key (build-time)
   ব্র্যান্ড করা (কপি-পেস্ট করার মতো template HTML সহ)।
 - `docs/GOOGLE_LOGIN_BRANDING.md` — Google "Choose an account" স্ক্রিনে অ্যাপের নাম
   **Chawkbazar Blood Donor's Club** ও অফিশিয়াল লোগো দেখানোর ধাপ।
+
+## Security rules — সাম্প্রতিক alignment (bug-fix release)
+
+- `accounts/$id` — লিখতে পারে: admin (সম্পূর্ণ) + row-এর নিজের মালিক (`uid === auth.uid`, create/update/delete)। ডোনার প্যানেলের strict shared-commit save এখন rules-এর সাথে সাংঘর্ষিক নয়।
+- `users/$uid/data` — owner **বা যেকোনো staff** (admins row) লিখতে পারে; moderator-এর approve/reject write-back (data/mine, data/donationNotes) ব্যর্থ হয় না।
+- `donors/$id` — owner পরিসংখ্যান **কমাতে** পারে: `donations` ও `totalDonations` ঠিক ১ কমে, `totalBags` বর্তমান মানের মধ্যে, `lastDonationDate` অপরিবর্তিত — শুধুমাত্র নিজের যাচাইকৃত রেকর্ড মুছে ফেলার সময়। Identity ফিল্ড (id/donorId/uid/ownerUid/verified/suspended/status/group/bloodGroup) equality-locked।
+- `loginIndex` (নতুন) — `loginIndex/username|phone/<key> = <account email>`; read public (লগইনের আগে username/phone → email নির্ণয়), write claim-once (প্রথম email-ই পায়); overwrite/release শুধু দাবিকারী অ্যাকাউন্ট (auth.token.email) বা admin। একই username/phone-এ দ্বিতীয় অ্যাকাউন্ট atomic-ভাবে আটকায়।
+- `donations/$id` — owner **delete-only** (নিজের `ownerUid`-এর row), admin/moderator আগের মতো।
+- `users/{uid}/data/donationNotes/{verKey}` — Admin/Moderator রক্তদান বাতিলের status/কারণ এখানে লেখে (stable key — race-safe); ডোনার প্যানেল শুধু পড়ে।

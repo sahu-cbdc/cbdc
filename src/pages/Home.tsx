@@ -4924,6 +4924,18 @@ function initPage() {
         if(!fbReady) return null;
         const q=String(identifier).trim().toLowerCase();
         try{
+          /* প্রথমে loginIndex — পাবলিক claim-once সূচি (লগইনের আগেই পড়া যায়)।
+             পুরোনো/অনুপস্থিত সূচি হলে আগের users query fallback কাজ করে। */
+          const {lookupLoginKey}=await import("../lib/identity");
+          if(!q.includes("@")){
+            const byIndex=await lookupLoginKey("username",q);
+            if(byIndex&&String(byIndex).includes("@")) return String(byIndex).toLowerCase();
+            const dq=digits(q);
+            if(/^[0-9]{11}$/.test(dq)){
+              const byPhoneIdx=await lookupLoginKey("phone",dq);
+              if(byPhoneIdx&&String(byPhoneIdx).includes("@")) return String(byPhoneIdx).toLowerCase();
+            }
+          }
           const byName = await findBy(NODES.users, "username", q);
           if(byName && byName.email) return String(byName.email).toLowerCase();
           const byPhone = await findBy(NODES.users, "phone", digits(q));
@@ -5076,6 +5088,13 @@ function initPage() {
           /* পুরোনো members-এও মোবাইল/ইউজারনেম থাকতে পারে (users-এ এখনো না আসলে) */
           if(!dupPhone){ const m=await findBy(NODES.members, "phone", digits(o.phone)); if(m) dupPhone=m; }
           if(!dupUser){ const m=await findBy(NODES.members, "username", o.username); if(m) dupUser=m; }
+          /* loginIndex — সূচি অনুযায়ীও username কারো দাবিকৃত কি না (atomic
+             claim-once; unauthenticated read-ও rules-এ অনুমোদিত) */
+          if(!dupUser){
+            const {lookupLoginKey}=await import("../lib/identity");
+            const owner=await lookupLoginKey("username",o.username);
+            if(owner) dupUser={username:o.username,uid:owner};
+          }
         }catch(e){ console.warn("duplicate check:", e && e.message); }
         if(dupEmail && !dupIsSelf(dupEmail)){ message.className="hidden"; message.textContent=""; setFieldError($("#suEmail"), "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।"); return; }
         if(dupPhone && !dupIsSelf(dupPhone)){ message.className="hidden"; message.textContent=""; setFieldError($("#suPhone"), "এই মোবাইল নম্বর দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে।"); return; }

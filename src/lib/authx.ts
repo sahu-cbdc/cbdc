@@ -45,6 +45,7 @@ import {
   confirmPasswordReset,
   type ActionCodeSettings,
 } from "firebase/auth";
+import { claimLoginEntries } from "./identity";
 import { NODES } from "./firebase";
 import { getRow, updateRow, setRow, findBy, nowIso, probeRow, type Row } from "./rtdb";
 import { isValidDob, toEnglishDigits } from "./age";
@@ -655,6 +656,13 @@ export async function ensureUserProfile(
   if (!existing.donorStatus && bloodGroup && !base.donorStatus) base.donorStatus = "pending";
   /* ইতিমধ্যে থাকা donorId কখনো পরিবর্তন/তৈরি করা হয় না — approval-এর সময় Admin নিজে সেট করে। */
   await updateRow(NODES.users, user.uid, base);
+  /* loginIndex — username/phone দিয়ে লগইনের claim-once সূচি। fail-open:
+     সূচি অনুপলব্ধ হলে লগইন/প্রোফাইল কোনোটিই আটকায় না। */
+  try {
+    await claimLoginEntries(base.email, username, phone);
+  } catch (e) {
+    console.warn("loginIndex claim:", (e as Error)?.message);
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════

@@ -227,6 +227,8 @@ export type SeenState = {
   lastDonation?: string;
   /** রক্তের গ্রুপ পরিবর্তনের অনুরোধের সর্বশেষ দেখা status (pending/approved/rejected) */
   groupChangeStatus?: string;
+  /** যে donationNotes verKey-গুলোর "বাতিল" notification ইতিমধ্যে পাঠানো হয়েছে */
+  donRej?: Record<string, number>;
 };
 
 export function loadSeen(): SeenState {
@@ -242,6 +244,7 @@ export function loadSeen(): SeenState {
   }
   if (!s.reqStatus || typeof s.reqStatus !== "object") s.reqStatus = {};
   if (!s.incoming || typeof s.incoming !== "object") s.incoming = {};
+  if (!s.donRej || typeof s.donRej !== "object") s.donRej = {};
   return s;
 }
 

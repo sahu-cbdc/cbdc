@@ -13,7 +13,7 @@
       ],
       "$id": {
         ".write": "auth != null && (root.child('admins').child(auth.uid).child('role').val() === 'admin' || root.child('admins').child(auth.uid).child('role').val() === 'moderator' || (data.exists() && data.child('ownerUid').val() === auth.uid && (!newData.exists() || newData.child('ownerUid').val() === auth.uid)))",
-        ".validate": "!newData.exists() || root.child('admins').child(auth.uid).child('role').val() === 'admin' || root.child('admins').child(auth.uid).child('role').val() === 'moderator' || (data.exists() && newData.child('id').val() === data.child('id').val() && newData.child('donorId').val() === data.child('donorId').val() && newData.child('uid').val() === data.child('uid').val() && newData.child('ownerUid').val() === data.child('ownerUid').val() && newData.child('verified').val() === data.child('verified').val() && newData.child('suspended').val() === data.child('suspended').val() && newData.child('donations').val() === data.child('donations').val() && newData.child('totalDonations').val() === data.child('totalDonations').val() && newData.child('totalBags').val() === data.child('totalBags').val() && newData.child('status').val() === data.child('status').val() && newData.child('bloodGroup').val() === data.child('bloodGroup').val() && newData.child('group').val() === data.child('group').val() && newData.child('lastDonationDate').val() === data.child('lastDonationDate').val())"
+        ".validate": "!newData.exists() || root.child('admins').child(auth.uid).child('role').val() === 'admin' || root.child('admins').child(auth.uid).child('role').val() === 'moderator' || (data.exists() && newData.child('id').val() === data.child('id').val() && newData.child('donorId').val() === data.child('donorId').val() && newData.child('uid').val() === data.child('uid').val() && newData.child('ownerUid').val() === data.child('ownerUid').val() && newData.child('verified').val() === data.child('verified').val() && newData.child('suspended').val() === data.child('suspended').val() && newData.child('status').val() === data.child('status').val() && newData.child('bloodGroup').val() === data.child('bloodGroup').val() && newData.child('group').val() === data.child('group').val() && ((newData.child('donations').val() === data.child('donations').val() && newData.child('totalDonations').val() === data.child('totalDonations').val() && newData.child('totalBags').val() === data.child('totalBags').val() && newData.child('lastDonationDate').val() === data.child('lastDonationDate').val()) || (newData.child('donations').val() === data.child('donations').val() - 1 && newData.child('totalDonations').val() === data.child('totalDonations').val() - 1 && newData.child('totalBags').val() >= 0 && newData.child('totalBags').val() <= data.child('totalBags').val() && newData.child('lastDonationDate').val() === data.child('lastDonationDate').val()))))"
       }
     },
     "_meta": {
@@ -79,7 +79,7 @@
         },
         "data": {
           ".read": "auth != null && ($uid === auth.uid || root.child('admins').child(auth.uid).exists())",
-          ".write": "auth != null && ($uid === auth.uid || root.child('admins').child(auth.uid).child('role').val() === 'admin')",
+          ".write": "auth != null && ($uid === auth.uid || root.child('admins').child(auth.uid).exists())",
           "donations": {
             ".write": "root.child('admins').child(auth.uid).child('role').val() === 'admin' || root.child('admins').child(auth.uid).child('role').val() === 'moderator'"
           },
@@ -155,7 +155,7 @@
       ],
       "$id": {
         ".read": "auth != null && root.child('admins').child(auth.uid).child('role').val() === 'admin'",
-        ".write": "auth != null && root.child('admins').child(auth.uid).child('role').val() === 'admin'"
+        ".write": "auth != null && (root.child('admins').child(auth.uid).child('role').val() === 'admin' || (!newData.exists() && data.exists() && data.child('uid').val() === auth.uid) || (newData.exists() && newData.child('uid').val() === auth.uid && (!data.exists() || data.child('uid').val() === auth.uid)))"
       }
     },
     "notices": {
@@ -212,6 +212,21 @@
         ".read": "auth != null && (root.child('admins').child(auth.uid).exists() || data.child('ownerUid').val() === auth.uid)",
         ".write": "auth != null && ((root.child('admins').child(auth.uid).exists()) || (!data.exists() && newData.child('ownerUid').val() === auth.uid) || (data.exists() && data.child('ownerUid').val() === auth.uid))",
         ".validate": "!newData.exists() || root.child('admins').child(auth.uid).exists() || newData.child('ownerUid').val() === auth.uid"
+      }
+    },
+    "loginIndex": {
+      ".read": true,
+      "username": {
+        "$key": {
+          ".write": "auth != null && ((newData.isString() && newData.val().contains('@') && (!data.exists() || data.val() === auth.token.email || root.child('admins').child(auth.uid).exists())) || (!newData.exists() && (data.val() === auth.token.email || root.child('admins').child(auth.uid).exists())))",
+          ".validate": "newData.isString() && newData.val().length >= 5 && newData.val().length <= 190 && newData.val().contains('@')"
+        }
+      },
+      "phone": {
+        "$key": {
+          ".write": "auth != null && ((newData.isString() && newData.val().contains('@') && (!data.exists() || data.val() === auth.token.email || root.child('admins').child(auth.uid).exists())) || (!newData.exists() && (data.val() === auth.token.email || root.child('admins').child(auth.uid).exists())))",
+          ".validate": "newData.isString() && newData.val().length >= 5 && newData.val().length <= 190 && newData.val().contains('@')"
+        }
       }
     }
   }
