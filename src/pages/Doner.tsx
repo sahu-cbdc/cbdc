@@ -23,7 +23,7 @@ import {
   requestPasswordReset,
   setOrChangePassword,
 } from "../lib/authx";
-import { getRow, setRow, updateRow, watchRow, watchList, addRow, findBy, listOnce, nowIso, updatePaths, removeRow, incrementField, ensureFieldAtLeast, serverTime, nextDonorId } from "../lib/rtdb";
+import { getRow, setRow, updateRow, watchRow, watchList, addRow, findBy, listOnce, nowIso, updatePaths, removeRow, incrementField, ensureFieldAtLeast, serverTime, nextDonorId, releaseDonorSerial } from "../lib/rtdb";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
@@ -4298,7 +4298,9 @@ function initPage() {
               || (!!accountEmail&&String(x&&x.email||"").trim().toLowerCase()===accountEmail)
               || (!!accountPhone&&String(x&&x.phone||"").replace(/\\s+/g,"")===accountPhone);
             const donors=await listOnce(NODES.donors);
-            donors.filter(x=>sameOwner(x)||String(x&&x.id||"")===String(leftId)).forEach(x=>{if(x.id)paths[NODES.donors+"/"+x.id]=null});
+            donors.filter(x=>sameOwner(x)||String(x&&x.id||"")===String(leftId)).forEach(x=>{
+              if(x.id){ paths[NODES.donors+"/"+x.id]=null; try{ releaseDonorSerial(x.id); }catch(_e){} }
+            });
             const profile=uid?await getRow(NODES.users,uid):null;
             const memberId=String(profile&&profile.donorMemberId||"").trim();
             if(memberId){paths[NODES.members+"/"+memberId]=null;paths[NODES.queue+"/"+memberId]=null;}
@@ -5087,7 +5089,9 @@ function initPage() {
     const donors=await listOnce(NODES.donors);
     /* নতুন record UID/ownerUid দিয়ে মেলে; পুরোনো donor record-এ UID না থাকলে
        একই account-এর সংরক্ষিত email/phone দিয়ে fallback করে মেলানো হয়। */
-    donors.filter(d=>ownerMatches(d) || emailMatches(d) || phoneMatches(d)).forEach(d=>{ if(d.id) paths[`donors/${d.id}`]=null; });
+    donors.filter(d=>ownerMatches(d) || emailMatches(d) || phoneMatches(d)).forEach(d=>{
+      if(d.id){ paths[`donors/${d.id}`]=null; try{ releaseDonorSerial(d.id); }catch(_e){} }
+    });
 
     // donations/{id} — Admin-এর approved donation log-এর এই donor-এর রেকর্ডসমূহ
     /* ownerUid মিললেই মুছে ফেলা হয় (date/place দিয়ে মেলানো রেকর্ডেও ownerUid থাকে) —

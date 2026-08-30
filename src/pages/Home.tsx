@@ -2958,6 +2958,41 @@ function StaticShell() {
                   <div className="form-grid">
                     {" "}
                     <div className="field">
+                      <label className="required" htmlFor="suBloodGroup">
+                        {"রক্তের গ্রুপ"}
+                      </label>
+                      <select id="suBloodGroup" name="bloodGroup" required={true}>
+                        <option value="">
+                          {"রক্তের গ্রুপ নির্বাচন করুন"}
+                        </option>
+                        <option>
+                          {"A+"}
+                        </option>
+                        <option>
+                          {"A-"}
+                        </option>
+                        <option>
+                          {"B+"}
+                        </option>
+                        <option>
+                          {"B-"}
+                        </option>
+                        <option>
+                          {"AB+"}
+                        </option>
+                        <option>
+                          {"AB-"}
+                        </option>
+                        <option>
+                          {"O+"}
+                        </option>
+                        <option>
+                          {"O-"}
+                        </option>
+                      </select>
+                    </div>
+                    {" "}
+                    <div className="field">
                       <label className="required" htmlFor="suGender">
                         {"লিঙ্গ"}
                       </label>
@@ -4519,7 +4554,7 @@ function initPage() {
       /* role অনুযায়ী নিজ নিজ dashboard-এ পাঠানো —
          Doner → Doner Dashboard, Moderator → Moderator Panel, Admin → Admin Panel।
          Admin/Moderator কখনোই সাধারণ Doner dashboard ব্যবহার করে না। */
-      function finishLogin({email, name, role, permissions, photo, uid, phone, dob, gender, area, username, address, photoSource}){
+      function finishLogin({email, name, role, permissions, photo, uid, phone, dob, gender, area, username, address, photoSource, donorId}){
         const r = role || DEFAULT_ROLE;
         const page = panelForRole(r);   // "doner" | "moderator" | "admin"
         if(r === "admin" || r === "moderator"){
@@ -4532,6 +4567,7 @@ function initPage() {
           email, name: name || email, photo: photo || "", role: r, uid: uid || "",
           phone: phone || "", dob: dob || "", gender: gender || "", area: area || "",
           username: username || "", address: address || "",
+          donorId: donorId || "",
           photoSource: photoSource || (photo ? "google" : "none")
         });
         clearSession();
@@ -4635,6 +4671,7 @@ function initPage() {
         localStorage.setItem("cbdcMemberPhoto", profile.photo||"");
         localStorage.setItem("cbdcMemberRole", profile.role||"donor");
         if(profile.username) localStorage.setItem("cbdcMemberUsername", profile.username||"");
+        if(profile.donorId) localStorage.setItem("cbdcMemberDonorId", profile.donorId||"");
         if(profile.uid) localStorage.setItem("cbdcMemberUid", profile.uid);
         try{
           const app=JSON.parse(localStorage.getItem("cbdc.app")||"{}");
@@ -4662,8 +4699,11 @@ function initPage() {
         if(signupLink) signupLink.classList.toggle("hidden", logged);
         if(loginLink){
           if(logged){
-            const nm = localStorage.getItem("cbdcMemberName") || "প্রোফাইল";
-            loginLink.textContent = "ডোনার প্যানেল (" + nm.split(" ")[0] + ")";
+            const permId = localStorage.getItem("cbdcMemberDonorId")
+              || localStorage.getItem("cbdcMemberUsername")
+              || localStorage.getItem("cbdcMemberUid")
+              || "";
+            loginLink.textContent = permId ? ("ডোনার প্যানেল (" + permId + ")") : "ডোনার প্যানেল";
             loginLink.dataset.route = "donorPanel";
             loginLink.title = roleLabel(localStorage.getItem("cbdcMemberRole") || DEFAULT_ROLE);
           } else {
@@ -4710,6 +4750,7 @@ function initPage() {
         if(member.phone) $("#suPhone").value = member.phone;
         if(member.dob) $("#suDob").value = member.dob;
         if(member.gender) $("#suGender").value = member.gender;
+        if(member.bloodGroup) $("#suBloodGroup").value = member.bloodGroup;
         /* জেলা → এলাকা: আগের এলাকা কোন জেলার সেটি ধরে সঠিক তালিকা বসাই */
         if(member.district || member.area){
           const dist = String(member.district || "").trim() || districtOfArea(member.area);
@@ -5055,6 +5096,7 @@ function initPage() {
           username:   {required:true, pattern:/^[a-z0-9._]{3,20}$/i, label:"ইউজার নেইম",
                        message:"ইউজার নেইম ৩–২০ অক্ষরের হতে হবে (শুধু ইংরেজি ছোট হাতের অক্ষর, সংখ্যা, ডট বা আন্ডারস্কোর)"},
           email:      {required:true, email:true, label:"ইমেইল"},
+          bloodGroup: {required:true, label:"রক্তের গ্রুপ"},
           gender:     {required:true, label:"লিঙ্গ"},
           dob:        {required:true, dob:{min:SITE.rules.minAge, max:SITE.rules.maxAge}, label:"জন্ম তারিখ"},
           district:   {required:true, label:"জেলা"},
@@ -5165,6 +5207,7 @@ function initPage() {
             phone: o.phone || "",
             dob: o.dob || "",
             gender: o.gender || "",
+            bloodGroup: o.bloodGroup || "",
             district: String(o.district || "").trim() || districtOfArea(o.area),
             area: o.area || "",
             address: o.address || "",
@@ -5178,7 +5221,8 @@ function initPage() {
             await ensureUserProfile({
               uid, email:o.email, name:o.name, photo:photoURL,
               phone:o.phone, dob:o.dob, gender:o.gender, area:o.area,
-              district:o.district, username:o.username, address:o.address
+              district:o.district, username:o.username, address:o.address,
+              bloodGroup:o.bloodGroup
             }, {provider: isGoogle ? "google" : "password", existing: existingProfile});
           } else {
             /* নতুন Account-এ Donor UID তৈরি হয় না — শুধু account record।
@@ -5298,12 +5342,20 @@ function initPage() {
         try{
           if(!fbReady || !auth) throw Object.assign(new Error("network"),{code:"auth/network-request-failed"});
           const {signInWithEmailAndPassword}=await import("firebase/auth");
-          // ইমেইল না দিলে RTDB `users` থেকে username/phone দিয়ে ইমেইল বের করি
+          // ইমেইল না দিলে RTDB loginIndex থেকে username/phone/donorId দিয়ে ইমেইল বের করি
           let email=String(u).trim().toLowerCase();
           if(!email.includes("@")){
             const found=await resolveEmailByIdentifier(email);
-            if(!found) throw Object.assign(new Error("invalid"),{code:"auth/invalid-credential"});
+            if(!found) throw Object.assign(new Error("not-found"),{code:"auth/user-not-found"});
             email=found;
+          } else {
+            try{
+              const methods=await signInMethodsForEmail(auth, email);
+              if(!methods || !methods.length) throw Object.assign(new Error("not-found"),{code:"auth/user-not-found"});
+            }catch(pre){
+              if(pre && pre.code==="auth/user-not-found") throw pre;
+              console.warn("login precheck:", pre && pre.code, pre && pre.message);
+            }
           }
           const cred=await signInWithEmailAndPassword(auth,email,password);
           /* Google → Email/Password account-এ যুক্ত করা:
@@ -5324,7 +5376,7 @@ function initPage() {
           const profile = await loadUserProfile(cred.user.uid);
           const resolved=await resolveRole({uid:cred.user.uid, email, name: (profile&&profile.name) || cred.user.displayName || email});
           const photo = photoForUid(profile, cred.user.photoURL || "");
-          if(cred.user && cred.user.uid){
+          if(cred.user && cred.user.uid && !isProfileComplete(profile)){
             try{
               await ensureUserProfile({
                 uid:cred.user.uid,
@@ -5353,21 +5405,20 @@ function initPage() {
             gender: profile&&profile.gender,
             area: profile&&profile.area,
             username: profile&&profile.username,
-            address: profile&&profile.address
+            address: profile&&profile.address,
+            donorId: profile&&profile.donorId
           });
         }catch(err){
           if(_btn){ _btn.disabled=false; _btn.innerHTML=_orig; }
           console.warn("login failed:",err&&err.code,err&&err.message);
           const code=(err&&err.code)||"";
-          let msg=authErrorMessage(err,{fallback:"লগইন করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।"});
-          /* Google দিয়ে তৈরি অ্যাকাউন্টে পাসওয়ার্ড এখনো সেট হয়নি — সঠিক পদক্ষেপ জানাই */
-          if((code==="auth/invalid-credential"||code==="auth/invalid-login-credentials"||code==="auth/user-not-found") && email){
-            try{
-              const methods=await signInMethodsForEmail(auth, email);
-              if(methods.includes("google.com") && !methods.includes("password")){
-                msg="এই ইমেইল দিয়ে Google অ্যাকাউন্ট তৈরি হয়েছে। 'Google দিয়ে লগইন করুন' দিয়ে প্রবেশ করুন; প্যানেলে 'পাসওয়ার্ড পরিবর্তন' থেকে পাসওয়ার্ড সেট করলে ইমেইল/পাসওয়ার্ড লগইনও চালু হবে।";
-              }
-            }catch(_fe){}
+          let msg="লগইন করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।";
+          if(code==="auth/user-not-found"){
+            msg="এই তথ্য দিয়ে কোনো অ্যাকাউন্ট পাওয়া যায়নি।";
+          } else if(code==="auth/invalid-credential"||code==="auth/invalid-login-credentials"||code==="auth/wrong-password"||code==="auth/too-many-requests"){
+            msg="অনেকবার ভুল চেষ্টা হয়েছে। কিছুক্ষণ পর আবার চেষ্টা করুন অথবা পাসওয়ার্ড রিসেট করুন।";
+          } else if(code==="auth/network-request-failed"){
+            msg="ইন্টারনেট সংযোগ নেই। সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।";
           }
           showMessage($("#loginMessage"),msg,"error");
         }

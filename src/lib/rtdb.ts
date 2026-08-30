@@ -96,37 +96,126 @@ export async function probeRow(
 
 /** Donor UID-এর serial counter node — `_meta/donorCounter/<year>`-এ ধারাবাহিক নম্বর। */
 export const DONOR_COUNTER_NODE = "_meta/donorCounter";
+/** Global serial claim map — `_meta/donorSerials/<0001>` = reserved while a donor holds that serial. */
+export const DONOR_SERIALS_NODE = "_meta/donorSerials";
 
-/** RTDB-তে ফরম্যাট করা Donor UID: CBDC-<year>-<0001> */
+const DONOR_ID_RE = /^CBDC-(\d{4})-(\d{4})$/i;
+
+/** RTDB-তে ফরম্যাট করা Donor UID: CBDC-<year>-<0001> — serial সবসময় ৪ অঙ্ক। */
 export function formatDonorId(seq: number | string, year: number = new Date().getFullYear()): string {
-  return `CBDC-${year}-${String(Number(seq) || 0).padStart(4, "0")}`;
+  const n = Math.max(0, Math.floor(Number(seq) || 0));
+  return `CBDC-${year}-${String(n).padStart(4, "0")}`;
+}
+
+/** CBDC-YYYY-XXXX থেকে global serial (XXXX)। malformed হলে 0। */
+export function parseDonorSerial(id: unknown): number {
+  const m = String(id || "").trim().match(DONOR_ID_RE);
+  if (!m) return 0;
+  const n = Number(m[2]);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function collectSerialsFromDonors(rows: Row[]): { used: Set<number>; malformed: string[]; duplicates: string[] } {
+  const used = new Set<number>();
+  const seen = new Map<number, string>();
+  const malformed: string[] = [];
+  const duplicates: string[] = [];
+  for (const r of rows || []) {
+    const raw = String(r.donorId || r.id || "").trim();
+    if (!raw) continue;
+    const serial = parseDonorSerial(raw);
+    if (!serial) {
+      malformed.push(raw);
+      continue;
+    }
+    if (seen.has(serial) && seen.get(serial) !== raw) duplicates.push(raw);
+    seen.set(serial, raw);
+    used.add(serial);
+  }
+  return { used, malformed, duplicates };
+}
+
+/** Existing ID audit — কখনোই existing ID বদলায় না; শুধু console report। */
+export async function auditDonorIds(): Promise<{ used: number[]; gaps: number[]; malformed: string[]; duplicates: string[] }> {
+  const rows = await listOnce("donors");
+  const { used, malformed, duplicates } = collectSerialsFromDonors(rows);
+  const nums = [...used].sort((a, b) => a - b);
+  const max = nums.length ? nums[nums.length - 1] : 0;
+  const gaps: number[] = [];
+  for (let i = 1; i <= max; i++) if (!used.has(i)) gaps.push(i);
+  try {
+    console.info("[donor-id audit]", {
+      count: nums.length,
+      max,
+      gaps: gaps.slice(0, 50),
+      gapCount: gaps.length,
+      malformed,
+      duplicates,
+    });
+  } catch { /* ignore */ }
+  return { used: nums, gaps, malformed, duplicates };
+}
+
+function smallestFreeSerial(used: Set<number>): number {
+  const nums = [...used].sort((a, b) => a - b);
+  const max = nums.length ? nums[nums.length - 1] : 0;
+  for (let i = 1; i <= max; i++) if (!used.has(i)) return i;
+  return max + 1;
 }
 
 /**
- * পরবর্তী ধারাবাহিক Donor UID তৈরি করে (যেমন CBDC-2026-0001, CBDC-2026-0002 …)।
- * Realtime Database-এ atomic transaction (`_meta/donorCounter/<year>`) ব্যবহার করা হয়,
- * তাই একসাথে অনেকগুলো Account তৈরি হলেও কোনো নম্বর duplicate হয় না।
- * কোথাও random/number-from-uid ব্যবহার হয় না।
+ * পরবর্তী Donor UID: CBDC-<currentYear>-<global 4-digit serial>।
+ * Serial বছর বদলালে reset হয় না; delete-এর gap আগে পূরণ হয় (সবচেয়ে ছোট missing);
+ * atomic claim (`_meta/donorSerials/<serial>`) তাই একসাথে registration-এ duplicate হয় না।
+ * Existing donor ID কখনো পরিবর্তন করা হয় না।
  */
 export async function nextDonorId(year: number = new Date().getFullYear()): Promise<string> {
   const d = db();
   if (!d) throw new Error("Realtime Database সংযোগ নেই।");
-  const counterRef = ref(d, `${DONOR_COUNTER_NODE}/${year}`);
-  let seq = 1;
-  try {
-    const res = await runTransaction(counterRef, (current) => {
-      const n = Number(current ?? 0) || 0;
-      return n + 1;
-    }, { applyLocally: false });
-    const val = res?.snapshot?.val();
-    seq = Math.max(1, Number(val ?? 1) || 1);
-  } catch (e) {
-    console.warn("nextDonorId transaction failed:", (e as Error)?.message);
-    // Transaction ব্যর্থ হলে আমরা কখনোই random UID তৈরি করি না —
-    // কারণ সিরিয়াল ভেঙে যাবে। স্পষ্ট error দিয়ে ফিরে আসি।
-    throw new Error("Donor UID তৈরি করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।");
+  await auditDonorIds().catch((e) => console.warn("donor-id audit:", (e as Error)?.message));
+
+  for (let attempt = 0; attempt < 24; attempt++) {
+    const [donors, claimsSnap] = await Promise.all([
+      listOnce("donors"),
+      get(ref(d, DONOR_SERIALS_NODE)).catch(() => null),
+    ]);
+    const { used } = collectSerialsFromDonors(donors);
+    const claims = claimsSnap && typeof claimsSnap.val === "function" ? claimsSnap.val() : null;
+    if (claims && typeof claims === "object") {
+      for (const k of Object.keys(claims)) {
+        const n = Number(k);
+        if (Number.isFinite(n) && n > 0 && claims[k]) used.add(n);
+      }
+    }
+    const seq = smallestFreeSerial(used);
+    const key = String(seq).padStart(4, "0");
+    const claimRef = ref(d, `${DONOR_SERIALS_NODE}/${key}`);
+    try {
+      const res = await runTransaction(claimRef, (current) => {
+        if (current) return undefined; // abort — already claimed
+        return { at: nowIso(), year };
+      }, { applyLocally: false });
+      if (!res?.committed) continue;
+      return formatDonorId(seq, year);
+    } catch (e) {
+      console.warn("nextDonorId claim failed:", (e as Error)?.message);
+      continue;
+    }
   }
-  return formatDonorId(seq, year);
+  throw new Error("Donor UID তৈরি করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।");
+}
+
+/** Donor delete হলে serial আবার ব্যবহারযোগ্য। Existing অন্য ID স্পর্শ করে না। */
+export async function releaseDonorSerial(id: unknown): Promise<void> {
+  const serial = parseDonorSerial(id);
+  if (!serial) return;
+  const d = db();
+  if (!d) return;
+  try {
+    await remove(ref(d, `${DONOR_SERIALS_NODE}/${String(serial).padStart(4, "0")}`));
+  } catch (e) {
+    console.warn("releaseDonorSerial:", (e as Error)?.message);
+  }
 }
 
 /** RTDB snapshot map → `{id, ...value}` array (নাল-নিরাপদ)। */
