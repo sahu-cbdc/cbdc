@@ -5378,6 +5378,8 @@ function initPage() {
           const photo = photoForUid(profile, cred.user.photoURL || "");
           if(cred.user && cred.user.uid && !isProfileComplete(profile)){
             try{
+              const ensureOpts: any = { provider: "password" };
+              if (profile) ensureOpts.existing = profile;
               await ensureUserProfile({
                 uid:cred.user.uid,
                 email:(cred.user.email||email),
@@ -5388,7 +5390,7 @@ function initPage() {
                 gender: profile&&profile.gender,
                 area: profile&&profile.area,
                 username: profile&&profile.username
-              }, {provider:"password", existing: profile || null});
+              }, ensureOpts);
             }catch(e){ console.warn("profile upsert:", e&&e.message); }
           }
           if(_btn){ _btn.disabled=false; _btn.innerHTML=_orig; }
@@ -5415,8 +5417,12 @@ function initPage() {
           let msg="লগইন করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।";
           if(code==="auth/user-not-found"){
             msg="এই তথ্য দিয়ে কোনো অ্যাকাউন্ট পাওয়া যায়নি।";
-          } else if(code==="auth/invalid-credential"||code==="auth/invalid-login-credentials"||code==="auth/wrong-password"||code==="auth/too-many-requests"){
-            msg="অনেকবার ভুল চেষ্টা হয়েছে। কিছুক্ষণ পর আবার চেষ্টা করুন অথবা পাসওয়ার্ড রিসেট করুন।";
+          } else if(code==="auth/wrong-password"||code==="auth/invalid-login-credentials"){
+            msg="পাসওয়ার্ড ভুল। পাসওয়ার্ড আবার যাচাই করে পুনরায় চেষ্টা করুন।";
+          } else if(code==="auth/invalid-credential"){
+            msg="ইমেইল / পাসওয়ার্ড সঠিক নয়। পুনরায় চেষ্টা করুন অথবা পাসওয়ার্ড রিসেট করুন।";
+          } else if(code==="auth/too-many-requests"){
+            msg="অনেকবার ভুল চেষ্টা হয়েছে। কিছুক্ষণ পর আবার চেষ্টা করুন অথবা পাসওয়ার্ড রিসেট করুন।";
           } else if(code==="auth/network-request-failed"){
             msg="ইন্টারনেট সংযোগ নেই। সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।";
           }
