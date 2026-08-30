@@ -164,6 +164,7 @@ svg{display:block;flex:none}
 .scr>*:first-child{margin-top:0}
 .scr>h2,.ptitle{margin:0 0 12px;padding:0 2px;font-size:1.1rem;font-weight:800;line-height:1.3}
 .ptitle small{display:block;margin-top:3px;font-size:.78rem;font-weight:600;color:var(--mut)}
+.ptitle + .sec-t{margin-top:0}
 .sec-t{margin:20px 0 8px;padding:0 2px;font-size:.72rem;font-weight:800;color:var(--mut);letter-spacing:.4px}
 .scr>.sec-t:first-child{margin-top:0}
 
