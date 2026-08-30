@@ -49,6 +49,7 @@ import {
   subscribe as notifSubscribe,
   loadSeen,
   saveSeen,
+  resetNotificationContext,
   sanitizeKey,
 } from "../lib/notify";
 
@@ -1968,7 +1969,16 @@ function initPage() {
   function syncNotifsFromData(){
     const uid=String(STORE.account.uid||"").trim();
     if(!uid)return;
-    const seen=loadSeen();
+    /* Notification/seen state is browser-wide. If a different Firebase account
+       is now signed in, the previous account's pending/rejected tracking must
+       not create a false "donor application rejected" notification for the new
+       account. Reset the context once and start a fresh baseline. */
+    let seen=loadSeen();
+    const seenUid=String(seen.uid||"").trim();
+    if(seenUid!==uid){
+      resetNotificationContext(uid);
+      seen=loadSeen();
+    }
     const d=STORE.donor;
     /* Published RTDB notices are delivered without removing the legacy notification system. */
     RAW.notices.forEach(n=>{
@@ -1977,6 +1987,7 @@ function initPage() {
     });
     /* প্রথম সিঙ্ক — শুধু baseline ধরি, পুরোনো অবস্থার notification বানাই না */
     if(!seen.booted){
+      seen.uid=uid;
       RAW.mine.forEach(m=>{ if(m&&m.id&&m.status)seen.reqStatus[m.id]=m.status; });
       DB().incoming.forEach(r=>{ if(r&&r.id)seen.incoming[r.id]=1; });
       seen.donorStatus=d.status||"";
@@ -2029,7 +2040,11 @@ function initPage() {
     if(seen.donorStatus==="pending"&&ds==="approved")
       addNotif({id:"donor-appr",title:"রক্তদাতা আবেদন অনুমোদিত",
         body:"আপনার ডোনার আবেদন অনুমোদিত হয়েছে। ডোনার ID: "+(d.donorId||""),type:"approval",ref:d.donorId,go:"req:become"});
-    else if(seen.donorStatus==="pending"&&(ds==="rejected"||(ds==="none"&&!d.is)))
+    /* শুধু অ্যাডমিন/মডারেটরের স্পষ্ট `rejected` অবস্থা থেকেই বাতিল-নোটিফিকেশন
+       পাঠানো হয়। pending অবস্থা হঠাৎ "none" হয়ে গেলে (আবেদন প্রত্যাহার, পুরোনো
+       queue/member cleanup, ভিন্ন অ্যাকাউন্টের stale cache) সেটিকে বাতিল বলে
+       ভুলভাবে জানানো হয় না। */
+    else if(seen.donorStatus==="pending"&&ds==="rejected")
       addNotif({id:"donor-rej",title:"ডোনার আবেদন বাতিল",
         body:"আপনার রক্তদাতা আবেদনটি বাতিল করা হয়েছে।",type:"rejected",go:"req:become"});
     if(ds)seen.donorStatus=ds;
@@ -5293,6 +5308,12 @@ function initPage() {
       STORE.donor.whatsapp=""; STORE.donor.lastDonation="";
       STORE.donor.health=""; STORE.donor.appliedAt="";
       STORE.donor.available=true;
+    } else if(_dStatus==="rejected"||_dStatus==="none"){
+      /* Admin-এর স্পষ্ট rejected/none অবস্থা সরাসরি status-এ আনা হয়, যাতে
+         notification/UI pending এ আটকে না থাকে। pending/approved আসল অবস্থা
+         members/queue/donors রেকর্ড থেকেই hydrate করা হয়। */
+      STORE.donor.status=_dStatus;
+      if(_dStatus==="none")STORE.donor.is=false;
     }
     if(_last !== undefined && _last !== null) STORE.donor.lastDonation = String(_last||"");
     if(_wa !== undefined && _wa !== null) STORE.donor.whatsapp = String(_wa||"");
@@ -5363,7 +5384,7 @@ function initPage() {
       if(member){
         STORE.donor.is=true;
         const st = String(member.status||member.donorStatus||"pending").toLowerCase();
-        STORE.donor.status = st==="approved" ? "approved" : "pending";
+        STORE.donor.status = st==="approved" ? "approved" : st==="rejected" ? "rejected" : "pending";
         /* Donor UID শুধু approved হলে রাখা হয়; pending হলে approve-র আগে না রাখা */
         STORE.donor.donorId = st==="approved" ? (member.donorId || member.id || STORE.donor.donorId || "") : "";
         STORE.donor.bloodGroup = member.bloodGroup || member.group || STORE.donor.bloodGroup;
