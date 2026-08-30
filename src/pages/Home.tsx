@@ -26,7 +26,6 @@ import {
   getPendingGoogleProfile,
   isProfileComplete,
   googleCredentialFromError,
-  signInMethodsForEmail,
   photoForUid,
   loadUserProfile,
   resolveUserRole,
@@ -5348,15 +5347,14 @@ function initPage() {
             const found=await resolveEmailByIdentifier(email);
             if(!found) throw Object.assign(new Error("not-found"),{code:"auth/user-not-found"});
             email=found;
-          } else {
-            try{
-              const methods=await signInMethodsForEmail(auth, email);
-              if(!methods || !methods.length) throw Object.assign(new Error("not-found"),{code:"auth/user-not-found"});
-            }catch(pre){
-              if(pre && pre.code==="auth/user-not-found") throw pre;
-              console.warn("login precheck:", pre && pre.code, pre && pre.message);
-            }
           }
+          /* ইমেইল দিয়ে লগইনে fetchSignInMethodsForEmail() দিয়ে account আছে কিনা আগে
+             যাচাই করা হতো — কিন্তু Firebase প্রজেক্টে Email Enumeration Protection চালু
+             থাকলে ওই API সবসময় খালি list ফেরত দেয় (অ্যাকাউন্ট থাকলেও)। ফলে সঠিক
+             ইমেইল/পাসওয়ার্ডেও ভুল করে "কোনো অ্যাকাউন্ট পাওয়া যায়নি" দেখানো হতো।
+             তাই এখন সরাসরি signInWithEmailAndPassword() চালানো হয় — Firebase-এর
+             নিজস্ব ত্রুটি কোডই (user-not-found / wrong-password / invalid-credential)
+             সঠিক বার্তার জন্য যথেষ্ট। */
           const cred=await signInWithEmailAndPassword(auth,email,password);
           /* Google → Email/Password account-এ যুক্ত করা:
              Google select-এর সময় account-exists-এ OAuth credential জমা রাখা হয়;
