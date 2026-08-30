@@ -320,9 +320,9 @@ test("8b. Editing one of multiple donations recomputes (never double-counts live
 
 test("9. Delete is guarded by confirmation before it is called (UI wiring present)", async () => {
   const admin = readFileSync(path.join(process.cwd(), "src/pages/Admin.tsx"), "utf8");
-  // openApprovedDonation delete button calls confirmS with Cancel/Delete and only
-  // then the actual deleteApprovedDonation() function runs.
-  assert.match(admin, /confirmS\(\{[^}]*title:"রক্তদান মুছে ফেলবেন\?"/);
+  // openApprovedDonation delete button calls confirmS with the exact permanent
+  // delete message, Cancel/Delete and only then the actual delete function runs.
+  assert.match(admin, /confirmS\(\{[^}]*title:"এই রক্তদানের সম্পূর্ণ রেকর্ড মুছে ফেলবেন\? এই কাজটি পূর্বাবস্থায় ফেরানো যাবে না।"/);
   assert.match(admin, /ok:"Delete"[\s\S]*cancel:"Cancel"/);
   assert.match(admin, /deleteApprovedDonation\(r\)/);
 });
@@ -365,7 +365,9 @@ test("10. Delete removes record, UI sources, donor history, and recomputes stats
   assert.equal(d.lastDonationDate, "2026-07-01");
 
   const user = db.get("users/user-1");
-  assert.equal(user.data.donations[0].ok, false, "deleted record no longer verified in donor history");
+  assert.ok(!user.data.donations.some(x => x.date === "2026-08-30" && x.place === "চমেক ব্লাড ব্যাংক"),
+    "deleted record removed from user-side donation history (no re-queue source)");
+  assert.equal(user.data.donations[0].ok, true, "remaining donation history still verified");
   assert.ok(!user.data.verifiedDonations[donationVerKey("2026-08-30", "চমেক ব্লাড ব্যাংক")], "verified mirror cleaned");
   assert.ok(user.data.verifiedDonations[donationVerKey("2026-07-01", "ম্যাক্স হাসপাতাল")], "remaining verified mirror kept");
 });
@@ -501,4 +503,107 @@ test("IDs are stable and RTDB-safe", () => {
   assert.equal(a, b, "same donor/date/place → same donation id");
   assert.match(a, /^DN-[A-Za-z0-9-]+$/);
   assert.ok(!/[$#.[\]/\\]/.test(a), "no RTDB path-breaking chars");
+});
+
+test("16. Invalid/boolean/empty proof values are never treated as image URLs", async () => {
+  const db = new MockDb();
+  db.set("donors/CBDC-2026-0001", donor);
+  const user = seedUser();
+  // Force the same-date fallback source to be invalid too, so a corrupt proof
+  // value can never sneak through as an image URL from either location.
+  user.data.donations[0].proof = "true";
+  db.set("users/user-1", user);
+  const io = db.io();
+
+  for (const proofValue of [true, "true", "false", "", "abc", "javascript:alert(1)"]) {
+    const q = {
+      id: "DN-user1-20260830-bad-" + String(proofValue),
+      name: donor.name, group: donor.group, area: donor.area, photo: "", phone: donor.phone,
+      place: "চমেক ব্লাড ব্যাংক", date: "2026-08-30", bags: 4,
+      proof: proofValue, /* no proofUrl */ ownerUid: "user-1", at: "2026-08-30T09:00:00Z",
+    };
+    const rec = await makeApprovedDonationRecord(q, donor, "অ্যাডমিন", io, now);
+    assert.equal(rec.proof, "", `invalid proof '${proofValue}' must not be stored`);
+  }
+});
+
+test("17. Delete also removes matching pending/verification queue source + old history (no orphan)", async () => {
+  const db = new MockDb();
+  db.set("donors/CBDC-2026-0001", donor);
+  db.set("users/user-1", seedUser());
+  const io = db.io();
+
+  const q1 = {
+    id: "DN-user1-a", name: donor.name, group: donor.group, area: donor.area,
+    photo: "", phone: donor.phone, place: "চমেক ব্লাড ব্যাংক", date: "2026-08-30", bags: 4,
+    proofUrl: "https://imgbb/abc.jpg", ownerUid: "user-1", at: "2026-08-30T09:00:00Z",
+  };
+  const r1 = await makeApprovedDonationRecord(q1, donor, "অ্যাডমিন", io, now);
+  await io.updatePaths((await writeApprovedDonation(r1, null, io)).paths);
+
+  // stale/duplicate verification queue entry for the SAME approved record
+  db.set("queue/" + r1.id, { ...q1, kind: "donation", status: "pending" });
+
+  const del = await deleteApprovedDonation(r1, io);
+  await io.updatePaths(del.paths);
+
+  // donations node is fully gone
+  assert.equal(db.get("donations/" + r1.id), undefined, "donations/{id} removed");
+
+  // queue source is gone
+  assert.equal(db.get("queue/" + r1.id), undefined, "pending/verification queue source removed");
+
+  // verified mirror + old donor history are gone
+  const user = db.get("users/user-1");
+  assert.ok(!user.data.verifiedDonations[donationVerKey("2026-08-30", "চমেক ব্লাড ব্যাংক")], "verified mirror removed");
+  assert.ok(!user.data.donations.some(x => x.date === "2026-08-30" && x.place === "চমেক ব্লাড ব্যাংক"), "old donation history removed");
+
+  // stats recalculated
+  const d = db.get("donors/CBDC-2026-0001");
+  assert.equal(d.donations, 0);
+  assert.equal(d.totalDonations, 0);
+  assert.equal(d.totalBags, 0);
+  assert.equal(d.lastDonationDate, "");
+
+  // a fresh "listOnce" (simulating page refresh) no longer sees the record
+  const afterRefresh = await io.listOnce("donations");
+  assert.ok(!afterRefresh.some(r => String(r.id) === String(r1.id)), "refresh cannot resurrect the record");
+});
+
+test("18. Delete confirmation uses the exact permanent-delete message", async () => {
+  const admin = readFileSync(path.join(process.cwd(), "src/pages/Admin.tsx"), "utf8");
+  assert.match(admin, /এই রক্তদানের সম্পূর্ণ রেকর্ড মুছে ফেলবেন\? এই কাজটি পূর্বাবস্থায় ফেরানো যাবে না।/);
+});
+
+test("19. Editing proof updates the same approved record AND the user-side source", async () => {
+  const db = new MockDb();
+  db.set("donors/CBDC-2026-0001", donor);
+  db.set("users/user-1", seedUser());
+  const io = db.io();
+  const q = {
+    id: "DN-user1-a", name: donor.name, group: donor.group, area: donor.area,
+    photo: "", phone: donor.phone, place: "চমেক ব্লাড ব্যাংক", date: "2026-08-30", bags: 4,
+    proofUrl: "", ownerUid: "user-1", at: "2026-08-30T09:00:00Z",
+  };
+  const rec = await makeApprovedDonationRecord(q, donor, "অ্যাডমিন", io, now);
+  await io.updatePaths((await writeApprovedDonation(rec, null, io)).paths);
+
+  // user edits proof via admin
+  const edited = { ...rec, proof: "https://imgbb/new-proof.jpg" };
+  await io.updatePaths((await writeApprovedDonation(edited, { id: rec.id, date: rec.date, place: rec.place }, io)).paths);
+
+  assert.equal(db.get("donations/" + rec.id).proof, "https://imgbb/new-proof.jpg", "approved record proof updated");
+  const user = db.get("users/user-1");
+  const own = user.data.donations.find(x => x.date === "2026-08-30" && x.place === "চমেক ব্লাড ব্যাংক");
+  assert.equal(own.proof, "https://imgbb/new-proof.jpg", "user-side donation history proof updated");
+  assert.equal(user.data.verifiedDonations[donationVerKey("2026-08-30", "চমেক ব্লাড ব্যাংক")].proof, "https://imgbb/new-proof.jpg");
+});
+
+test("20. Admin delete/edit clears the local verification queue so persist() cannot re-add it", async () => {
+  const admin = readFileSync(path.join(process.cwd(), "src/pages/Admin.tsx"), "utf8");
+  assert.match(admin, /function clearDonationQueueFor\(record\)\{/);
+  assert.match(admin, /clearDonationQueueFor\(record\);\s*\n\s*DB\.donations=DB\.donations\.filter/);
+  // delete flow: shared module also removes queue/{id}
+  assert.match(admin, /const \{paths,stats\}=await deleteApprovedDonation\(record,donationIo\);/);
+  assert.match(admin, /await updatePaths\(paths\);/);
 });

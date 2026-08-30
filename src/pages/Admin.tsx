@@ -25,6 +25,7 @@ import {
   writeApprovedDonation,
   deleteApprovedDonation,
   backfillApprovedDonations,
+  proofUrlOf,
 } from "../lib/donationLog";
 import { serverDeleteEntity, deletionMessage, bulkDeletionMessage, describeDeletionFailure, isAuthUid, runDedupeScan, type DeletionStep, type DeleteScope } from "../lib/accountDelete";
 import { noticeIsActive, noticeTarget } from "../lib/notice";
@@ -4463,9 +4464,22 @@ function initPage() {
   function localDonorForRecord(record){
     return DB.donors.find(x=>String(x.id)===String(record.donorId||""))||null;
   }
+  /* Remove donation-related queue items locally so a subsequent persist()
+     cannot re-publish the same record back into রক্তদান যাচাই. */
+  function clearDonationQueueFor(record){
+    DB.queue=(DB.queue||[]).filter(q=>{
+      if(String(q?.kind||"")!=="donation")return true;
+      if(String(q?.id||"")===String(record.id||""))return false;
+      const sameOwner=String(q?.ownerUid||q?.uid||"")===String(record.ownerUid||"");
+      const sameDate=String(q?.date||"")===String(record.date||"");
+      const samePlace=String(q?.place||"")===String(record.place||"");
+      return !(sameOwner&&sameDate&&samePlace);
+    });
+  }
   async function saveApprovedDonation(record,oldRecord){
     const {paths,stats}=await writeApprovedDonation(record,oldRecord,donationIo);
     await updatePaths(paths);
+    clearDonationQueueFor(record);
     DB.donations=DB.donations.filter(x=>String(x.id)!==String(record.id));
     DB.donations.unshift(record);
     const d=localDonorForRecord(record);
@@ -4475,6 +4489,7 @@ function initPage() {
   async function deleteApprovedDonation(record){
     const {paths,stats}=await deleteApprovedDonation(record,donationIo);
     await updatePaths(paths);
+    clearDonationQueueFor(record);
     DB.donations=DB.donations.filter(x=>String(x.id)!==String(record.id));
     const d=DB.donors.find(x=>String(x.id)===String(record.donorId||""));
     if(d){d.donations=stats.lives;d.totalDonations=stats.lives;d.totalBags=stats.bags;d.last=stats.last;}
@@ -4525,7 +4540,7 @@ function initPage() {
       </div>
       ${filtered.length?`<div class="card pad0">${filtered.map(r=>{
         const donor=DB.donors.find(x=>String(x.id)===String(r.donorId||""));
-        const thumb=r.proof||(donor&&donor.photo)||"";
+        const thumb=proofUrlOf(r)||(donor&&donor.photo)||"";
         return `<button class="prow" data-aid="${r.id}">
           <span class="bg2">${esc(r.group)}</span>
           <span class="tx"><b>${esc(r.name)}</b><small>${esc(r.donorId||r.id)} · ${esc(r.place||"")} · ${dL(r.date)}</small></span>
@@ -4543,10 +4558,23 @@ function initPage() {
     });
     el.querySelectorAll("[data-aid]").forEach(b=>b.onclick=()=>openApprovedDonation(b.dataset.aid));
   };
-  function openApprovedDonation(id){
+  async function openApprovedDonation(id){
     const r=DB.donations.find(x=>String(x.id)===String(id));if(!r)return;
     const donor=DB.donors.find(x=>String(x.id)===String(r.donorId||""));
-    const thumb=r.proof||(donor&&donor.photo)||"";
+    /* Always validate the stored value as an image URL. booleans, empty/
+       invalid strings and `true`/`false` must NOT be used as `<img src>`.
+       When the approved record has no usable proof, read the owner's own
+       `users/{uid}/data/donations` record as the fallback source. */
+    let proof=proofUrlOf(r);
+    if(!proof && r.ownerUid){
+      try{
+        const u=await getRow("users",r.ownerUid);
+        const arr=u&&Array.isArray(u.data&&u.data.donations)?u.data.donations:[];
+        const hit=arr.find((x:any)=>String(x?.date||"")===String(r.date||"")&&String(x?.place||"")===String(r.place||""));
+        proof=proofUrlOf(hit);
+      }catch(e){console.warn("approved proof fallback:",e&&e.message)}
+    }
+    const thumb=proof||(donor&&donor.photo)||"";
     const s=sheet("Approved Donation",`
       <div class="per">${thumb?`<img src="${esc(thumb)}" style="width:46px;height:46px;border-radius:14px;object-fit:cover" alt="">`
         :`<span class="bg2" style="width:44px;height:44px;border-radius:12px">${esc(r.group)}</span>`}
@@ -4565,14 +4593,14 @@ function initPage() {
         ${r.patient?`<div><span>রোগী</span><b>${esc(r.patient)}</b></div>`:""}
         ${r.note?`<div><span>মন্তব্য</span><b>${esc(r.note)}</b></div>`:""}
       </div>
-      ${r.proof?`<div class="sec-t">প্রমাণের ছবি</div>
-        <a href="${esc(r.proof)}" target="_blank" rel="noopener"><img src="${esc(r.proof)}" alt="রক্তদানের প্রমাণ"
+      ${proof?`<div class="sec-t">প্রমাণের ছবি</div>
+        <a href="${esc(proof)}" target="_blank" rel="noopener"><img src="${esc(proof)}" alt="রক্তদানের প্রমাণ"
           style="width:100%;max-height:300px;object-fit:contain;border-radius:12px;border:1px solid var(--line);background:var(--card2)"></a>`:""}`,
       `<button class="btn gh amb" id="ad_del">${SI.trash(16)} মুছে ফেলুন</button>
        <button class="btn" id="ad_edit">${SI.edit(16)} সম্পাদনা</button>`);
     s.q("#ad_edit").onclick=()=>{s.close();editApprovedDonation(id)};
     s.q("#ad_del").onclick=async()=>{
-      if(!await confirmS({title:"রক্তদান মুছে ফেলবেন?",desc:`আপনি কি এই রক্তদানের রেকর্ডটি মুছে ফেলতে চান?\n\n${r.donorId||r.id} · ${dL(r.date)} · ${r.place}`,
+      if(!await confirmS({title:"এই রক্তদানের সম্পূর্ণ রেকর্ড মুছে ফেলবেন? এই কাজটি পূর্বাবস্থায় ফেরানো যাবে না।",desc:`${r.donorId||r.id} · ${dL(r.date)} · ${r.place}`,
         ok:"Delete",cancel:"Cancel",danger:true}))return;
       try{
         const stats=await deleteApprovedDonation(r);

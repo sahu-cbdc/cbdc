@@ -85,6 +85,23 @@ export function safeDonationId(
   );
 }
 
+/**
+ * Return a string only when the value is genuinely usable as an `<img src>`.
+ * booleans (`true`), the literal strings "true"/"false", empty/whitespace,
+ * bare words and `javascript:` / `data:text/*` payloads are all rejected.
+ */
+export function safeImageUrl(value: unknown): string {
+  const s = typeof value === "string" ? value.trim() : "";
+  if (!s || s === "true" || s === "false" || s === "null" || s === "undefined") return "";
+  if (/^(https?:\/\/|data:image\/)/i.test(s)) return s;
+  return "";
+}
+
+/** proofUrl is preferred, then proof, then a safe empty string. */
+export function proofUrlOf(record: any): string {
+  return safeImageUrl(record?.proofUrl) || safeImageUrl(record?.proof);
+}
+
 /** Stats derived from the authoritative approved-donation records. */
 export function donorStatsFromRecords(records: Array<any> | null | undefined): DonorStats {
   const recs = (records || []).filter(Boolean);
@@ -141,14 +158,9 @@ export async function makeApprovedDonationRecord(
   const owner = String(q?.ownerUid || q?.uid || "").trim();
   /* proofUrl is the real URL; legacy queue items only carry `proof:true`
      (boolean flag) and MUST fall back to the user's own record. Treating the
-     boolean as a URL stores literal "true" and loses the image. */
-  const queuedProof =
-    typeof q?.proofUrl === "string"
-      ? q.proofUrl
-      : typeof q?.proof === "string"
-        ? q.proof
-        : "";
-  let proof = String(queuedProof || "").trim();
+     boolean as a URL stores literal "true", just like any wrong/empty value.
+     safeImageUrl rejects booleans, "true"/"false", empty and non-image URLs. */
+  let proof = proofUrlOf(q);
   if (!proof && owner) {
     try {
       const u = await io.getRow("users", owner).catch(() => null);
@@ -158,7 +170,7 @@ export async function makeApprovedDonationRecord(
           String(x?.date || "") === String(q?.date || "") &&
           String(x?.place || "") === String(q?.place || "")
       );
-      proof = String(hit?.proof || "").trim();
+      proof = proofUrlOf(hit);
     } catch {
       /* fall back to empty proof */
     }
@@ -235,6 +247,8 @@ export async function writeApprovedDonation(
       const k = donationVerKey(x?.date, x?.place);
       if (k === curKey) {
         paths[`users/${owner}/data/donations/${i}/ok`] = true;
+        paths[`users/${owner}/data/donations/${i}/bags`] = Number(record.bags) || 1;
+        paths[`users/${owner}/data/donations/${i}/proof`] = record.proof || "";
         matchedIdx = i;
       } else if (oldKey && k === oldKey) {
         paths[`users/${owner}/data/donations/${i}/ok`] = false;
@@ -247,6 +261,8 @@ export async function writeApprovedDonation(
       paths[`users/${owner}/data/donations/${matchedIdx}/date`] = record.date;
       paths[`users/${owner}/data/donations/${matchedIdx}/place`] = record.place;
       paths[`users/${owner}/data/donations/${matchedIdx}/ok`] = true;
+      paths[`users/${owner}/data/donations/${matchedIdx}/bags`] = Number(record.bags) || 1;
+      paths[`users/${owner}/data/donations/${matchedIdx}/proof`] = record.proof || "";
     }
     const old =
       u?.data?.verifiedDonations && typeof u.data.verifiedDonations === "object"
@@ -278,6 +294,26 @@ export async function deleteApprovedDonation(
   const oldKey = donationVerKey(record.date, record.place);
   paths[`donations/${record.id}`] = null;
 
+  /* Remove the (already approved) verification queue source so a page refresh
+     / next Doner sync cannot resurrect this record in রক্তদান যাচাই. */
+  paths[`queue/${record.id}`] = null;
+  if (io.listOnce && owner) {
+    try {
+      const queue = (await io.listOnce("queue")) || [];
+      for (const q of queue) {
+        const sameQueueItem =
+          String(q?.kind || "") === "donation" &&
+          String(q?.ownerUid || q?.uid || "") === owner &&
+          String(q?.date || "") === String(record.date) &&
+          String(q?.place || "") === String(record.place) &&
+          String(q?.id || "") !== String(record.id);
+        if (sameQueueItem) paths[`queue/${q.id}`] = null;
+      }
+    } catch {
+      /* queue is optional; a missing queue node is not an error */
+    }
+  }
+
   let all: any[] = [];
   if (io.listOnce) all = ((await io.listOnce("donations")) || []).filter(
     (r) => r && String(r.donorId || "") === donorId
@@ -292,12 +328,15 @@ export async function deleteApprovedDonation(
   }
   if (owner) {
     const u = await io.getRow("users", owner).catch(() => null);
-    const arr = Array.isArray(u?.data?.donations) ? u.data.donations : [];
-    arr.forEach((x: any, i: number) => {
-      if (donationVerKey(x?.date, x?.place) === oldKey) {
-        paths[`users/${owner}/data/donations/${i}/ok`] = false;
-      }
-    });
+    /* Remove the donor's own old history entry completely (not just flip ok).
+       If only `ok:false` were kept, the next `publishPersonalShared` would
+       re-queue it into রক্তদান যাচাই. */
+    if (Array.isArray(u?.data?.donations)) {
+      const kept = u.data.donations.filter(
+        (x: any) => donationVerKey(x?.date, x?.place) !== oldKey
+      );
+      paths[`users/${owner}/data/donations`] = kept;
+    }
     const old =
       u?.data?.verifiedDonations && typeof u.data.verifiedDonations === "object"
         ? { ...u.data.verifiedDonations }
