@@ -113,10 +113,37 @@ export function donorStatsFromRecords(records: Array<any> | null | undefined): D
     last:
       recs
         .map((r) => String(r?.date || ""))
-        .filter(Boolean)
+        .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)) /* শুধু সঠিক YYYY-MM-DD — পুরোনো/ভুল timestamp `last`-এ ঢোকে না */
         .sort()
         .pop() || "",
   };
+}
+
+/**
+ * Event identity for one approved donation: the same donor donating on the
+ * same date at the same place is ONE event (matches the existing user-side
+ * verifiedDonations mirror, whose key is date|place).
+ */
+export function donationEventKey(record: any): string {
+  return (
+    String(record?.donorId || "") +
+    "|" +
+    String(record?.date || "").trim() +
+    "|" +
+    String(record?.place || "").trim()
+  );
+}
+
+/** Quality score used when duplicate records of the same event are found —
+ *  the best record (real approval timestamp + proof + last update) survives. */
+function recordQuality(r: any): number {
+  let q = 0;
+  const at = String(r?.approvedAt || "");
+  if (/^\d{4}-\d{2}-\d{2}T/.test(at)) q += 4;
+  else if (at) q += 2;
+  if (proofUrlOf(r)) q += 2;
+  if (String(r?.updatedAt || "")) q += 1;
+  return q;
 }
 
 function asDonor(d: any): ApprovedDonation | null {
@@ -229,8 +256,23 @@ export async function writeApprovedDonation(
     (r) => r && String(r.donorId || "") === donorId
   );
   all = all.filter((r) => String(r.id) !== String(record.id || oid));
-  all.push(record);
   if (oid && oid !== record.id) paths[`donations/${oid}`] = null;
+
+  /* Duplicate cleanup: the same event (date|place) stored under another id
+     (পুরোনো random id / double approval) is the SAME donation — remove the
+     twin so the list, donor history and stats never count it twice. */
+  const deduped: any[] = [];
+  for (const r of all) {
+    const k = donationVerKey(r?.date, r?.place);
+    if ((oldRecord && oldKey && k === oldKey) || k === curKey) {
+      const rid = String(r?.id || "");
+      if (rid && rid !== String(record.id) && rid !== oid) paths[`donations/${rid}`] = null;
+      continue;
+    }
+    deduped.push(r);
+  }
+  all = deduped;
+  all.push(record);
 
   const stats = donorStatsFromRecords(all);
   if (donorId) {
@@ -321,6 +363,18 @@ export async function deleteApprovedDonation(
     (r) => r && String(r.donorId || "") === donorId
   );
   all = all.filter((r) => String(r.id) !== String(record.id));
+  /* একই event-এর duplicate twin (ভিন্ন id) থাকলে সেটিও মুছে যায় — নইলে
+     Delete-এর পরেও তালিকায়/পরিসংখ্যানে event-টি থেকে যেত। */
+  const deduped: any[] = [];
+  for (const r of all) {
+    if (donationVerKey(r?.date, r?.place) === oldKey) {
+      const rid = String(r?.id || "");
+      if (rid && rid !== String(record.id)) paths[`donations/${rid}`] = null;
+      continue;
+    }
+    deduped.push(r);
+  }
+  all = deduped;
   const stats = donorStatsFromRecords(all);
   if (donorId) {
     paths[`donors/${donorId}/donations`] = stats.lives;
@@ -435,13 +489,104 @@ export async function backfillApprovedDonations(
   return { paths, newRecords, touched: [...new Set(touched)] };
 }
 
+/**
+ * One-pass reconciliation of the approved-donation data:
+ *  - duplicate records of the same event (donorId|date|place) are reduced to
+ *    the single best record (the rest are removed from the donations node);
+ *  - every donor's stored aggregate (donations/totalDonations/totalBags/
+ *    lastDonationDate) is recomputed from the surviving records, so Donor
+ *    history and the approved list can never drift apart.
+ *
+ * Only changed paths are returned — fully consistent data causes zero writes.
+ */
+export async function reconcileApprovedDonations(
+  io: DonationIo
+): Promise<{ paths: Record<string, any>; statsByDonor: Record<string, DonorStats> }> {
+  const paths: Record<string, any> = {};
+  const statsByDonor: Record<string, DonorStats> = {};
+  const all = ((await io.listOnce("donations")) || []).filter(Boolean);
+
+  /* group by event and keep the single best record per event */
+  const byEvent: Record<string, any[]> = {};
+  for (const r of all) {
+    const k = donationEventKey(r);
+    if (!k) continue;
+    (byEvent[k] ||= []).push(r);
+  }
+  const keepIds = new Set<string>();
+  for (const group of Object.values(byEvent)) {
+    if (group.length < 2) {
+      if (String(group[0]?.id || "")) keepIds.add(String(group[0].id));
+      continue;
+    }
+    group.sort(
+      (a, b) =>
+        recordQuality(b) - recordQuality(a) ||
+        String(b.id).localeCompare(String(a.id))
+    );
+    const keep = group[0];
+    if (!keep || !String(keep.id || "")) continue;
+    keepIds.add(String(keep.id));
+    for (const dup of group.slice(1)) {
+      const rid = String(dup?.id || "");
+      if (rid && rid !== String(keep.id)) paths[`donations/${rid}`] = null;
+    }
+  }
+
+  /* donor aggregates — recompute for every donor that has records OR stored
+     aggregates, so stale/missing counts are healed and consistent data is untouched */
+  const donors = ((await io.listOnce("donors")) || []).filter(Boolean);
+  const donorsWithRecords = new Set<string>();
+  for (const r of all) {
+    if (keepIds.has(String(r.id || "")) && String(r.donorId || ""))
+      donorsWithRecords.add(String(r.donorId));
+  }
+  const touchedDonors = new Set<string>(donorsWithRecords);
+  for (const d of donors) {
+    const id = String(d?.id || d?.donorId || "");
+    if (!id) continue;
+    const hasStored =
+      Number(d?.donations) || Number(d?.totalDonations) || Number(d?.totalBags) ||
+      String(d?.lastDonationDate || d?.last || "");
+    if (!donorsWithRecords.has(id) && !hasStored) continue;
+    touchedDonors.add(id);
+  }
+  for (const id of touchedDonors) {
+    const recs = all.filter(
+      (r) => keepIds.has(String(r.id || "")) && String(r.donorId || "") === id
+    );
+    const stats = donorStatsFromRecords(recs);
+    statsByDonor[id] = stats;
+    const d = donors.find((x) => String(x?.id || x?.donorId || "") === id);
+    if (!d) {
+      if (stats.lives || stats.bags || stats.last) {
+        paths[`donors/${id}/donations`] = stats.lives;
+        paths[`donors/${id}/totalDonations`] = stats.lives;
+        paths[`donors/${id}/totalBags`] = stats.bags;
+        paths[`donors/${id}/lastDonationDate`] = stats.last || "";
+      }
+      continue;
+    }
+    if (Number(d.donations) !== stats.lives) paths[`donors/${id}/donations`] = stats.lives;
+    if (Number(d.totalDonations) !== stats.lives) paths[`donors/${id}/totalDonations`] = stats.lives;
+    if (Number(d.totalBags) !== stats.bags) paths[`donors/${id}/totalBags`] = stats.bags;
+    const last = stats.last || "";
+    if (String(d.lastDonationDate ?? d.last ?? "") !== last)
+      paths[`donors/${id}/lastDonationDate`] = last;
+  }
+
+  return { paths, statsByDonor };
+}
+
 /* keep a usable default export for existing call sites */
 export default {
   donationVerKey,
   safeDonationId,
   donorStatsFromRecords,
+  donationEventKey,
   makeApprovedDonationRecord,
   writeApprovedDonation,
   deleteApprovedDonation,
   backfillApprovedDonations,
+  reconcileApprovedDonations,
 };

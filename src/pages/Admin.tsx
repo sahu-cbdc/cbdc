@@ -23,8 +23,9 @@ import {
   donorStatsFromRecords,
   makeApprovedDonationRecord,
   writeApprovedDonation,
-  deleteApprovedDonation,
-  backfillApprovedDonations,
+  deleteApprovedDonation as deleteDonationRecord,
+  backfillApprovedDonations as backfillDonationLog,
+  reconcileApprovedDonations as reconcileDonationLog,
   proofUrlOf,
 } from "../lib/donationLog";
 import { serverDeleteEntity, deletionMessage, bulkDeletionMessage, describeDeletionFailure, isAuthUid, runDedupeScan, type DeletionStep, type DeleteScope } from "../lib/accountDelete";
@@ -2283,6 +2284,18 @@ function initPage() {
   const iso=d=>new Date(d).toISOString().slice(0,10);
   const dL=v=>v?new Date(v+"T00:00:00").toLocaleDateString("bn-BD",{year:"numeric",month:"long",day:"numeric"}):"—";
   const dS=v=>v?new Date(v+"T00:00:00").toLocaleDateString("bn-BD",{day:"numeric",month:"short"}):"—";
+  /* Approved Donation-এর তারিখ: YYYY-MM-DD → তারিখ, ISO datetime → তারিখ+সময়।
+     পুরোনো/অজানা/ভুল মান কখনো "Invalid Date" দেখায় না — সবসময় "—"। */
+  const dts=v=>{
+    if(v===undefined||v===null||v==="")return "—";
+    const s=String(v).trim();
+    if(!s)return "—";
+    const d=/^\d{4}-\d{2}-\d{2}$/.test(s)?new Date(s+"T00:00:00"):new Date(s);
+    if(Number.isNaN(d.getTime()))return "—";
+    const date=d.toLocaleDateString("bn-BD",{year:"numeric",month:"long",day:"numeric"});
+    const t=/^\d{4}-\d{2}-\d{2}T/.test(s)?d.toLocaleTimeString("bn-BD",{hour:"2-digit",minute:"2-digit"}):"";
+    return t?date+" · "+t:date;
+  };
   const dayDiff=a=>Math.floor((new Date().setHours(0,0,0,0)-new Date(a+"T00:00:00").setHours(0,0,0,0))/864e5);
   const addD=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return iso(x)};
   const phoneOK=v=>/^01[3-9]\d{8}$/.test(String(v||"").replace(/\s/g,""));
@@ -4326,18 +4339,35 @@ function initPage() {
           ||DB.donors.find(x=>x.name===q.name);
         if(d){
           /* One approved donation event = one life. Bag quantity is kept as a
-             separate statistic (`totalBags`), never used for lives saved. */
+             separate statistic (`totalBags`), never used for lives saved.
+             ডুপ্লিকেট প্রতিরোধ: একই event (date|place) অন্য id-তে থাকলে পুরোনো
+             record সরানো হয়; পরিসংখ্যান increment-এ নয় — RTDB-র পূর্ণ তালিকা
+             থেকে পুনরায় হিসাব করা হয়, তাই donor history কখনো approved
+             তালিকা থেকে সরে যায় না। */
           const bags=Math.max(1,Math.floor(Number(q.bags)||1));
-          const count=(Number(d.donations)||0)+1;
-          const totalBags=(Number(d.totalBags)||0)+bags;
-          const last=!d.last||q.date>d.last?q.date:d.last;
           const record=await makeApprovedRecord(q,d);
-          approvedDonation={d,count,totalBags,last,record};
+          let donorRecords:any[]=[];
+          try{
+            donorRecords=(((await listOnce(NODES.donations))||[]).filter(
+              r=>r&&String(r.donorId||"")===String(d.id||"")));
+          }catch(e){donorRecords=[]}
+          const eventKey=donationVerKey(q.date,q.place);
+          donorRecords=donorRecords.filter(r=>{
+            if(String(r.id)===String(record.id))return false;
+            if(donationVerKey(r.date,r.place)===eventKey){
+              if(String(r.id||""))paths[`donations/${r.id}`]=null;
+              return false;
+            }
+            return true;
+          });
+          donorRecords.push(record);
+          const stats=donorStatsFromRecords(donorRecords);
+          approvedDonation={d,count:stats.lives,totalBags:stats.bags,last:stats.last,record};
           paths[`donations/${record.id}`]=record;
-          paths[`donors/${d.id}/donations`]=count;
-          paths[`donors/${d.id}/totalDonations`]=count;
-          paths[`donors/${d.id}/totalBags`]=totalBags;
-          if(last)paths[`donors/${d.id}/lastDonationDate`]=last;
+          paths[`donors/${d.id}/donations`]=stats.lives;
+          paths[`donors/${d.id}/totalDonations`]=stats.lives;
+          paths[`donors/${d.id}/totalBags`]=stats.bags;
+          if(stats.last)paths[`donors/${d.id}/lastDonationDate`]=stats.last;
           /* Legacy mirror + authoritative verified list: mark the exact
              user-side record so the donor panel shows it as verified. The
              verifiedDonations list is admin/moderator-only in the RTDB rules. */
@@ -4743,7 +4773,7 @@ function initPage() {
     return stats;
   }
   async function deleteApprovedDonation(record){
-    const {paths,stats}=await deleteApprovedDonation(record,donationIo);
+    const {paths,stats}=await deleteDonationRecord(record,donationIo);
     await updatePaths(paths);
     clearDonationQueueFor(record);
     DB.donations=DB.donations.filter(x=>String(x.id)!==String(record.id));
@@ -4757,7 +4787,7 @@ function initPage() {
     if(approvedDonationBackfillRun||!can("donation.manage"))return;
     approvedDonationBackfillRun=true;
     try{
-      const {paths,newRecords,touched}=await backfillApprovedDonations(donationIo,DB.donations||[],DB.donors||[]);
+      const {paths,newRecords,touched}=await backfillDonationLog(donationIo,DB.donations||[],DB.donors||[]);
       if(!newRecords.length)return;
       await updatePaths(paths);
       newRecords.forEach(r=>{DB.donations.unshift(r)});
@@ -4773,21 +4803,46 @@ function initPage() {
   }
   /* Approve-এর সময় queue থেকে তৈরি রেকর্ড (proof URL সহ) — shared module */
   const makeApprovedRecord=(q:any,d:any)=>makeApprovedDonationRecord(q,d,ME.name||"অ্যাডমিন",donationIo);
+  /* পুরোনো duplicate (একই event, ভিন্ন id) RTDB থেকে পরিষ্কার + প্রতিটি donor-এর
+     aggregate (history/stats) approved তালিকার সাথে মিলিয়ে নেওয়া। শুধু পরিবর্তন
+     হলেই write হয়; স্ক্রিনে একবার, তারপর donations node বদলালে (debounced)। */
+  let approvedDonationReconciled=false, reconcileT:any=null;
+  async function reconcileApprovedDonationsScreen(){
+    if(!can("donation.manage"))return;
+    try{
+      const {paths,statsByDonor}=await reconcileDonationLog(donationIo);
+      if(Object.keys(paths).length){
+        await updatePaths(paths);
+        for(const [id,stats] of Object.entries(statsByDonor)){
+          const d=DB.donors.find(x=>String(x.id)===String(id));
+          if(d){d.donations=stats.lives;d.totalDonations=stats.lives;d.totalBags=stats.bags;d.last=stats.last;}
+        }
+        DB.donations=(((await donationIo.listOnce(NODES.donations))||[]).filter(Boolean));
+        logAudit("অনুমোদিত রক্তদান পুনঃসংযোজন",bn(Object.keys(paths).length)+"টি ক্ষেত্র হালনাগাদ","donation");
+      }
+      if(SUB==="approved"&&!document.querySelector(".sheet"))renderSub("approved");
+    }catch(e){console.warn("approved donation reconcile:",e&&e.message)}
+  }
   let appFil={q:"",g:""};
   SUBP.approved=el=>{
-    const list=(DB.donations||[]).slice().sort((a,b)=>String(b.date||b.approvedAt).localeCompare(String(a.date||a.approvedAt)));
+    /* একই event (donorId|date|place) একাধিক id-তে থাকলে তালিকায় একবারই দেখানো হয় */
+    const seen=new Set();
+    const dedupe=r=>{const k=String(r.donorId||"")+"|"+String(r.date||"").trim()+"|"+String(r.place||"").trim();if(seen.has(k))return false;seen.add(k);return true;};
+    const rows=(DB.donations||[]).filter(dedupe);
+    const list=rows.slice().sort((a,b)=>String(b.date||b.approvedAt).localeCompare(String(a.date||a.approvedAt)));
     const filtered=list.filter(r=>{
       if(appFil.q&&![r.name,r.donorId,r.id,r.place,r.group].join(" ").toLowerCase().includes(appFil.q.toLowerCase()))return false;
       if(appFil.g&&r.group!==appFil.g)return false;
       return true;
     });
-    const totalBags=DB.donations.reduce((s,r)=>s+Math.max(0,Number(r.bags)||0),0);
+    const totalBags=list.reduce((s,r)=>s+Math.max(0,Number(r.bags)||0),0);
+    if(!approvedDonationReconciled){approvedDonationReconciled=true;reconcileApprovedDonationsScreen();}
     el.innerHTML=ptitle("অনুমোদিত রক্তদান","অনুমোদিত রক্তদান — দেখুন, সম্পাদনা ও মুছুন")
     +`<div class="astat">
-        <button class="g"><b>${bn(DB.donations.length)}</b><span>জীবন বাঁচিয়েছে</span></button>
+        <button class="g"><b>${bn(list.length)}</b><span>জীবন বাঁচিয়েছে</span></button>
         <button class="b"><b>${bn(totalBags)}</b><span>মোট ব্যাগ</span></button>
-        <button class="a"><b>${bn(new Set(DB.donations.map(r=>r.donorId)).size)}</b><span>রক্তদাতা</span></button>
-        <button class="r"><b>${bn((DB.donations||[]).reduce((s,r)=>s+(r.approvedAt?1:0),0))}</b><span>যাচাইকৃত</span></button>
+        <button class="a"><b>${bn(new Set(list.map(r=>r.donorId)).size)}</b><span>রক্তদাতা</span></button>
+        <button class="r"><b>${bn(list.reduce((s,r)=>s+(r.approvedAt?1:0),0))}</b><span>যাচাইকৃত</span></button>
       </div>
       <div class="frow">
         <input class="gw" id="aq" value="${esc(appFil.q)}" placeholder="নাম / আইডি / স্থান…">
@@ -4799,7 +4854,7 @@ function initPage() {
         const thumb=proofUrlOf(r)||(donor&&donor.photo)||"";
         return `<button class="prow" data-aid="${r.id}">
           <span class="bg2">${esc(r.group)}</span>
-          <span class="tx"><b>${esc(r.name)}</b><small>${esc(r.donorId||r.id)} · ${esc(r.place||"")} · ${dL(r.date)}</small></span>
+          <span class="tx"><b>${esc(r.name)}</b><small>${esc(r.donorId||r.id)} · ${esc(r.place||"")} · ${dts(r.date)}</small></span>
           <span style="display:flex;align-items:center;gap:6px;flex:none">
             <span class="tag b">${bn(r.bags)} ব্যাগ</span>${thumb?`<img src="${esc(thumb)}" alt="" style="width:32px;height:32px;border-radius:8px;object-fit:cover">`:""}
           </span></button>`;
@@ -4834,18 +4889,18 @@ function initPage() {
     const s=sheet("Approved Donation",`
       <div class="per">${thumb?`<img src="${esc(thumb)}" style="width:46px;height:46px;border-radius:14px;object-fit:cover" alt="">`
         :`<span class="bg2" style="width:44px;height:44px;border-radius:12px">${esc(r.group)}</span>`}
-        <div class="i"><b>${esc(r.name)}</b><small>${esc(r.donorId||"")} · ${dL(r.date)}</small></div>
+        <div class="i"><b>${esc(r.name)}</b><small>${esc(r.donorId||"")} · ${dts(r.date)}</small></div>
         <span class="pill g">যাচাইকৃত</span></div>
       <div class="kv" style="margin-top:11px">
         <div><span>Donation ID</span><b>${esc(r.id)}</b></div>
         <div><span>রক্তদাতা</span><b>${esc(r.name)}</b></div>
         <div><span>রক্তের গ্রুপ</span><b>${esc(r.group)}</b></div>
-        <div><span>রক্তদানের তারিখ</span><b>${dL(r.date)}</b></div>
+        <div><span>রক্তদানের তারিখ</span><b>${dts(r.date)}</b></div>
         <div><span>হাসপাতাল / স্থান</span><b>${esc(r.place)}</b></div>
         <div><span>ব্যাগ</span><b>${bn(r.bags)}</b></div>
         <div><span>জীবন বাঁচিয়েছে</span><b>${bn(1)}</b></div>
-        <div><span>Submitted</span><b>${r.submittedAt?dL(r.submittedAt):"—"}</b></div>
-        <div><span>Approved</span><b>${r.approvedAt?dL(r.approvedAt):"—"}</b></div>
+        <div><span>Submitted</span><b>${dts(r.submittedAt)}</b></div>
+        <div><span>Approved</span><b>${dts(r.approvedAt)}</b></div>
         ${r.patient?`<div><span>রোগী</span><b>${esc(r.patient)}</b></div>`:""}
         ${r.note?`<div><span>মন্তব্য</span><b>${esc(r.note)}</b></div>`:""}
       </div>
@@ -4856,7 +4911,7 @@ function initPage() {
        <button class="btn" id="ad_edit">${SI.edit(16)} সম্পাদনা</button>`);
     s.q("#ad_edit").onclick=()=>{s.close();editApprovedDonation(id)};
     s.q("#ad_del").onclick=async()=>{
-      if(!await confirmS({title:"এই রক্তদানের সম্পূর্ণ রেকর্ড মুছে ফেলবেন? এই কাজটি পূর্বাবস্থায় ফেরানো যাবে না।",desc:`${r.donorId||r.id} · ${dL(r.date)} · ${r.place}`,
+      if(!await confirmS({title:"এই রক্তদানের সম্পূর্ণ রেকর্ড মুছে ফেলবেন? এই কাজটি পূর্বাবস্থায় ফেরানো যাবে না।",desc:`${r.donorId||r.id} · ${dts(r.date)} · ${r.place}`,
         ok:"Delete",cancel:"Cancel",danger:true}))return;
       try{
         const stats=await deleteApprovedDonation(r);
@@ -4875,7 +4930,7 @@ function initPage() {
         <label>হাসপাতাল / স্থান</label><input id="ad_place" value="${esc(r.place)}">
         <label>কত ব্যাগ</label><input id="ad_bags" type="number" value="${Number(r.bags)||1}" min="1" max="99">
         <label>নতুন প্রমাণের ছবি (ঐচ্ছিক)</label><input id="ad_file" type="file" accept="image/*">
-        ${r.proof?`<a href="${esc(r.proof)}" target="_blank" rel="noopener"><img src="${esc(r.proof)}" alt="প্রমাণ" style="max-height:130px;border-radius:10px;border:1px solid var(--line)"></a>`:""}
+        ${proofUrlOf(r)?`<a href="${esc(proofUrlOf(r))}" target="_blank" rel="noopener"><img src="${esc(proofUrlOf(r))}" alt="প্রমাণ" style="max-height:130px;border-radius:10px;border:1px solid var(--line)"></a>`:""}
         <label>রোগীর নাম (ঐচ্ছিক)</label><input id="ad_pat" value="${esc(r.patient||'')}">
         <label>মন্তব্য</label><input id="ad_note" value="${esc(r.note||'')}">
       </div>`,
@@ -7020,6 +7075,12 @@ function initPage() {
       if(meta&&meta.node==="donors"){ try{ refreshAccounts(); }catch(e){ console.warn("accounts refresh:",e&&e.message); } }
       paintNav();paintTop();
       if(!approvedDonationBackfillRun&&(meta&&(meta.node==="donors"||meta.node==="donations")))backfillApprovedDonations();
+      /* donations node বদলালে (অন্য ডিভাইস/প্যানেল থেকেও) duplicate পরিষ্কার +
+         donor aggregate মিলিয়ে নেওয়া হয় (debounced) */
+      if(meta&&meta.node==="donations"){
+        clearTimeout(reconcileT);
+        reconcileT=setTimeout(()=>reconcileApprovedDonationsScreen(),1200);
+      }
       const node=meta&&meta.node;
       if(node){
         const affected=NODE_SCREENS[node];

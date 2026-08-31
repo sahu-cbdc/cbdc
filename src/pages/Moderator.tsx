@@ -19,6 +19,7 @@ import { uploadImage as imgbbUploadImage } from "../lib/imgbb";
 import {
   donationVerKey,
   safeDonationId,
+  donorStatsFromRecords,
   makeApprovedDonationRecord,
 } from "../lib/donationLog";
 import SITE from "../config/site";
@@ -3992,18 +3993,35 @@ function initPage() {
           ||DB.donors.find(x=>q.donorId&&x.id===q.donorId)
           ||DB.donors.find(x=>x.name===q.name);
         if(d){
-          /* One approved donation event = one life. `bags` is a separate metric. */
+          /* One approved donation event = one life. `bags` is a separate metric.
+             ডুপ্লিকেট প্রতিরোধ: একই event (date|place) অন্য id-তে থাকলে পুরোনো
+             record সরানো হয়; পরিসংখ্যান increment-এ নয় — RTDB-র পূর্ণ তালিকা
+             থেকে পুনরায় হিসাব করা হয়, তাই donor history কখনো approved
+             তালিকা থেকে সরে যায় না। */
           const bags=Math.max(1,Math.floor(Number(q.bags)||1));
-          const count=(Number(d.donations)||0)+1;
-          const totalBags=(Number(d.totalBags)||0)+bags;
-          const last=!d.last||q.date>d.last?q.date:d.last;
           const record=await makeApprovedRecord(q,d);
-          approvedDonation={d,count,totalBags,last,record};
+          let donorRecords:any[]=[];
+          try{
+            donorRecords=(((await listOnce(NODES.donations))||[]).filter(
+              r=>r&&String(r.donorId||"")===String(d.id||"")));
+          }catch(e){donorRecords=[]}
+          const eventKey=donationVerKey(q.date,q.place);
+          donorRecords=donorRecords.filter(r=>{
+            if(String(r.id)===String(record.id))return false;
+            if(donationVerKey(r.date,r.place)===eventKey){
+              if(String(r.id||""))paths[`donations/${r.id}`]=null;
+              return false;
+            }
+            return true;
+          });
+          donorRecords.push(record);
+          const stats=donorStatsFromRecords(donorRecords);
+          approvedDonation={d,count:stats.lives,totalBags:stats.bags,last:stats.last,record};
           paths[`donations/${record.id}`]=record;
-          paths[`donors/${d.id}/donations`]=count;
-          paths[`donors/${d.id}/totalDonations`]=count;
-          paths[`donors/${d.id}/totalBags`]=totalBags;
-          if(last)paths[`donors/${d.id}/lastDonationDate`]=last;
+          paths[`donors/${d.id}/donations`]=stats.lives;
+          paths[`donors/${d.id}/totalDonations`]=stats.lives;
+          paths[`donors/${d.id}/totalBags`]=stats.bags;
+          if(stats.last)paths[`donors/${d.id}/lastDonationDate`]=stats.last;
           /* Legacy mirror + authoritative verified list: mark the exact
              user-side record so the donor panel shows it as verified. The
              verifiedDonations list is admin/moderator-only in the RTDB rules. */
