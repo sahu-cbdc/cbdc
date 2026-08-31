@@ -6052,9 +6052,17 @@ function initPage() {
       initSharedFirebase();
       const {subscribeAuthUser} = await import("../lib/authState");
       let authUid = STORE.account.uid || "";
+      /* একই uid-এ বারবার event (Firebase token refresh / duplicate initial
+         snapshot) এলে আবার boot হয় না — অন্যথায় প্রতি event-এ সম্পূর্ণ
+         re-render + নতুন করে RTDB watcher (duplicate listener) জমত,
+         ফলে অপ্রয়োজনীয় লোডিং ও অস্থিরতা দেখা দিত। (authUid localStorage
+         থেকে আসে বলে এখানে আলাদা page-load flag ব্যবহার করা হয়।) */
+      let bootedUid="";
       subscribeAuthUser(async (user)=>{
         if(PUBLIC_MODE)return;
         AUTH_SESSION_READY=true;
+        if(user && bootedUid===user.uid)return;
+        bootedUid=user.uid||"";
         if(!user){
           authUid="";
           stopMyApplicationRequests();
@@ -6087,8 +6095,13 @@ function initPage() {
         authUid = user.uid;
         /* Role gate — Admin/Moderator কখনোই Doner Dashboard ব্যবহার করে না;
            তাদের নিজ নিজ প্যানেলে পাঠিয়ে দেওয়া হয় (role আসে RTDB থেকে)। */
+        /* দ্রুত প্রবেশ — users/{uid} একবারই পড়া হয়: resolveUserRole-কে
+           knownProfile হিসেবে দেওয়া হয় (দ্বিতীয় read নেই) এবং applyRtdbRow-তে
+           একই মান বসে। ফলে লগইনের পর অপ্রয়োজনীয় লোডিং/round-trip নেই। */
+        let row = null;
+        try{ row = await loadUserProfile(user.uid); }catch(e){}
         try{
-          const r = await resolveUserRole({uid:user.uid, email:user.email||"", name:user.displayName||""});
+          const r = await resolveUserRole({uid:user.uid, email:user.email||"", name:user.displayName||""},{knownProfile:row});
           const page = panelForRole(r.role);
           if(page!=="doner"){ navigateToPage(page); return; }
         }catch(e){ console.warn("doner role gate:", e && e.message); }
@@ -6098,8 +6111,6 @@ function initPage() {
         STORE.account.emailVerified = user.emailVerified !== false;
         /* displayName/photo Auth থেকে ব্ল্যাঙ্কেট কপি করি না — RTDB এই uid-এর তথ্যই সত্য */
 
-        let row = null;
-        try{ row = await loadUserProfile(user.uid); }catch(e){}
         applyRtdbRow(user.uid, row, user);
         setMyApplicationsFromUser(user.uid,row);
         // users/{uid} এ donor না থাকলেও existing donor record (donors/members/queue) UID দিয়ে detect

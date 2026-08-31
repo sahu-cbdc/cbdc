@@ -25,8 +25,8 @@
  *  হলে সেটি স্পর্শ করা হয় না।
  */
 
-import { ApiError, isAuthUid, type DeleteIo } from "./deleteApi";
-import { emailIndexPath } from "./identityKey";
+import { ApiError, isAuthUid, type DeleteIo } from "./deleteApi.ts";
+import { emailIndexPath } from "./identityKey.ts";
 
 export type DedupeIo = {
   verifyToken(idToken: string): Promise<{ uid: string } | null>;

@@ -5150,15 +5150,29 @@ function initPage() {
       try{
         initSharedFirebase();
         const {subscribeAuthUser}=await import("../lib/authState");
+        /* একই uid-এ বারবার event (Firebase token refresh / duplicate initial
+           snapshot) এলে আবার boot হয় না — অন্যথায় প্রতি event-এ সম্পূর্ণ
+           re-render + নতুন করে RTDB watcher (duplicate listener) জমত,
+           ফলে অপ্রয়োজনীয় লোডিং ও অস্থিরতা দেখা দিত। শুধু logout (null) বা
+           অন্য uid-এ স্যুইচ করলেই আবার কাজ হয়। */
+        let bootedUid="";
         subscribeAuthUser(async (user)=>{
           if(!user){
+            bootedUid="";
             navigateToPage("home");
             return;
           }
+          if(bootedUid===user.uid)return;
+          bootedUid=user.uid;
           const email=String(user.email||"").toLowerCase();
+          /* দ্রুত প্রবেশ — users/{uid} একবারই পড়া হয়: resolveUserRole-কে
+             knownProfile হিসেবে দেওয়া হয় (দ্বিতীয় read নেই) এবং applyMeRow-তে
+             একই মান বসে। ফলে লগইনের পর অপ্রয়োজনীয় লোডিং/round-trip নেই। */
+          let profileRow=null;
+          try{ profileRow=await getRow(NODES.users,user.uid); }catch(e){console.warn("profile load:",e&&e.message)}
           let resolved={role:"donor",name:"",permissions:[],staff:null};
           try{
-            resolved=await resolveUserRole({uid:user.uid,email,name:user.displayName||""});
+            resolved=await resolveUserRole({uid:user.uid,email,name:user.displayName||""},{knownProfile:profileRow});
           }catch(e){console.warn("role lookup:",e&&e.message)}
 
           const target=panelForRole(resolved.role);          // doner | moderator | admin
@@ -5175,7 +5189,7 @@ function initPage() {
           /* profile-এর authoritative উৎস RTDB users/{uid} — admins রেকর্ড ও Auth
              display name শুধু fallback (default যেন RTDB-র জায়গা নেয় না)।
              অন্য ডিভাইস/ব্রাউজার থেকে লগইন করলেও এখান থেকেই সব তথ্য আসে। */
-          try{ applyMeRow(await getRow(NODES.users,user.uid)); }catch(e){console.warn("profile load:",e&&e.message)}
+          try{ applyMeRow(profileRow); }catch(e){console.warn("profile apply:",e&&e.message)}
           ME.name=ME.name||staff.name||user.displayName||"";
           ME.username=ME.username||staff.username||"";
           ME.designation=ME.designation||staff.designation||"";
@@ -5186,13 +5200,14 @@ function initPage() {
           ME.role=PANEL.id==="admin"?"admin":"mod";
           if(user.photoURL)ME.photo=ME.photo||user.photoURL;
           upsertMySession();
-          await saveMe();
-          /* live sync — নিজের অ্যাকাউন্ট (users/{uid}), টিম (admins),
-             অডিট লগ ও বার্তা: সব RTDB থেকে, সব প্যানেলে একই তথ্য */
-          watchMe(user.uid);watchTeam();watchAudit();watchMessages();watchModeratorNoticeReads();
+          /* আগে প্যানেল দেখাই — RTDB write (session/device সংরক্ষণ) পেছনে চলে */
           applyLogo(document);
           paintTop();paintNav();
           proceed();
+          try{ await saveMe(); }catch(e){ console.warn("me save:",e&&e.message); }
+          /* live sync — নিজের অ্যাকাউন্ট (users/{uid}), টিম (admins),
+             অডিট লগ ও বার্তা: সব RTDB থেকে, সব প্যানেলে একই তথ্য */
+          watchMe(user.uid);watchTeam();watchAudit();watchMessages();watchModeratorNoticeReads();
         });
       }catch(e){ console.warn("panel auth:", e&&e.message); proceed(); }
     })();
