@@ -200,6 +200,38 @@ export async function handleAdminEntityDelete(
     : deleteDonorIdEntity(input, caller.uid, io);
 }
 
+/**
+ * সার্ভার কনফিগারেশন যাচাই — Admin panel ডিলিট শুরু করার **আগে** জানতে পারে
+ * server-side secret (FIREBASE_SERVICE_ACCOUNT) কনফিগার করা আছে কি না।
+ *
+ * এতে "মুছে ফেলা হচ্ছে… (১/১)" দেখিয়ে পরে config-error দেখানোর বিভ্রান্তিকর
+ * অভিজ্ঞতা থাকে না — secret না থাকলে লিংকড-লগইন ডোনারের ডিলিট শুরুই হয় না,
+ * একটিই স্পষ্ট বার্তা দেখানো হয় (আংশিক/partial delete-এর কোনো সুযোগ নেই)।
+ *
+ * নিরাপত্তা: deletion endpoint-এর মতোই token + active admin role যাচাই হয় —
+ * কনফিগারেশনের অবস্থা শুধুই অ্যাডমিন দেখতে পারেন; secret-এর মান কখনো ফেরত
+ * যায় না, শুধুমাত্র configured কি না (boolean)।
+ */
+export async function handleAdminConfigCheck(
+  input: { idToken?: string } | null | undefined,
+  io: DeleteIo,
+  config: { serviceAccountConfigured: boolean },
+): Promise<{ ok: true; serviceAccountConfigured: boolean }> {
+  const idToken = String(input?.idToken ?? "").trim();
+  if (!idToken) throw new ApiError(401, "অনুমোদন প্রয়োজন — লগইন করে আবার চেষ্টা করুন।");
+  const caller = await io.verifyToken(idToken).catch(() => null);
+  if (!caller || !caller.uid) {
+    throw new ApiError(401, "টোকেন যাচাই ব্যর্থ হয়েছে — আবার লগইন করুন।");
+  }
+  const me = (await io.get(`admins/${caller.uid}`).catch(() => null)) as any;
+  const role = String((me && me.role) || "").toLowerCase();
+  const status = String((me && me.status) || "active").toLowerCase();
+  if (role !== "admin" || status === "disabled") {
+    throw new ApiError(403, "শুধু অ্যাডমিন এই কাজ করতে পারেন।");
+  }
+  return { ok: true, serviceAccountConfigured: !!config.serviceAccountConfigured };
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    Account entity — users/{uid} · admins/{uid} · accounts/* + লগইন
    (Firebase Authentication account সহ; ডোনার আইডি, members, queue,

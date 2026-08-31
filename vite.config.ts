@@ -3,11 +3,12 @@ import react from "@vitejs/plugin-react";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { handleAdminEntityDelete } from "./server/deleteApi";
+import { handleAdminEntityDelete, handleAdminConfigCheck } from "./server/deleteApi";
 import { handleAdminDedupe } from "./server/dedupeApi";
 import { handleDonorApply } from "./server/applyApi";
 import { handleResolveLegacy } from "./server/resolveLegacy";
 import { makeApplyIo, makeHttpIo, makePrivilegedIo } from "./server/httpIo";
+import { serviceAccountConfigured } from "./server/authAdmin";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Admin Panel → "ওয়েবসাইট" সেটিংস ↔ Main Website-এর src/config/site.ts
@@ -173,9 +174,10 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
         const apiPath = url.replace(/\/+$/, "");
         const isDeleteApi = apiPath.endsWith("/api/admin/delete");
         const isDedupeApi = apiPath.endsWith("/api/admin/dedupe");
+        const isConfigCheckApi = apiPath.endsWith("/api/admin/config-check");
         const isResolveApi = apiPath.endsWith("/api/account/resolve-legacy");
         const isApplyApi = apiPath.endsWith("/api/donor/apply");
-        if (!isDeleteApi && !isDedupeApi && !isResolveApi && !isApplyApi) return next();
+        if (!isDeleteApi && !isDedupeApi && !isConfigCheckApi && !isResolveApi && !isApplyApi) return next();
         /* same-origin যাচাই — cross-site থেকে token-সহ delete বন্ধ */
         const host = String(req.headers.host || "").split(":")[0];
         const origin = String(req.headers.origin || req.headers.referer || "");
@@ -217,7 +219,14 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
                 FIREBASE_PROJECT_ID: devEnv.FIREBASE_PROJECT_ID || "",
               };
               let result: unknown;
-              if (isDedupeApi) {
+              if (isConfigCheckApi) {
+                /* ডিলিট preflight — secret কনফিগার আছে কি না (মান নয়, শুধু boolean) */
+                result = await handleAdminConfigCheck(
+                  { idToken },
+                  makeHttpIo(serverEnv, idToken),
+                  { serviceAccountConfigured: serviceAccountConfigured(serverEnv) },
+                );
+              } else if (isDedupeApi) {
                 result = await handleAdminDedupe(
                   { apply: payload.apply === true, idToken },
                   makeHttpIo(serverEnv, idToken),

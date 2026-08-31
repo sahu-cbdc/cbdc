@@ -21,6 +21,7 @@ import {
   safeDonationId,
   donorStatsFromRecords,
   makeApprovedDonationRecord,
+  writeApprovedDonation,
 } from "../lib/donationLog";
 import SITE from "../config/site";
 import { noticeVisibleTo, noticeReadKey, markNoticeRead, markAllNoticesRead, watchNoticeReads } from "../lib/notice";
@@ -800,1374 +801,26 @@ function initPage() {
   const AV=(g,p)=>p||("data:image/svg+xml;utf8,"+encodeURIComponent(g==="মহিলা"
    ?`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect width="80" height="80" fill="#ffe4ef"/><path d="M18 25c0-9 7-13 22-13s22 4 22 13v8c0 9-7 13-22 13S18 42 18 33z" fill="#d76a9a"/><circle cx="40" cy="53" r="14" fill="#e8a8c2"/><path d="M22 70c0-11 8-17 18-17s18 6 18 17z" fill="#d76a9a"/></svg>`
    :`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect width="80" height="80" fill="#dcedfb"/><circle cx="40" cy="29" r="17" fill="#4a90d9"/><path d="M20 69c0-14 9-22 20-22s20 8 20 22z" fill="#4a90d9"/></svg>`));
-  /* ══════════ i18n — DOM-level translation layer ══════════
-     Bangla stays the source of truth in every template; when English is on,
-     the rendered DOM is translated in place. New features get translated
-     automatically as long as their strings exist in DICT.               */
-  const DICT_EN={
-  "পাসওয়ার্ড ভুলে গেছেন?":"Forgot password?",
-  "ইমেইল বা মোবাইলে OTP পাঠানো হবে":"An OTP will be sent to your email or phone",
-  "এই অ্যাকাউন্টের ইমেইলেই লিংক যাবে।":"The link goes to this account's email.",
-  "OTP চাওয়া হয়েছে":"OTP requested",
-  "ইমেইল না পেলে স্প্যাম ফোল্ডার দেখুন।":"If you don't see it, check your spam folder.",
-  "এই ঠিকানায় OTP পাঠানো হয়েছে।":"An OTP has been sent to this address.",
-  "OTP পাঠানো হয়েছে":"OTP sent",
-  "লিংক পাঠানো হয়েছে":"Link sent",
-  "লিংক পাঠান":"Send link",
-  "সঠিক ইমেইল ঠিকানা দিন":"Enter a valid email address",
-  "ইমেইল ঠিকানা":"Email address",
-  "অ্যাকাউন্ট, দায়িত্ব ও আচরণবিধি":"Account, duties and code of conduct",
-  "আপনার তথ্য কীভাবে ব্যবহার হয়":"How your information is used",
-  "যোগ্যতা, প্রস্তুতি ও নিরাপত্তা":"Eligibility, preparation and safety",
-  "সর্বশেষ হালনাগাদ:":"Last updated:",
-  "১ আগস্ট ২০২৬":"1 August 2026",
-  "তথ্য নামান, অ্যাকাউন্ট মুছুন":"Download data, delete account",
-  "অনুরোধ করার পর ২৪ ঘণ্টার মধ্যে অ্যাকাউন্ট ও এর সাথে সম্পর্কিত সকল ডাটা মুছে যাবে":"The account and all related data will be deleted within 24 hours of the request",
-  "অনুরোধ গ্রহণ করা হয়েছে":"Request received",
-  "অনুরোধ পাঠানো হয়েছে":"Request sent",
-  "অ্যাকাউন্ট মুছে ফেলার অনুরোধ":"Account deletion request",
-  "২৪ ঘণ্টার মধ্যে কার্যকর":"Takes effect within 24 hours",
-  "এর ভিত্তিতেই ৯০ দিনের বিশ্রামের হিসাব হয় — বিশ্রামে থাকলে আপনাকে জরুরি ডাক পাঠানো হবে না।":"It drives the 90-day rest countdown — while you are resting you will not receive emergency calls.",
-  "শেষ রক্তদানের পর অন্তত ৯০ দিন বিরতি দিতে হবে। এর মধ্যে নতুন তারিখ দিলে সতর্কবার্তা দেখাবে।":"You must wait at least 90 days after your last donation. Adding a closer date shows a warning.",
-  "ভুল তথ্য দিলে রেকর্ড বাতিল হবে এবং বারবার হলে ডোনার তালিকা থেকে সরিয়ে দেওয়া হতে পারে।":"False entries will be rejected, and repeated cases may get you removed from the donor list.",
-  "আপনি অতীতে বা সম্প্রতি যে রক্তদান করেছেন তার তারিখ ও স্থান। একবারে একটি রক্তদান।":"The date and place of a donation you made, past or recent. One donation at a time.",
-  "অ্যাকাউন্ট থাকবে, শুধু ডোনার তথ্য ও কার্ড সরে যাবে। চাইলে আবার যুক্ত হতে পারবেন।":"Your account stays; only donor details and the card go away. You can rejoin any time.",
-  "ব্লাড ব্যাগের রসিদ বা ছবি থাকলে যাচাই দ্রুত হয়। না থাকলেও যোগ করা যাবে।":"A receipt or photo of the blood bag speeds up verification. You can still add it without one.",
-  "এই সেটিংস শুধু দেখানোর নিয়ম নয় — পাবলিক তালিকা ও সার্চেও প্রয়োগ হবে।":"These settings are enforced in the public list and search too, not just on screen.",
-  "যেকোনো ফোনের ক্যামেরা দিয়ে QR স্ক্যান করলে উপরের সব তথ্য দেখা যাবে এবং":"Scanning the QR with any phone camera shows all of the above and offers to",
-  "QR স্ক্যান করে কার্ডধারীর সাথে যোগাযোগ করুন অথবা উপরের হটলাইনে জানান।":"Scan the QR to contact the card holder, or call the hotline above.",
-  "যাচাইয়ের আগে নিজেই মুছতে পারবেন। যাচাই হয়ে গেলে ক্লাবকে জানাতে হবে।":"You can delete it yourself before verification. After that, tell the club.",
-  "রক্তদানের রেকর্ড (নাম ছাড়া) — কারণ এগুলো অন্যের চিকিৎসার সাথে যুক্ত":"Donation records (without your name) — they are tied to other people's treatment",
-  "ছাপানোর কার্ড ৮৬×৫৪ মিমি — ATM কার্ডের মাপ, মানিব্যাগে রাখা যায়।":"The printable card is 86×54 mm — ATM card size, fits in a wallet.",
-  "আমি নিশ্চিত করছি প্রদত্ত তথ্য সঠিক এবং স্বেচ্ছায় রক্তদানে সম্মত।":"I confirm the information is correct and I consent to donate blood voluntarily.",
-  "নাম, লিঙ্গ, বয়স, এলাকা ও মোবাইল আবার অ্যাকাউন্ট থেকে নেওয়া হবে।":"Name, gender, age, area and mobile will be taken from your account again.",
-  "আমি নিশ্চিত করছি তথ্যগুলো সত্য এবং আমি নিজেই এই রক্তদান করেছি।":"I confirm this information is true and that I made this donation myself.",
-  "একই তারিখ ও একই স্থানের রেকর্ড দ্বিতীয়বার যোগ করা যাবে না।":"A record with the same date and place cannot be added twice.",
-  "সাধারণত ৯০ দিন (৩ মাস) পর পর। অ্যাপে কাউন্টডাউন দেখানো হয়।":"Usually every 90 days (3 months). The app shows a countdown.",
-  "পাবলিক তালিকায় শুধু এলাকা দেখানো হয়, সম্পূর্ণ ঠিকানা নয়।":"Only your area is shown publicly, never the full address.",
-  "নিচের ফর্মে আপনার দেওয়া প্রতিটি রক্তদানের হিসাব যোগ করুন।":"Use the form below to record each blood donation you have made.",
-  "রক্তদানের হিসাব রাখতে আপনার রক্তের গ্রুপ ও তথ্য দরকার":"We need your blood group and details to track donations",
-  "বয়স ১৮–৬০ বছর, ওজন কমপক্ষে ৫০ কেজি এবং সুস্থ শরীর।":"Age 18–60, at least 50 kg, and good health.",
-  "অ্যাডমিন যাচাইয়ের পর এটি আপনার রেকর্ডে যুক্ত হবে।":"It will be added to your record after an admin verifies it.",
-  "সেটিংস → ডোনার → রক্তের গ্রুপ → পরিবর্তনের অনুরোধ।":"Settings → Donor → Blood group → request a change.",
-  "সেটিংস → গোপনীয়তা থেকে আপনি নিজে ঠিক করতে পারেন।":"You decide, in Settings → Privacy.",
-  "ফেসবুক ও WhatsApp-এ শেয়ারের জন্য · ৯০০×১৬০০ px":"For Facebook and WhatsApp · 900×1600 px",
-  "৩–২০ অক্ষর · ছোট হাতের ইংরেজি, সংখ্যা, _ এবং .":"3–20 characters · lowercase letters, numbers, _ and .",
-  "কারো রক্তের প্রয়োজন হলে এখান থেকে আবেদন করুন":"If someone needs blood, request it from here",
-  "আপনার অ্যাকাউন্টের তথ্য নিচে দেখানো হয়েছে —":"Your account details are shown below —",
-  "অ্যাকাউন্ট মুছে ফেলার প্রক্রিয়া শুরু হয়েছে":"Account deletion has started",
-  "ক্লাবের স্বেচ্ছাসেবক যাচাই করবেন। যাচাই হলে":"A club volunteer will verify it. Once verified,",
-  "রসিদ / ব্যাগের ছবি · সর্বোচ্চ ৪ MB · ঐচ্ছিক":"Receipt / bag photo · max 4 MB · optional",
-  "এই তথ্যটি ডোনার তালিকা ও কার্ডে দেখানো হবে।":"This detail appears in the donor list and on your card.",
-  "আপনার অ্যাকাউন্টের পরিবর্তন এখানে দেখা যাবে":"Changes to your account appear here",
-  "অনুরোধ পাঠানো হয়েছে — অ্যাডমিন যাচাই করবেন":"Request sent — an admin will review it",
-  "মুছে ফেলার বদলে এই বিকল্পগুলো ভেবে দেখুন —":"Consider these options instead of deleting —",
-  "শুধু রক্ত-সম্পর্কিত কয়েকটি তথ্য দিলেই হবে":"Just a few blood-related details are needed",
-  "সম্পূর্ণ সুস্থ, কোনো দীর্ঘমেয়াদি রোগ নেই।":"Fully healthy, no chronic illness.",
-  "রোগীর অনুমতি ছাড়া পুরো নাম না লেখাই ভালো":"Better not to write a full name without the patient's consent",
-  "৮৬×৫৪ মিমি, ATM কার্ডের মাপ · ১০১৬×৬৩৮ px":"86×54 mm, ATM card size · 1016×638 px",
-  "লিংকে ক্লিক করলেই নতুন ইমেইল সক্রিয় হবে।":"The new email becomes active once you click the link.",
-  "আপনার গ্রুপের জরুরি ডাক সরাসরি এখানে আসবে":"Emergency calls for your group land right here",
-  "এই ডিভাইসসহ সব জায়গা থেকে বেরিয়ে যাবেন।":"You'll be signed out everywhere, including this device.",
-  "আপনার তথ্য যাচাইয়ের জন্য পাঠানো হয়েছে।":"Your details have been sent for verification.",
-  "সিদ্ধান্ত। এগোনোর আগে ভালোভাবে দেখে নিন।":"decision. Please review it carefully before continuing.",
-  "যুক্ত হলে এখানে ডোনার সেটিংস দেখতে পাবেন":"Once you join, donor settings appear here",
-  "সাধারণত ২৪–৪৮ ঘণ্টার মধ্যে অনুমোদন হয়।":"Approval usually takes 24–48 hours.",
-  "আপনার গ্রুপের নতুন আবেদন এলে জানানো হবে":"You'll be notified about new requests for your group",
-  "বন্ধ থাকলে জরুরি তালিকায় নাম দেখাবে না":"When off, your name won't appear in emergency lists",
-  "ঐচ্ছিক — যেমন: ক্লাবের ক্যাম্পে দিয়েছি":"Optional — e.g. donated at the club camp",
-  "রক্তের গ্রুপ ভুল দিয়েছি, বদলাব কীভাবে?":"I entered the wrong blood group — how do I fix it?",
-  "প্রশ্ন থাকলে ক্লাবের হটলাইনে কল করুন —":"Questions? Call the club hotline —",
-  "যে হাসপাতাল বা ব্লাড ব্যাংকে দিয়েছেন":"The hospital or blood bank where you donated",
-  "রাত ১০টা — সকাল ৭টা (অতিজরুরি ছাড়া)":"10 pm — 7 am (except critical)",
-  "কয়েকটি তথ্য দিলেই যুক্ত হতে পারবেন":"Just a few details and you're in",
-  "আপনি অ্যাকাউন্ট থেকে বেরিয়ে যাবেন।":"You will be signed out of your account.",
-  "বয়স ১৮ থেকে ৬০ বছরের মধ্যে হতে হবে":"Age must be between 18 and 60",
-  "একই তারিখ ও স্থানের রেকর্ড আগেই আছে":"A record with that date and place already exists",
-  "সম্পূর্ণ ঠিকানা কখনো দেখানো হয় না":"full address is never shown",
-  "করার অপশন আসবে — ইন্টারনেট ছাড়াই।":"— no internet needed.",
-  "সব তথ্য অ্যাকাউন্ট থেকে নেওয়া হবে":"Everything now comes from your account",
-  "তারকা (*) চিহ্নিত ঘরগুলো পূরণ করুন":"Please fill in the fields marked *",
-  "১২৩/এ, চকবাজার মেইন রোড, চট্টগ্রাম":"123/A, Chawkbazar Main Road, Chattogram",
-  "অচেনা ডিভাইসে লগইন হলে জানানো হবে":"You'll be notified about logins from unknown devices",
-  "-এর সম্পত্তি · হস্তান্তরযোগ্য নয়":"· not transferable",
-  "রক্তদানের রেকর্ড মুছে ফেলা হয়েছে":"Donation record deleted",
-  "যোগ হয়েছে — যাচাইয়ের অপেক্ষায়":"Added — awaiting verification",
-  "এখনো কোনো রক্তদান যোগ করা হয়নি।":"No donations have been added yet.",
-  "নিরাপত্তার জন্য বন্ধ করা যায় না":"Cannot be turned off, for your security",
-  "অ্যাকাউন্টে বদলালে এখানেও বদলাবে":"Changing it in your account changes it here too",
-  "রিপোর্ট পাঠানো হয়েছে — ধন্যবাদ!":"Report sent — thank you!",
-  "একবার বদলালে সব জায়গায় বদলায়।":"change it once and it changes everywhere.",
-  "আপনার কার্যক্রম এখানে দেখা যাবে":"Your activity will appear here",
-  "শুধু যারা এখন রক্তদানে প্রস্তুত":"Only those ready to donate now",
-  "লেখা উঠবে ও মোট গণনায় যোগ হবে।":"will appear and it will count towards your total.",
-  "রক্তের গ্রুপ জানালে আবেদন দেখাব":"Tell us your blood group and we'll show requests",
-  "রক্ত পাওয়া গেছে নিশ্চিত করছেন।":"You are confirming that blood was found.",
-  "নতুন পাসওয়ার্ড কমপক্ষে ৬ অক্ষর":"The new password needs at least 6 characters",
-  "নাম, এলাকা বা আইডি দিয়ে খুঁজুন":"Search by name, area or ID",
-  "চট্টগ্রাম মেডিকেল কলেজ হাসপাতাল":"Chittagong Medical College Hospital",
-  "স্ক্যান করে কন্টাক্টে যোগ করুন":"Scan to save as a contact",
-  "সামনে ও পেছনে — দুটি ছবি নামবে":"Front and back — two images will download",
-  "আমাদের সাথে থাকার জন্য ধন্যবাদ":"Thank you for being with us",
-  "কার্ড তৈরি করতে ডোনার তথ্য দিন":"Add your donor details to create a card",
-  "ওই ডিভাইসে আবার লগইন করতে হবে।":"That device will have to log in again.",
-  "এখন অ্যাকাউন্ট থেকে নেওয়া হবে":"now comes from your account",
-  "রক্তের গ্রুপ পরিবর্তনের অনুরোধ":"Blood group change requested",
-  "ভবিষ্যতের তারিখ দেওয়া যাবে না":"You can't use a future date",
-  "পাসওয়ার্ড দিয়ে নিশ্চিত করুন":"Confirm with your password",
-  "নাম কমপক্ষে ২ অক্ষরের হতে হবে":"Name must be at least 2 characters",
-  "ফিল্টার বদলে আবার চেষ্টা করুন":"Try changing the filters",
-  "Google অ্যাকাউন্ট থেকে নেওয়া":"Taken from your Google account",
-  "নতুন কিছু এলে এখানে দেখা যাবে":"Anything new will show up here",
-  "পাসওয়ার্ড, ডিভাইস, কার্যকলাপ":"Password, devices, activity",
-  "সম্পন্ন হিসেবে চিহ্নিত করবেন?":"Mark as completed?",
-  "রক্তদাতারা আর দেখতে পাবেন না।":"Donors will no longer see it.",
-  "৩–২০ অক্ষর · শুধু a-z 0-9 _ .":"3–20 characters · only a-z 0-9 _ .",
-  "রোগীর অবস্থা, বিশেষ নির্দেশনা":"Patient's condition, special instructions",
-  "স্থান বা হাসপাতালের নাম লিখুন":"Enter the place or hospital",
-  "আপনার ডোনার প্রোফাইল অনুমোদিত":"Your donor profile is approved",
-  "আগে রক্তদাতা হিসেবে যুক্ত হন":"Join as a donor first",
-  "ঐচ্ছিক — না জানলে খালি রাখুন":"Optional — leave blank if unknown",
-  "অন্য গ্রুপের আবেদন দেখাবে না":"Requests for other groups are hidden",
-  "কতদিন পরপর রক্ত দেওয়া যায়?":"How often can I donate?",
-  "তথ্য যাচাই হতে কত সময় লাগে?":"How long does verification take?",
-  "ডোনার তালিকা থেকে সরে যাবেন?":"Leave the donor list?",
-  "এই username ইতিমধ্যে ব্যবহৃত":"That username is taken",
-  "কোনো রক্তদাতা পাওয়া যায়নি":"No donors found",
-  "আমার প্রোফাইল কে দেখতে পাবে":"Who can see my profile",
-  "তথ্য বদলাতে অ্যাকাউন্টে যান":"To change them, go to your account",
-  "আপনি এখনো কোনো আবেদন করেননি":"You haven't made any requests yet",
-  "আপনার তালিকা থেকে সরে যাবে।":"It will disappear from your list.",
-  "৪ ঘণ্টার জন্য বন্ধ রাখা হলো":"Paused for 4 hours",
-  "ডোনার তালিকা থেকে সরে গেছেন":"You left the donor list",
-  "পরে আবার আবেদন করতে পারবেন।":"You can apply again later.",
-  "কোনো রোগ বা ওষুধ চলছে কি না":"Any illness or medication",
-  "শুধু এলাকা/জেলা দেখানো হয়।":"only the area/district is shown.",
-  "ম্যাক্স হাসপাতাল, মেহেদীবাগ":"Max Hospital, Mehedibag",
-  "চকবাজার ব্লাড ডোনার'স ক্লাব":"Chawkbazar Blood Donor's Club",
-  "আপনার তথ্য যাচাই করা হচ্ছে":"Your details are being verified",
-  "ডোনার তালিকায় দেখানো তথ্য":"Details shown in the donor list",
-  "৩০ দিনের মধ্যে ফেরানো যাবে":"Recoverable within 30 days",
-  "১১ সংখ্যার বাংলাদেশি নম্বর":"11-digit Bangladeshi number",
-  "রসিদ থাকলে যাচাই দ্রুত হয়":"A receipt speeds up verification",
-  "স্ক্যান করলে সব তথ্য পাবেন":"Scan for all the details",
-  "এটি আপনার বর্তমান username":"That is already your username",
-  "পাসওয়ার্ড পরিবর্তন হয়েছে":"Password changed",
-  "রক্তের গ্রুপ নির্বাচন করুন":"Choose your blood group",
-  "তথ্য সত্য — এই ঘরে টিক দিন":"Please tick the box confirming it's true",
-  "রেড ক্রিসেন্ট ব্লাড ব্যাংক":"Red Crescent Blood Bank",
-  "এখন থেকে তালিকায় দৃশ্যমান":"You're now visible in the list",
-  "সঠিক ১১ সংখ্যার নম্বর দিন":"Enter a valid 11-digit number",
-  "ডোনার তালিকা থেকে সরে যান":"Leave the donor list",
-  "বন্ধ করলে সার্চে আসবেন না":"Turn off and you won't appear in search",
-  "আমি এখন রক্তদানে প্রস্তুত":"I'm ready to donate now",
-  "নতুন আবেদন এলে জানানো হবে":"You'll be told about new requests",
-  "আমার নম্বর কে দেখতে পায়?":"Who can see my number?",
-  "সংরক্ষণ থেকে সরানো হয়েছে":"Removed from saved",
-  "প্রোফাইল ছবি সরানো হয়েছে":"Profile photo removed",
-  "প্রাপ্যতা বন্ধ করা হয়েছে":"Availability turned off",
-  "বিজ্ঞপ্তি বন্ধ করা হয়েছে":"Notifications turned off",
-  "রক্তদাতা হিসেবে যুক্ত হন":"Join as a donor",
-  "নতুন username দিয়ে লগইন":"log in with the new username",
-  "যাচাই মেইল পাঠানো হয়েছে":"Verification email sent",
-  "স্বাস্থ্য সম্পর্কিত তথ্য":"Health information",
-  "অন্য ব্যবহারকারীর অভিযোগ":"Report another user",
-  "এখন কোনো জরুরি আবেদন নেই":"No emergency requests right now",
-  "প্রশ্ন, সমস্যা, নীতিমালা":"Questions, problems, policies",
-  "তথ্য নামান, লগআউট, মুছুন":"Download data, log out, delete",
-  "রক্তদাতা হতে কী কী লাগে?":"What do I need to become a donor?",
-  "মনে না থাকলে খালি রাখুন।":"Leave blank if you don't remember.",
-  "Username পরিবর্তন হয়েছে":"Username changed",
-  "দুটি পাসওয়ার্ড মিলছে না":"The passwords don't match",
-  "নতুন গ্রুপ নির্বাচন করুন":"Choose a new group",
-  "যোগাযোগের নম্বর সঠিক নয়":"That contact number isn't valid",
-  "প্রোফাইল গোপন করা হয়েছে":"Profile hidden",
-  "হুবহু \"মুছে ফেলুন\" লিখুন":"Type \"মুছে ফেলুন\" exactly",
-  "যেমন: চমেক ব্লাড ব্যাংক":"e.g. CMCH Blood Bank",
-  "আপনার জন্য গুরুত্বপূর্ণ":"Important for you",
-  "অতিরিক্ত নিরাপত্তা স্তর":"An extra layer of security",
-  "ছাপানোর কার্ড — দুই পাশ":"Printable card — both sides",
-  "শুধু ডোনার তালিকার জন্য":"For the donor list only",
-  "সর্বশেষ রক্তদানের তারিখ":"Date of your last donation",
-  "নাম, ছবি, ইমেইল, মোবাইল":"Name, photo, email, mobile",
-  "রক্তের তথ্য ও প্রাপ্যতা":"Blood details and availability",
-  "রক্তদাতা তালিকায় দেখান":"Show me in the donor list",
-  "জরুরি আবেদনের বিজ্ঞপ্তি":"Emergency request alerts",
-  "বিজ্ঞপ্তির সংখ্যা দেখান":"Show notification count",
-  "আবেদন প্রত্যাহার করবেন?":"Withdraw your application?",
-  "এটি আপনার বর্তমান ইমেইল":"That is already your email",
-  "ইমেইল পরিবর্তনের অনুরোধ":"Email change requested",
-  "WhatsApp নম্বর সঠিক নয়":"That WhatsApp number isn't valid",
-  "ক্লাবের রক্তদান ক্যাম্প":"Club donation camp",
-  "চকবাজার রক্তদান ক্যাম্প":"Chawkbazar donation camp",
-  "রক্ত দিন · জীবন বাঁচান":"Give blood · Save lives",
-  "রক্তদান যোগ করা হয়েছে":"Donation added",
-  "গ্রুপ ও এলাকা অনুযায়ী":"By group and area",
-  "রক্তদাতা / জরুরি আবেদন":"Donors / emergency requests",
-  "আপনি অনুমোদিত রক্তদাতা":"You are an approved donor",
-  "আপনার তথ্য যাচাই চলছে।":"Your details are being verified.",
-  "শুরু করার আগে পড়ে নিন":"Read this before you start",
-  "যাচাই না হওয়া পর্যন্ত":"Until it is verified,",
-  "অন্য কারো পক্ষে আবেদন?":"Requesting on someone's behalf?",
-  "সব বিজ্ঞপ্তি বন্ধ করুন":"Turn off all notifications",
-  "অ্যাকাউন্ট ব্যবস্থাপনা":"Account management",
-  "শুধু আমার রক্তের গ্রুপ":"Only my blood group",
-  "অনুমোদন, যাচাই ইত্যাদি":"Approvals, verifications and so on",
-  "চলমান প্রভাব চালু/বন্ধ":"Turn motion effects on or off",
-  "দুই পাশই নামানো হয়েছে":"Both sides downloaded",
-  "সব পড়া হিসেবে চিহ্নিত":"Marked all as read",
-  "ছবি ৪ MB এর কম হতে হবে":"The photo must be under 4 MB",
-  "বর্তমান পাসওয়ার্ড দিন":"Enter your current password",
-  "ছবি ৪ MB-এর কম হতে হবে":"The photo must be under 4 MB",
-  "প্রোফাইল তথ্য পরিবর্তন":"Profile details changed",
-  "আপনি এখনো রক্তদাতা নন":"You are not a donor yet",
-  "নতুন ডিভাইস থেকে লগইন":"Login from a new device",
-  "নতুন রক্তদানের রেকর্ড":"New donation record",
-  "কী কী পরিবর্তন হয়েছে":"What has changed",
-  "মোবাইল নম্বর কে দেখবে":"Who can see my mobile number",
-  "শুধু যারা আবেদন করেছে":"Only those who requested blood",
-  "পাবলিক তালিকায় আপনার":"In the public list your",
-  "অ্যাকাউন্ট মুছে ফেলুন":"Delete account",
-  "এখন রক্তদানে প্রস্তুত":"Ready to donate now",
-  "ডিভাইস বের করা হয়েছে":"Device signed out",
-  "ডাউনলোড ব্যর্থ হয়েছে":"Download failed",
-  "প্রত্যাহার করা হয়েছে":"Withdrawn",
-  "সব ডিভাইস থেকে লগআউট?":"Log out everywhere?",
-  "প্রোফাইল ছবি পরিবর্তন":"Change profile photo",
-  "মোবাইল নম্বর পরিবর্তন":"Change mobile number",
-  "রক্তের গ্রুপ পরিবর্তন":"Change blood group",
-  "রক্তদাতা হিসেবে আবেদন":"Donor application",
-  "কী সমস্যা হচ্ছে লিখুন":"Tell us what's wrong",
-  "O+ রক্তের জরুরি আবেদন":"Urgent O+ blood request",
-  "রক্তদান যাচাই সম্পন্ন":"Donation verified",
-  "সাম্প্রতিক কার্যক্রম":"Recent activity",
-  "অ্যাকাউন্ট কার্যকলাপ":"Account activity",
-  "শুধু প্রয়োজনের সময়":"Only when needed",
-  "সব ডিভাইস থেকে লগআউট":"Log out of all devices",
-  "৮৬×৫৪ মিমি · ১টি ছবি":"86×54 mm · 1 image",
-  "শেয়ার কার্ড — লম্বা":"Share card — portrait",
-  "প্রাপ্যতা বন্ধ রাখুন":"Turn availability off",
-  "রক্তদাতা খোঁজা হচ্ছে":"Searching for donors",
-  "WhatsApp নম্বর দেখান":"Show my WhatsApp number",
-  "দূরের আবেদন বাদ যাবে":"Distant requests are skipped",
-  "রাতে বিরক্ত করবেন না":"Do not disturb at night",
-  "সাধারণত ২৪–৪৮ ঘণ্টা।":"Usually 24–48 hours.",
-  "আবেদন সম্পন্ন হয়েছে":"Request completed",
-  "শারীরিক অবস্থা / রোগ":"Medical conditions",
-  "নম্বর সংরক্ষণ হয়েছে":"Number saved",
-  "ফর্ম খালি করা হয়েছে":"Form cleared",
-  "অ্যাকাউন্ট মুছে ফেলা":"Account deletion",
-  "অবস্থা বদলানো হয়েছে":"Status changed",
-  "রক্তদাতা পাওয়া গেছে":"donors found",
-  "ইম্পেরিয়াল হাসপাতাল":"Imperial Hospital",
-  "মেট্রোপলিটন হাসপাতাল":"Metropolitan Hospital",
-  "স্বেচ্ছায় রক্তদাতা":"Voluntary blood donor",
-  "পাসওয়ার্ড পরিবর্তন":"Change password",
-  "ডোনার তথ্য পরিবর্তন":"Donor details changed",
-  "রক্তদানের প্রস্তুতি":"Donation readiness",
-  "রোগীর জন্য রক্ত চান":"Request blood for a patient",
-  "দুই-ধাপ যাচাই (2FA)":"Two-factor authentication (2FA)",
-  "শুধু লগইন করা সদস্য":"Logged-in members only",
-  "রক্ত সম্পর্কিত তথ্য":"Blood information",
-  "যাচাইয়ের অপেক্ষায়":"Awaiting verification",
-  "যেদিন রক্ত দিয়েছেন":"The day you gave blood",
-  "কন্টাক্ট হিসেবে সেভ":"save it as a contact",
-  "অ্যাকাউন্ট থেকে নিন":"Use my account value",
-  "জরুরি (আজকের মধ্যে)":"Urgent (today)",
-  "আমি নিজেই আবেদনকারী":"I am the requester",
-  "তালিকা নামানো হচ্ছে":"Downloading the list",
-  "✓ রক্তদানে প্রস্তুত":"✓ Ready to donate",
-  "থিম, ভাষা, প্রদর্শন":"Theme, language, display",
-  "ডিভাইসটি বের করবেন?":"Sign this device out?",
-  "ডিভাইস সরানো হয়েছে":"Device removed",
-  "ডিজিটাল ডোনার কার্ড":"DIGITAL DONOR CARD",
-  "কার্ড নামানো হয়েছে":"Card downloaded",
-  "ডোনার কার্ড ডাউনলোড":"Donor card downloaded",
-  "সাড়া জানানো হয়েছে":"Your response was sent",
-  "রক্তদানের তারিখ দিন":"Enter the donation date",
-  "চট্টগ্রাম, বাংলাদেশ":"Chattogram, Bangladesh",
-  "জরুরি রক্তের আবেদন":"Emergency blood requests",
-  "আমার সব তথ্য নামান":"Download all my data",
-  "CBDC · সংস্করণ ১.০":"CBDC · Version 1.0",
-  "অ্যাকাউন্ট রিকভারি":"Account recovery",
-  "কোনো বিজ্ঞপ্তি নেই":"No notifications",
-  "ভবিষ্যতে এই নম্বরে":"In future this number will get",
-  "বর্তমান পাসওয়ার্ড":"Current password",
-  "মনে নেই / প্রথমবার":"Don't remember / first time",
-  "পরেও বদলাতে পারবেন":"You can change this later",
-  "অতিজরুরি (২ ঘণ্টা)":"Critical (within 2 hours)",
-  "প্রোফাইল গোপন করুন":"Hide your profile",
-  "কোনো কার্যকলাপ নেই":"No activity",
-  "রক্তের গ্রুপ দেখান":"Show my blood group",
-  "দিন পর দিতে পারবেন":"days until you can donate",
-  "একই দান দুইবার নয়":"No duplicate donations",
-  "প্রোফাইল সম্পর্কিত":"Profile related",
-  "ব্যবহারের শর্তাবলী":"Terms of use",
-  "রক্তদান নির্দেশিকা":"Blood donation guide",
-  "চকবাজার, চট্টগ্রাম":"Chawkbazar, Chattogram",
-  "সংরক্ষণ করা হয়েছে":"Saved",
-  "জরুরি আবেদনে সাড়া":"Responded to an emergency request",
-  "আবেদন বাতিল করবেন?":"Cancel this request?",
-  "আবেদন বাতিল হয়েছে":"Request cancelled",
-  "সঠিক জন্মতারিখ দিন":"Enter a valid date of birth",
-  "পরীক্ষা করা হচ্ছে…":"Checking…",
-  "রক্তদানে প্রস্তুত":"Ready to donate",
-  "Username পরিবর্তন":"Change username",
-  "নতুন লগইন সতর্কতা":"New login alerts",
-  "নিরাপত্তা সতর্কতা":"Security alerts",
-  "Google অ্যাকাউন্ট":"Google account",
-  "আবার লিখতে হবে না":"no need to type them again",
-  "হাসপাতালের ঠিকানা":"Hospital address",
-  "কার্ড তৈরি হচ্ছে…":"Creating your card…",
-  "এই আবেদন লুকাবেন?":"Hide this request?",
-  "৯০ দিনের কম বিরতি":"Less than 90 days apart",
-  "তারিখ ও স্থান দিন":"Enter the date and place",
-  "তথ্য নামানো হচ্ছে":"Downloading your data",
-  "চমেক ব্লাড ব্যাংক":"CMCH Blood Bank",
-  "সিএসসিআর হাসপাতাল":"CSCR Hospital",
-  "পার্কভিউ হাসপাতাল":"Parkview Hospital",
-  "চট্টগ্রাম মেডিকেল":"Chittagong Medical",
-  "রক্তদান যোগ করুন":"Add a donation",
-  "স্থান / হাসপাতাল":"Place / hospital",
-  "আবেদন জমা হয়েছে":"Request submitted",
-  "জীবন বাঁচিয়েছেন":"lives saved",
-  "আবেদন প্রত্যাহার":"Withdraw application",
-  "প্রমাণ দিলে ভালো":"Proof helps",
-  "যাচাইকৃত রক্তদান":"Verified donations",
-  "প্রদর্শনের ঘনত্ব":"Display density",
-  "যাচাই মেইল পাঠান":"Send verification email",
-  "ভুল রক্তের গ্রুপ":"A wrong blood group",
-  "রিপোর্ট / প্রমাণ":"Report / proof",
-  "প্রয়োজনের তারিখ":"Date needed",
-  "আগামীকালের মধ্যে":"By tomorrow",
-  "অ্যাকাউন্ট মুছুন":"Delete account",
-  "কে কী দেখতে পাবে":"Who can see what",
-  "আইকনে লাল সংখ্যা":"A red number on the icon",
-  "ছবি সরানো হয়েছে":"Photo removed",
-  "বিস্তারিত ঠিকানা":"Full address",
-  "ছবি আপডেট হয়েছে":"Photo updated",
-  "সম্মতিতে টিক দিন":"Please tick the consent box",
-  "নতুন জরুরি আবেদন":"New emergency request",
-  "ছবি যুক্ত হয়েছে":"Photo attached",
-  "রেকর্ডটি মুছবেন?":"Delete this record?",
-  "মুছে ফেলা হয়েছে":"Deleted",
-  "CSV নামানো হচ্ছে":"Downloading CSV",
-  "ম্যাক্স হাসপাতাল":"Max Hospital",
-  "স্বেচ্ছা ক্যাম্প":"Voluntary camp",
-  "বর্তমানে সক্রিয়":"Active now",
-  "সর্বশেষ রক্তদান":"Last donation",
-  "রক্তদাতা খুঁজুন":"Find donors",
-  "ক্লাবের যোগাযোগ":"Club contact",
-  "আবেদনগুলো দেখুন":"View requests",
-  "পরবর্তী রক্তদান":"Next donation",
-  "অ্যাকাউন্ট থেকে":"taken from your account",
-  "রক্তদানের তারিখ":"Date of donation",
-  "সাধারণত ১ ব্যাগ":"Usually 1 bag",
-  "বাগ বা ভুল তথ্য":"Bug or wrong information",
-  "সাধারণ জিজ্ঞাসা":"Frequently asked questions",
-  "স্ক্যান করলে সব":"Scan for all",
-  "শুধু সামনের পাশ":"Front side only",
-  "নতুন পাসওয়ার্ড":"New password",
-  "যোগাযোগের নম্বর":"Contact number",
-  "এখন দিতে পারবেন":"You can donate now",
-  "তথ্য কারা দেখবে":"Who sees this",
-  "শুধু আমার এলাকা":"Only my area",
-  "চালু করা হয়েছে":"Turned on",
-  "বন্ধ করা হয়েছে":"Turned off",
-  "তথ্য কপি হয়েছে":"Details copied",
-  "সব রিসেট করবেন?":"Reset everything?",
-  "ছবি পড়া যায়নি":"Could not read the image",
-  "✓ পাওয়া যাচ্ছে":"✓ Available",
-  "কমপক্ষে ৬ অক্ষর":"At least 6 characters",
-  "রোগীর পূর্ণ নাম":"Patient's full name",
-  "জরুরি আবেদন জমা":"Emergency request submitted",
-  "বিস্তারিত লিখুন":"Please add details",
-  "WhatsApp নম্বর":"WhatsApp number",
-  "স্বাস্থ্য তথ্য":"Health information",
-  "সংরক্ষণ হয়েছে":"Saved",
-  "পাসওয়ার্ড দিন":"Enter your password",
-  "প্রাপ্যতা বন্ধ":"Availability off",
-  "ব্যাকআপ পদ্ধতি":"Backup method",
-  "রক্তদানের তথ্য":"Donation details",
-  "QR কোডে কী আছে":"What the QR contains",
-  "এই ডিভাইস থেকে":"From this device",
-  "সব পড়া হয়েছে":"Mark all read",
-  "সক্রিয় থাকবে।":"active.",
-  "আবেদনকারীর নাম":"Requester's name",
-  "না, মুছেই ফেলব":"No, delete it",
-  "৩০ দিনের সুযোগ":"You have 30 days",
-  "মেয়াদোত্তীর্ণ":"Expired",
-  "কখন জানানো হবে":"When you get notified",
-  "৯০ দিনের নিয়ম":"The 90-day rule",
-  "গোপনীয়তা নীতি":"Privacy policy",
-  "কপি করা যায়নি":"Could not copy",
-  "সাড়া দিয়েছেন":"Responded",
-  "ইমেইল পরিবর্তন":"Change email",
-  "সঠিক ইমেইল দিন":"Enter a valid email",
-  "হাসপাতালের নাম":"Hospital name",
-  "ঢাকা, বাংলাদেশ":"Dhaka, Bangladesh",
-  "সাদিয়া আক্তার":"Sadia Akter",
-  "ফারহানা তানজিম":"Farhana Tanzim",
-  "প্রাপ্যতা চালু":"Availability on",
-  "লগইন ও ডিভাইস":"Logins & devices",
-  "পরিবর্তন করুন":"Change",
-  "বর্তমান ইমেইল":"Current email",
-  "নির্বাচন করুন":"Select",
-  "আবেদন জমা দিন":"Submit request",
-  "এখনো কিছু নেই":"Nothing here yet",
-  "ফিল্টার মুছুন":"Clear filters",
-  "এগুলো সাধারণত":"These are normally",
-  "পাওয়া যায়নি":"not found",
-  "আলাদা মান দিন":"Set a different value",
-  "নতুন username":"New username",
-  "পুরোনো ইমেইলই":"the old email stays",
-  "বর্তমান নম্বর":"Current number",
-  "বর্তমান গ্রুপ":"Current group",
-  "অতিরিক্ত তথ্য":"Additional information",
-  "বাগ বা ত্রুটি":"Bug or error",
-  "বিশ্রামে আছেন":"Resting",
-  "অ্যাপের পছন্দ":"App preferences",
-  "লুকানো হয়েছে":"Hidden",
-  "সব থেকে লগআউট":"Log out everywhere",
-  "তবুও যোগ করুন":"Add anyway",
-  "সব রিসেট করুন":"Reset all",
-  "সন্ধানী, চমেক":"Sandhani, CMCH",
-  "জরুরি ক্যাম্প":"Emergency camp",
-  "শাহাদাত আহমেদ":"Shahadat Ahmed",
-  "রেহানা পারভীন":"Rehana Parvin",
-  "তানভীর হোসাইন":"Tanvir Hossain",
-  "রক্তের গ্রুপ":"Blood group",
-  "দেওয়া হয়নি":"Not provided",
-  "প্রমাণ (ছবি)":"Proof (photo)",
-  "সমস্যা জানান":"Report a problem",
-  "স্ক্যান করুন":"Scan me",
-  "কার্ডটি পেলে":"If you find this card",
-  "মোবাইল নম্বর":"Mobile number",
-  "লগইন সুরক্ষা":"Login protection",
-  "কী যোগ করবেন":"What to add",
-  "আগের রক্তদান":"Previous donations",
-  "আপলোড হচ্ছে…":"Uploading…",
-  "অনুরোধ পাঠান":"Send request",
-  "যা মুছে যাবে":"What gets deleted",
-  "নিশ্চিত করতে":"To confirm, type",
-  "লগআউট করবেন?":"Log out?",
-  "সংরক্ষণ করুন":"Save",
-  "সক্রিয় সেশন":"active sessions",
-  "নেওয়া হয় —":"—",
-  "তাহমিনা বেগম":"Tahmina Begum",
-  "রোকেয়া বেগম":"Rokeya Begum",
-  "মেহরাব হোসেন":"Mehrab Hossen",
-  "নুসরাত জাহান":"Nusrat Jahan",
-  "ইকবাল মাহমুদ":"Iqbal Mahmud",
-  "নাজমুল সাকিব":"Nazmul Sakib",
-  "ডোনার অবস্থা":"Donor state",
-  "সাড়াদাতারা":"Responders",
-  "ডোনার কার্ড":"Donor card",
-  "মোট রক্তদান":"Total donations",
-  "রক্তদাতা হন":"Become a donor",
-  "এরপর কী হয়":"What happens next",
-  "দ্রুত উত্তর":"Quick answers",
-  "আপনার ইমেইল":"Your email",
-  "শুভ সন্ধ্যা":"Good evening",
-  "এলাকা দেখান":"Show my area",
-  "মিথ্যা তথ্য":"False information",
-  "ডোনার আপডেট":"Donor updates",
-  "সবসময় চালু":"Always on",
-  "কার্ড নামান":"Download card",
-  "শীঘ্রই আসছে":"Coming soon",
-  "খালি অবস্থা":"Empty state",
-  "রক্তদান যোগ":"Add donation",
-  "রফিক উদ্দিন":"Rafiq Uddin",
-  "সালমা খাতুন":"Salma Khatun",
-  "জসিম উদ্দিন":"Jasim Uddin",
-  "আব্দুল করিম":"Abdul Karim",
-  "মুছে ফেলুন":"Delete",
-  "অ্যাকাউন্ট":"Account",
-  "যাচাই চলছে":"Under review",
-  "আপাতত বন্ধ":"Currently off",
-  "আমার আবেদন":"My requests",
-  "ডোনার তথ্য":"Donor information",
-  "✓ যাচাইকৃত":"✓ Verified",
-  "কার্ডের রং":"Card colour",
-  "তথ্য পাবেন":"the details",
-  "নতুন ইমেইল":"New email",
-  "নতুন নম্বর":"New number",
-  "আবার লিখুন":"Repeat it",
-  "নতুন গ্রুপ":"New group",
-  "এই সপ্তাহে":"This week",
-  "ডোনার আইডি":"Donor ID",
-  "শুভ রাত্রি":"Good night",
-  "পাসওয়ার্ড":"Password",
-  "অ্যানিমেশন":"Animations",
-  "বাতিল করুন":"Cancel it",
-  "রিসেট করুন":"Reset",
-  "প্রত্যাহার":"Withdraw",
-  "খুব দুর্বল":"Very weak",
-  "এলাকা, শহর":"Area, city",
-  "ঘণ্টা বাকি":"hours left",
-  "কবির আহমেদ":"Kabir Ahmed",
-  "নুরুল আমিন":"Nurul Amin",
-  "বিজ্ঞপ্তি":"Notifications",
-  "রোগীর নাম":"Patient name",
-  "জন্মতারিখ":"Date of birth",
-  "নিরাপত্তা":"Security",
-  "দ্রুত কাজ":"Quick actions",
-  "ব্যক্তিগত":"Personal",
-  "এই ডিভাইস":"This device",
-  "প্রাপ্যতা":"Availability",
-  "কেন দরকার":"Why it matters",
-  "খালি করুন":"Clear form",
-  "স্বাভাবিক":"Normal",
-  "হেল্পলাইন":"Helpline",
-  "করতে হবে।":"from then on.",
-  "OTP যাচাই":"OTP verification",
-  "জীবনঝুঁকি":"can be life-threatening",
-  "আবেদনকারী":"Requester",
-  "বন্ধ করুন":"Close",
-  "বিস্তারিত":"Details",
-  "স্ক্রিনশট":"Screenshot",
-  "শুভ দুপুর":"Good afternoon",
-  "নতুন দাতা":"New donor",
-  "শুরু করুন":"Get started",
-  "গোপনীয়তা":"Privacy",
-  "কার্যকলাপ":"Activity",
-  "পূর্ণ নাম":"Full name",
-  "সরে গেছেন":"You have left",
-  "ছবি আপলোড":"Upload a photo",
-  "শক্তিশালী":"Strong",
-  "আমার জন্য":"For me",
-  "সাড়া দিন":"Respond",
-  "ছবি বদলান":"Change photo",
-  "কোতোয়ালী":"Kotwali",
-  "পাহাড়তলী":"Pahartali",
-  "চট্টগ্রাম":"Chattogram",
-  "মেহেদীবাগ":"Mehedibag",
-  "ঘণ্টা আগে":"hours ago",
-  "মিনিট আগে":"min ago",
-  "ডোনার নয়":"Not a donor",
-  "রক্তদাতা":"Donors",
-  "অন্যান্য":"Other",
-  "কত ব্যাগ":"How many bags",
-  "বের করুন":"Sign out",
-  "নীতিমালা":"Policies",
-  "যাচাইকৃত":"Verified",
-  "বিশ্রামে":"Resting",
-  "সব দেখুন":"See all",
-  "সব গ্রুপ":"All groups",
-  "সব এলাকা":"All areas",
-  "প্রোফাইল":"Profile",
-  "সব রিসেট":"Reset all",
-  "বিপজ্জনক":"Danger zone",
-  "ধন্যবাদ!":"Thank you!",
-  "নির্বাচন":"Select",
-  "হাসপাতাল":"Hospital",
-  "যোগ করুন":"Add",
-  "এটি একটি":"This is a",
-  "যা থাকবে":"What stays",
-  "ভুল তথ্য":"Wrong information",
-  "প্রস্তুত":"Ready",
-  "অতিজরুরি":"Critical",
-  "আগামীকাল":"Tomorrow",
-  "শুভ সকাল":"Good morning",
-  "প্রকাশিত":"Published",
-  "সংরক্ষিত":"Saved",
-  "এই কার্ড":"This card is the property of",
-  "পরিবর্তন":"Change",
-  "বাকলিয়া":"Bakalia",
-  "চাঁদগাঁও":"Chandgaon",
-  "পাঁচলাইশ":"Panchlaish",
-  "অনুমোদিত":"Approved",
-  "সংরক্ষণ":"Save",
-  "সম্পন্ন":"Completed",
-  "মনে নেই":"Don't remember",
-  "যোগাযোগ":"Contact",
-  "মন্তব্য":"Note",
-  "বর্তমান":"Current",
-  "জরুরিতা":"Urgency",
-  "স্থায়ী":"permanent",
-  "পরবর্তী":"Next",
-  "পরামর্শ":"Suggestion",
-  "সহায়তা":"Help",
-  "সর্বশেষ":"Last",
-  "ভুল হলে":"If you make a mistake",
-  "সিস্টেম":"System",
-  "সরে যান":"Leave",
-  "মান দিন":"Enter a value",
-  "সংস্করণ":"Version",
-  "কল করুন":"Call",
-  "প্রিন্ট":"Print",
-  "ঠিক আছে":"OK",
-  "চকবাজার":"Chawkbazar",
-  "হালিশহর":"Halishahar",
-  "শাহাদাত":"Shahadat",
-  "দিন আগে":"days ago",
-  "সেটিংস":"Settings",
-  "মোবাইল":"Mobile",
-  "শেয়ার":"Share",
-  "অবস্থা":"Status",
-  "বুঝেছি":"Got it",
-  "ঠিকানা":"Address",
-  "শীঘ্রই":"Soon",
-  "হটলাইন":"Hotline",
-  "পরিচয়":"Identity",
-  "কেউ না":"Nobody",
-  "চেহারা":"Appearance",
-  "দুর্বল":"Weak",
-  "মাঝারি":"Medium",
-  "শক্তি:":"Strength:",
-  "ঐচ্ছিক":"Optional",
-  "প্রিয়":"Save",
-  "খুঁজুন":"Search",
-  "তানভীর":"Tanvir",
-  "আবেদন":"Requests",
-  "বাতিল":"Cancel",
-  "এলাকা":"Area",
-  "পুরুষ":"Male",
-  "মহিলা":"Female",
-  "লিঙ্গ":"Gender",
-  "পেছনে":"Back",
-  "সামনে":"Front",
-  "জরুরি":"Urgent",
-  "গতকাল":"Yesterday",
-  "লুকান":"Hide",
-  "মুছুন":"Delete",
-  "লগআউট":"Log out",
-  "তারিখ":"Date",
-  "ইমেইল":"Email",
-  "হ্যাঁ":"Yes",
-  "উন্নত":"Advanced",
-  "আলাদা":"Custom",
-  "বাংলা":"বাংলা",
-  "লিখুন":"below",
-  "পাঠান":"Send",
-  "সংগঠন":"Organisation",
-  "ডোনার":"Donor",
-  "আঁধার":"Dark",
-  "ওয়েব":"Web",
-  "কার্ড":"Card",
-  "ব্যাগ":"bags",
-  "ফলাফল":"results",
-  "নামান":"Download",
-  "দেখুন":"View",
-  "রহমান":"Rahman",
-  "সাকিব":"Sakib",
-  "ইমরান":"Imran",
-  "যাচাই":"Pending",
-  "বন্ধ":"off",
-  "বয়স":"Age",
-  "সবাই":"Everyone",
-  "আইডি":"ID",
-  "সরান":"Remove",
-  "সময়":"Timing",
-  "ভাষা":"Language",
-  "সেশন":"sessions",
-  "কারণ":"Reason",
-  "এখনই":"Just now",
-  "সবুজ":"Green",
-  "গাঢ়":"Dark",
-  "তথ্য":"Details",
-  "লগইন":"Login",
-  "চালু":"on",
-  "কিমি":"km",
-  "ডেটা":"Data",
-  "খালি":"Empty",
-  "হোম":"Home",
-  "নাম":"Name",
-  "বছর":"yrs",
-  "সফল":"Success",
-  "পরে":"Later",
-  "থিম":"Theme",
-  "ধরন":"Type",
-  "লাল":"Red",
-  "আলো":"Light",
-  "দিন":"days",
-  "যোগ":"Add",
-  "ভরা":"Full",
-  "আজ":"Today",
-  "ঘন":"Compact",
-  "না":"No",
-  "সব":"All",
-  "জন":"",
-  "কল":"Call"
-  };
-  const EN_NUM={"০":"0","১":"1","২":"2","৩":"3","৪":"4","৫":"5","৬":"6","৭":"7","৮":"8","৯":"9"};
-  const TOKEN_EN=[["পুরুষ","Male"],["মহিলা","Female"],["অন্যান্য","Other"],["জরুরি","Urgent"],
-    ["অতিজরুরি","Critical"],["প্রস্তুত","Ready"],["বিশ্রামে","Resting"],["বন্ধ","Off"],["চালু","On"],
-    ["সম্পন্ন","Done"],["যাচাই","Pending"],["সেশন","sessions"],["বাতিল","Cancelled"]];
-  const UNIT_EN=[["বছর","yrs"],["ব্যাগ","bags"],["কিমি","km"],["দিন","days"],["ঘণ্টা","hours"],
-    ["মিনিট","min"],["সেশন","sessions"],["জন","people"],["মাস","months"],["সপ্তাহ","weeks"]];
-  const EN_MON={"জানুয়ারি":"January","ফেব্রুয়ারি":"February","মার্চ":"March","এপ্রিল":"April","মে":"May",
-    "জুন":"June","জুলাই":"July","আগস্ট":"August","সেপ্টেম্বর":"September","অক্টোবর":"October",
-    "নভেম্বর":"November","ডিসেম্বর":"December"};
-  const isEN=()=>ME&&ME.prefs&&ME.prefs.lang==="en";
-  const BN_RE=/[\u0980-\u09FF]/;
-  /* longest-first key list, built once */
-  const DICT_KEYS=Object.keys(DICT_EN).sort((a,b)=>b.length-a.length);
-  /* Proper nouns registered at runtime (donor names, areas, hospitals).
-     Anything on this list is never touched by any rule. */
-  const NO_TR=new Set();
-  function protectNames(list){list.forEach(n=>String(n||"").split(/[\s,·]+/).forEach(w=>{
-    if(w&&/[\u0980-\u09FF]/.test(w))NO_TR.add(w)}))}
-  function tText(raw){
-    const trimmed=raw.trim();
-    if(!trimmed)return raw;
-    const lead=raw.match(/^\s*/)[0], tail=raw.match(/\s*$/)[0];
-    /* 1. exact match — the safe, normal path */
-    if(DICT_EN[trimmed]!==undefined)return lead+DICT_EN[trimmed]+tail;
-    /* 2. sentence built from a known phrase plus a dynamic value:
-          translate the longest known phrase that covers most of the string. */
-    let out=trimmed, hit=false;
-    for(const k of DICT_KEYS){
-      if(k.length<6)continue;                 /* short keys are unsafe inside names */
-      if(!out.includes(k))continue;
-      /* NEVER translate inside a proper noun: a key that lands in the middle of a
-         Bangla word ("সংরক্ষণ" hides inside "প্রিয়াঙ্কা") would mangle names.
-         Only replace when the match is bounded by a non-Bangla character. */
-      if(NO_TR.has(k))continue;
-      const re=new RegExp("(^|[^\\u0980-\\u09FF])"+k.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")
-        +"($|[^\\u0980-\\u09FF])","g");
-      if(!re.test(out))continue;
-      out=out.replace(re,(m,a,b)=>a+DICT_EN[k]+b);hit=true;
-    }
-    /* 3a. short words isolated by separators (· , | space) — safe: whole-token match */
-    for(const [k,v] of TOKEN_EN){
-      if(NO_TR.has(k))continue;
-      const re=new RegExp("(^|[\\s·,|(])"+k+"($|[\\s·,|)])","g");
-      if(re.test(out)){out=out.replace(re,(x,a,b)=>a+v+b);hit=true;}
-    }
-    /* 3. unit words that follow a number — safe because a digit precedes them */
-    for(const [k,v] of UNIT_EN){
-      const re=new RegExp("(\\d\\s*)"+k+"(?![\\u0980-\\u09FF])","g");
-      if(re.test(out)){out=out.replace(re,(m,n)=>n+v);hit=true;}
-    }
-    out=out.replace(/(\d)\s*টি(?![\u0980-\u09FF])/g,"$1");
-    /* 4. dates: only whole month words surrounded by non-letters */
-    for(const m in EN_MON){
-      const re=new RegExp("(^|[^\\u0980-\\u09FF])"+m+"($|[^\\u0980-\\u09FF])","g");
-      if(re.test(out)){out=out.replace(re,(x,a,b)=>a+EN_MON[m]+b);hit=true;}
-    }
-    /* 4. Bangla digits are always safe to convert */
-    if(/[০-৯]/.test(out)){out=out.replace(/[০-৯]/g,c=>EN_NUM[c]);hit=true;}
-    return hit?lead+out+tail:raw;
-  }
-  /* tp(bnFn, enFn) — for sentences with values inside; picked at render time */
-  const tp=(bn,en)=>isEN()?en:bn;
-  const T_ATTR=["placeholder","title","aria-label","alt","value"];
-  function translateNode(root){
-    if(!isEN()||!root)return;
-    const w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT,{
-      acceptNode:n=>{
-        if(!BN_RE.test(n.nodeValue))return NodeFilter.FILTER_REJECT;
-        const p=n.parentElement;
-        if(!p||p.closest("[data-noi18n]"))return NodeFilter.FILTER_REJECT;
-        return NodeFilter.FILTER_ACCEPT;
-      }});
-    const list=[];while(w.nextNode())list.push(w.currentNode);
-    list.forEach(n=>{const v=tText(n.nodeValue);if(v!==n.nodeValue)n.nodeValue=v});
-    const els=[root,...root.querySelectorAll("*")];
-    els.forEach(el=>{
-      if(el.closest&&el.closest("[data-noi18n]"))return;
-      T_ATTR.forEach(a=>{
-        if(!el.getAttribute)return;
-        const v=el.getAttribute(a);
-        if(v&&BN_RE.test(v)&&!(a==="value"&&el.tagName==="OPTION"))el.setAttribute(a,tText(v));
-      });
-    });
-  }
+  /* i18n: English DOM-translation স্তর, dictionary (DICT_EN/TOKEN_EN/UNIT_EN/
+     EN_MON/EN_NUM) ও tText/translateNode/watchI18n সম্পূর্ণ সরানো হয়েছে —
+     বাংলাই একমাত্র ভাষা (English: Coming Soon)। ভবিষ্যতে English এলে
+     অনুবাদ-স্তরটি নতুন করে যুক্ত হবে। */
+
+  /* English এখনো চালু নয় (Coming Soon) — কখনো true হয় না; কোনো English
+     text/অনুবাদ codebase-এ নেই। */
+  const isEN=()=>false;
+  /* tp(): আগে (বাংলা, English) জোড়া নিত — English text সরানো হয়েছে, এখন শুধু
+     বাংলা মানটাই ফেরত দেয়। ভবিষ্যতে English এলে দ্বিতীয় argument ফিরবে। */
+  const tp=(b)=>b;
+
   /* re-render everything in the active language */
   function applyLang(){
-    document.documentElement.lang=isEN()?"en":"bn";
+    document.documentElement.lang="bn";
     document.body.dataset.lang=ME.prefs.lang;
     if(typeof CUR!=="undefined"&&CUR)go(CUR,SUB,false,ARG);
     typeof paintTop==="function"&&paintTop();
     typeof paintNav==="function"&&paintNav();
-    if(isEN())translateNode(document.body);
   }
-  /* auto-translate any sheet/toast that gets added later */
-  function watchI18n(){
-    new MutationObserver(ms=>{
-      if(!isEN())return;
-      ms.forEach(m=>m.addedNodes.forEach(n=>{
-        if(n.nodeType===1)translateNode(n);
-        else if(n.nodeType===3&&BN_RE.test(n.nodeValue))n.nodeValue=tText(n.nodeValue);
-      }));
-    }).observe(document.body,{childList:true,subtree:true});
-  }
-  
-  /* ══════════ admin-only translations ══════════
-     Two lists, on purpose:
-     • DICT_EN  — long phrases, matched anywhere in a string.
-     • TOKEN_EN — short words that also appear INSIDE Bangla names
-       ("সংরক্ষণ" is a substring of "প্রিয়াঙ্কা"). These are only replaced
-       when they stand alone between separators, never mid-word.        */
-  Object.assign(DICT_EN,{
-  "অ্যাডমিন প্যানেল":"Admin Panel",
-  "চকবাজার ব্লাড ডোনার'স ক্লাব":"Chawkbazar Blood Donor's Club",
-  "শুভ সকাল":"Good morning",
-  "শুভ দুপুর":"Good afternoon",
-  "শুভ সন্ধ্যা":"Good evening",
-  "শুভ রাত্রি":"Good night",
-  "যা এখনই দেখা দরকার":"Needs your attention now",
-  "সব ঠিক আছে":"All clear",
-  "এই মুহূর্তে জরুরি কোনো কাজ নেই":"Nothing urgent is waiting right now",
-  "দ্রুত কাজ":"Quick actions",
-  "কাজ শুরু করুন":"Start working",
-  "খুঁজুন":"Search",
-  "নোটিশ দিন":"Post a notice",
-  "রক্তের ভাণ্ডার":"Blood availability",
-  "বিস্তারিত পরিসংখ্যান":"Detailed statistics",
-  "বিশ্রামের সময় শেষ হয়েছে এমন ডোনার":"Donors whose rest period is over",
-  "গত ৭ দিনের রক্তদান":"Donations in the last 7 days",
-  "সাম্প্রতিক কাজ":"Recent actions",
-  "পুরো অডিট লগ":"Full audit log",
-  "চলমান জরুরি আবেদন":"Active emergency requests",
-  "মোট রক্তদাতা":"Total donors",
-  "এখন প্রস্তুত":"Ready now",
-  "অপেক্ষমাণ কাজ":"Pending work",
-  "চলমান আবেদন":"Active requests",
-  "সব দেখুন":"See all",
-  "রোগীর জীবন জড়িত — আগে দেখুন":"A life is at stake — handle these first",
-  "৩ জনের কম প্রস্তুত ডোনার আছে":"Fewer than 3 ready donors available",
-  "যাচাই করে অনুমোদন দিন":"Review and approve",
-  "ওয়েবসাইটের যোগাযোগ ফর্ম থেকে":"From the website contact form",
-  "গ্রুপে ডোনার কম":"groups are running low",
-  "নতুন ডোনার আবেদন":"new donor applications",
-  "জরুরি আবেদন অপেক্ষমাণ":"emergency requests waiting",
-  "নতুন বার্তা":"new messages",
-  "ডোনার অ্যাপ থেকে আসা সব আবেদন এক জায়গায়":"Every request from the donor app, in one place",
-  "ডোনার আবেদন":"Donor application",
-  "রক্তদান যাচাই":"Verify donations",
-  "জরুরি আবেদন":"Emergency request",
-  "গ্রুপ বদল":"Blood group change",
-  "রিপোর্ট":"Report",
-  "কোনো অপেক্ষমাণ কাজ নেই":"No pending work",
-  "নতুন আবেদন এলে এখানে দেখা যাবে":"New requests will appear here",
-  "অতিজরুরি":"Critical",
-  "সতর্কতা":"Warnings",
-  "বিস্তারিত":"Details",
-  "সিদ্ধান্তের নোট (ঐচ্ছিক)":"Decision note (optional)",
-  "টিমের জন্য নোট…":"A note for the team…",
-  "বাতিলের কারণ":"Reason for rejection",
-  "বিস্তারিত কারণ…":"Detailed reason…",
-  "কারণ লিখতে হবে":"A reason is required",
-  "ফিরে যান":"Go back",
-  "বাতিল করুন":"Reject",
-  "মিলে যাওয়া রক্তদাতা":"Matching donors",
-  "এই মুহূর্তে প্রস্তুত ডোনার নেই":"No ready donors right now",
-  "অন্য এলাকায় খোঁজ নিন বা ক্যাম্পের ঘোষণা দিন":"Try another area or announce a camp",
-  "তথ্য অসম্পূর্ণ":"Incomplete information",
-  "বয়স নিয়ম মানেনি":"Age outside the allowed range",
-  "বিশ্রামের সময় শেষ হয়নি":"Rest period not finished",
-  "স্বাস্থ্যগত কারণে অযোগ্য":"Not eligible on health grounds",
-  "প্রমাণ সংযুক্ত নেই":"No proof attached",
-  "ভুয়া বা সন্দেহজনক তথ্য":"False or suspicious information",
-  "একই আবেদন আগে জমা হয়েছে":"A duplicate application already exists",
-  "অনুমোদন করা হয়েছে":"Approved",
-  "বাতিল করা হয়েছে":"Rejected",
-  "রক্তদাতা, ব্যবহারকারী ও টিম":"Donors, users and team",
-  "রক্তদাতা তালিকা":"Donor list",
-  "ব্যবহারকারী ও অভিযোগ":"Users and reports",
-  "টিম ও ভূমিকা":"Team and roles",
-  "শীর্ষ রক্তদাতা":"Top donors",
-  "এলাকাভিত্তিক":"By area",
-  "খুঁজুন, সম্পাদনা করুন, স্থগিত করুন":"Search, edit, suspend",
-  "অ্যাকাউন্ট ও রিপোর্ট":"Accounts and reports",
-  "ওয়েবসাইটের যোগাযোগ ফর্ম":"Website contact form",
-  "কে কী করতে পারবে":"Who can do what",
-  "টিম সদস্য":"Team members",
-  "নতুন রক্তদাতা যোগ করুন":"Add a new donor",
-  "নতুন রক্তদাতা":"New donor",
-  "কোনো রক্তদাতা মেলেনি":"No donors matched",
-  "ফিল্টার বদলে আবার চেষ্টা করুন":"Change the filters and try again",
-  "জন পাওয়া গেছে":"donors found",
-  "সব গ্রুপ":"All groups",
-  "সব এলাকা":"All areas",
-  "সব অবস্থা":"All statuses",
-  "যাচাই বাকি":"Not verified",
-  "বিশ্রামে":"Resting",
-  "আগের":"Previous",
-  "পরের":"Next",
-  "পৃষ্ঠা":"Page",
-  "রক্তদাতার প্রোফাইল":"Donor profile",
-  "রক্ত দিতে প্রস্তুত":"Ready to donate",
-  "নিজে বন্ধ রেখেছেন":"Turned off by the donor",
-  "রক্তদানের প্রস্তুতি":"Donation readiness",
-  "কারা এই রক্ত নিতে পারবেন":"Who can receive this blood",
-  "রক্ত দিতে পারবেন":"can donate to",
-  "মোট রক্তদান":"Total donations",
-  "দিন আগে শেষ দান":"days since last",
-  "শেষ দানের তথ্য নেই":"No last-donation date",
-  "সাড়া দিয়েছেন":"Responded",
-  "মাস ধরে আছেন":"months as a member",
-  "অ্যাকাউন্ট স্থগিত — পাবলিক তালিকায় নেই।":"Account suspended — hidden from the public list.",
-  "এখনই রক্ত দিতে পারবেন, পাবলিক তালিকায় দেখা যাচ্ছে।":"Can donate now and is visible in the public list.",
-  "ডোনার নিজে প্রাপ্যতা বন্ধ রেখেছেন — তাই তালিকায় আসছেন না।":"The donor turned availability off, so they are not listed.",
-  "রক্তদানে প্রস্তুত":"Available to donate",
-  "স্থগিত করলে কোথাও দেখা যাবে না":"When suspended they appear nowhere",
-  "যাচাই করলে পাবলিক তালিকায় দেখা যাবে":"Verifying makes them visible publicly",
-  "ডোনার নিজে চালু রেখেছেন":"The donor turned this on",
-  "ডোনার নিজে বন্ধ রেখেছেন":"The donor turned this off",
-  "রক্ত ও অবস্থান":"Blood and location",
-  "ডোনার আইডি":"Donor ID",
-  "রক্তদান যোগ করুন":"Add a donation",
-  "কোনো রক্তদানের রেকর্ড নেই":"No donation records",
-  "এখনো রক্ত দেননি":"Has not donated yet",
-  "হাসপাতাল বা ক্যাম্পের নাম":"Hospital or camp name",
-  "কোনো আবেদনে সাড়া দেননি":"Has not responded to any request",
-  "তথ্য কপি করুন":"Copy details",
-  "এই প্রোফাইল নামান":"Download this profile",
-  "মুছে ফেলুন":"Delete",
-  "শুধু অ্যাডমিন পারেন":"Admin only",
-  "যাচাইকৃত করুন":"Mark as verified",
-  "যাচাই বাতিল":"Remove verification",
-  "স্থগিত করুন":"Suspend",
-  "স্থগিত তুলুন":"Unsuspend",
-  "স্থায়ীভাবে মুছবেন?":"Delete permanently?",
-  "তথ্য মুছবে না, শুধু লুকানো থাকবে":"Nothing is deleted, only hidden",
-  "হোমপেজ ও তথ্য":"Homepage and info",
-  "শিরোনাম, যোগাযোগ, কোন অংশ দেখাবে":"Headline, contact, visible sections",
-  "ছবি যোগ, প্রকাশ বা লুকানো":"Add, publish or hide photos",
-  "নোটিশ ও ঘোষণা":"Notices and announcements",
-  "ওয়েবসাইট ও অ্যাপে পাঠান":"Send to the website and app",
-  "সরাসরি পূর্বরূপ":"Live preview",
-  "লেখা বদলালেই এখানে সঙ্গে সঙ্গে দেখা যায়।":"Edits show up here instantly.",
-  "বড় শিরোনাম":"Main headline",
-  "সংক্ষিপ্ত পরিচিতি":"Short introduction",
-  "যোগাযোগের তথ্য":"Contact information",
-  "হটলাইন নম্বর":"Hotline number",
-  "ফেসবুক পেজ":"Facebook page",
-  "কোন অংশ দেখা যাবে":"Which sections are visible",
-  "পরিসংখ্যান ব্লক":"Statistics block",
-  "জরুরি হটলাইন ব্যানার":"Emergency hotline banner",
-  "এখন দেখা যাচ্ছে":"Visible now",
-  "এখন লুকানো":"Hidden now",
-  "সংরক্ষণ করুন":"Save",
-  "ওয়েবসাইট হালনাগাদ হয়েছে":"Website updated",
-  "ছবি যোগ করুন":"Add a photo",
-  "ছবি বেছে নিন":"Choose a photo",
-  "কোনো ছবি নেই":"No photos yet",
-  "নতুন নোটিশ":"New notice",
-  "কারা দেখবে":"Who sees it",
-  "কোনো নোটিশ নেই":"No notices",
-  "কোথায় দেখা যাবে":"Where it appears",
-  "কোনো বার্তা নেই":"No messages",
-  "সব পড়া হিসেবে চিহ্নিত করুন":"Mark all as read",
-  "গ্রুপ, এলাকা, প্রবণতা":"Groups, areas, trends",
-  "অডিট লগ":"Audit log",
-  "কে কখন কী করেছে":"Who did what, and when",
-  "তথ্য রপ্তানি":"Export data",
-  "CSV ফাইলে নামান":"Download as CSV",
-  "গ্রুপের অনুপাত":"Group distribution",
-  "গ্রুপ অনুযায়ী প্রস্তুত ডোনার":"Ready donors by group",
-  "গত ৬ মাসে রক্তদান":"Donations over 6 months",
-  "ঘাটতি সতর্কতা":"Shortage alerts",
-  "সব গ্রুপে যথেষ্ট ডোনার আছে":"Every group has enough donors",
-  "ক্যাম্পের ঘোষণা দিন":"Announce a camp",
-  "মোট দান":"Donations",
-  "নিয়মিত":"Regular",
-  "অডিট লগ একবার লেখা হলে আর বদলানো যায় না।":"Audit entries can never be edited once written.",
-  "এই ধরনের কোনো রেকর্ড নেই":"No records of this kind",
-  "নিয়ম ও সেটিংস":"Rules and settings",
-  "বয়স, বিশ্রাম, অনুমোদন, সংযোগ":"Age, rest, approvals, integrations",
-  "রক্তদানের নিয়ম":"Donation rules",
-  "সর্বনিম্ন বয়স":"Minimum age",
-  "সর্বোচ্চ বয়স":"Maximum age",
-  "দুই দানের মাঝে বিশ্রাম (দিন)":"Rest between donations (days)",
-  "অনুমোদন প্রক্রিয়া":"Approval process",
-  "নতুন ডোনার অনুমোদন লাগবে":"New donors need approval",
-  "জরুরি আবেদন অনুমোদন লাগবে":"Emergency requests need approval",
-  "কী পেস্ট করুন":"Paste the key",
-  "অডিট রেকর্ড":"Audit records",
-  "আমার অ্যাকাউন্ট":"My account",
-  "আমার অনুমতি":"My permissions",
-  "অ্যাকাউন্ট ব্যবস্থাপনা":"Account management",
-  "নাম, ছবি, ইমেইল, মোবাইল":"Name, photo, email, mobile",
-  "পাসওয়ার্ড, ডিভাইস, কার্যকলাপ":"Password, devices, activity",
-  "কে কী দেখতে পাবে":"Who can see what",
-  "কখন জানানো হবে":"When you get notified",
-  "থিম, প্রদর্শন, শুরুর পাতা":"Theme, display, start page",
-  "এই প্যানেলে কী কী করতে পারবেন":"What you can do in this panel",
-  "তথ্য নামান, লগআউট":"Download data, sign out",
-  "ছবি বদলান":"Change photo",
-  "ডেটাবেজ থেকে নির্ধারিত হয়":"Set from the database",
-  "যুক্ত হয়েছেন":"Joined",
-  "রক্তদাতা হিসেবে":"As a donor",
-  "আমিও একজন রক্তদাতা":"I am a donor too",
-  "রক্তদাতা তালিকায় আমার নামও থাকবে":"Include me in the donor list",
-  "সর্বশেষ রক্তদান":"Last donation",
-  "রক্তের গ্রুপ":"Blood group",
-  "নাম বদলান":"Change name",
-  "পুরো নাম":"Full name",
-  "Username বদলান":"Change username",
-  "ইমেইল বদলান":"Change email",
-  "মোবাইল বদলান":"Change mobile",
-  "মোবাইল নম্বর":"Mobile number",
-  "জন্মতারিখ":"Date of birth",
-  "সম্পূর্ণ ঠিকানা":"Full address",
-  "সংগঠনে আপনার পদবি":"Your designation in the club",
-  "পাসওয়ার্ড বদলান":"Change password",
-  "বর্তমান পাসওয়ার্ড":"Current password",
-  "নতুন পাসওয়ার্ড":"New password",
-  "আবার লিখুন":"Repeat it",
-  "কমপক্ষে ৬ অক্ষর":"At least 6 characters",
-  "বড় হাতের অক্ষর, সংখ্যা ও চিহ্ন মিশিয়ে দিন।":"Mix uppercase letters, numbers and symbols.",
-  "খুব দুর্বল":"Very weak",
-  "দুর্বল":"Weak",
-  "মোটামুটি":"Fair",
-  "ভালো":"Good",
-  "শক্তিশালী":"Strong",
-  "সর্বশেষ পরিবর্তন":"Last changed",
-  "লগইন সুরক্ষা":"Login protection",
-  "নতুন লগইন সতর্কতা":"New login alerts",
-  "অচেনা ডিভাইসে লগইন হলে জানানো হবে":"Get told when an unknown device signs in",
-  "লগইন ও ডিভাইস":"Logins and devices",
-  "সক্রিয় সেশন":"active sessions",
-  "আমার কার্যকলাপ":"My activity",
-  "আমার অ্যাকাউন্টে কী কী বদলেছে":"What changed in my account",
-  "দুই-ধাপ যাচাই (2FA)":"Two-factor authentication (2FA)",
-  "অ্যাডমিনদের জন্য বিশেষভাবে জরুরি":"Especially important for admins",
-  "অ্যাকাউন্ট রিকভারি":"Account recovery",
-  "ব্যাকআপ পদ্ধতি":"Backup method",
-  "এই ডিভাইস":"This device",
-  "বের করুন":"Sign out",
-  "সব ডিভাইস থেকে লগআউট":"Sign out of all devices",
-  "এই ডিভাইস বের করবেন?":"Sign this device out?",
-  "ডিভাইস বের করা হয়েছে":"Device signed out",
-  "টিমে আমার প্রোফাইল":"My profile in the team",
-  "টিম তালিকায় আমাকে দেখান":"Show me in the team list",
-  "বন্ধ করলে শুধু অ্যাডমিন দেখবেন":"When off, only admins can see you",
-  "রক্তের গ্রুপ দেখান":"Show blood group",
-  "মোবাইল নম্বর কে দেখবে":"Who can see my mobile",
-  "ইমেইল কে দেখবে":"Who can see my email",
-  "শুধু টিমের সদস্য":"Team members only",
-  "কেউ না":"Nobody",
-  "কাজের বিজ্ঞপ্তি":"Work notifications",
-  "নতুন অপেক্ষমাণ কাজ":"New pending work",
-  "ডোনার আবেদন, রক্তদান যাচাই ইত্যাদি":"Donor applications, donation checks and so on",
-  "জরুরি রক্তের আবেদন":"Emergency blood requests",
-  "অতিজরুরি হলে সবসময় জানানো হবে":"Critical ones always notify you",
-  "নতুন ব্যবহারকারী":"New users",
-  "কেউ নিবন্ধন করলে":"When someone registers",
-  "আমাকে উল্লেখ করলে":"When I am mentioned",
-  "টিমের কেউ কাজ দিলে":"When a teammate assigns work",
-  "দৈনিক সারসংক্ষেপ":"Daily digest",
-  "প্রতিদিন সকালে এক নজরে সব":"Everything at a glance each morning",
-  "শব্দ ও সময়":"Sound and timing",
-  "বিজ্ঞপ্তির শব্দ":"Notification sound",
-  "নিরাপত্তা সতর্কতা":"Security alerts",
-  "নিরাপত্তার জন্য বন্ধ করা যায় না":"Cannot be turned off, for safety",
-  "প্রদর্শনের ঘনত্ব":"Display density",
-  "অ্যানিমেশন":"Animations",
-  "চলমান প্রভাব চালু/বন্ধ":"Turn motion effects on or off",
-  "বিজ্ঞপ্তির সংখ্যা দেখান":"Show notification counts",
-  "আইকনে লাল সংখ্যা":"The red number on the icon",
-  "শুরুর পাতা":"Start page",
-  "লগইনের পর কোন পাতা খুলবে":"Which page opens after sign-in",
-  "আমার তথ্য":"My data",
-  "আমার তথ্য নামান":"Download my data",
-  "প্রোফাইল ও কার্যকলাপ JSON ফাইলে":"Profile and activity as a JSON file",
-  "এই ডিভাইস থেকে বের হন":"Sign out on this device",
-  "আমার সেটিংস রিসেট":"Reset my settings",
-  "প্রোফাইল ডিফল্ট অবস্থায় ফিরবে":"Your profile returns to its defaults",
-  "অ্যাডমিন":"Admin",
-  "মডারেটর":"Moderator",
-  "টি অনুমতি":"permissions",
-  "হালনাগাদ হয়েছে":"Updated",
-  "সংরক্ষণ হয়েছে":"Saved",
-  "চালু করা হয়েছে":"Turned on",
-  "বন্ধ করা হয়েছে":"Turned off",
-  "মুছে ফেলা হয়েছে":"Deleted",
-  "কপি হয়েছে":"Copied",
-  "ফাইল নামছে":"Downloading",
-  "শীঘ্রই আসছে":"Coming soon",
-  "আপনার অনুমতি নেই":"You do not have permission",
-  "এই অংশে আপনার অনুমতি নেই":"You do not have permission for this section",
-  "প্রয়োজন হলে অ্যাডমিনকে বলুন":"Ask an admin if you need it",
-  "শুধু দেখার অনুমতি":"View-only access",
-  "আপনার শুধু দেখার অনুমতি আছে।":"You have view-only access.",
-  "রিসেট হয়েছে":"Reset complete",
-  "জরুরিতা":"Urgency",
-  "আবেদনকারী":"Requested by",
-  "ডোনার খোঁজা হচ্ছে":"Searching for donors",
-  "ডোনার পাওয়া গেছে":"Donor found",
-  "ডোনার মেলান":"Match donors",
-  "ডোনার মেলানো":"Donor matching",
-  "আবেদন বাতিল":"Cancel request",
-  "আবেদন সম্পন্ন?":"Mark request as done?",
-  "কোনো চলমান আবেদন নেই":"No active requests",
-  "অনুমোদিত জরুরি আবেদন এখানে দেখা যাবে":"Approved emergency requests appear here",
-  "নিরাপত্তা নিয়ম":"Security rules",
-  "আপনার অনুমতি":"Your permissions",
-  "সদস্য যোগ":"Add member",
-  "ভূমিকা ও অনুমতি":"Role and permissions",
-  "এই ভূমিকা যা পারবে":"What this role can do",
-  "ভূমিকা অনুযায়ী অনুমতি":"Permissions by role",
-  "ভূমিকা হালনাগাদ হয়েছে":"Role updated",
-  "বার দান":"donations",
-  "রক্তদাতার তথ্য সম্পাদনা":"Edit donor details",
-  "ডোনার আবেদন অনুমোদন":"Approve donor applications",
-  "রক্তদাতা দেখা":"View donors",
-  "ফোন নম্বর দেখা":"Reveal phone numbers",
-  "আবেদন দেখা":"View requests",
-  "আবেদন অনুমোদন":"Approve requests",
-  "আবেদন সম্পন্ন/বাতিল":"Resolve or cancel requests",
-  "ব্যবহারকারী দেখা":"View users",
-  "অ্যাকাউন্ট স্থগিত":"Suspend accounts",
-  "গ্রুপ বদল অনুমোদন":"Approve group changes",
-  "অভিযোগ নিষ্পত্তি":"Resolve reports",
-  "ওয়েবসাইট দেখা":"View website",
-  "ওয়েবসাইট সম্পাদনা":"Edit website",
-  "গ্যালারি ব্যবস্থাপনা":"Manage gallery",
-  "নোটিশ ব্যবস্থাপনা":"Manage notices",
-  "টিম দেখা":"View team",
-  "ভূমিকা বদল":"Change roles",
-  "সেটিংস বদল":"Change settings",
-  "অডিট লগ দেখা":"View audit log",
-  "ওয়েবসাইট ও সিস্টেম":"Website and system",
-  "রক্তদাতা তালিকা দেখুন":"Open the donor list",
-  "সব ব্যবহারকারী":"All users",
-  "খোঁজা, ফিল্টার ও সম্পাদনা":"Search, filter and edit",
-  "ডোনার খোঁজা":"Finding donors",
-  "ডোনার পাওয়া":"Donor found",
-  "অনুমোদিত":"Approved",
-  "ImgBB সংযোগ":"ImgBB connection",
-  "ImgBB API কী":"ImgBB API key",
-  "সর্বোচ্চ আকার":"Maximum size",
-  "কী সংরক্ষিত":"Key saved",
-  "কী দেওয়া হয়নি":"No key provided",
-  "এখন সক্রিয়":"Active now",
-  "তথ্য নেই":"Not recorded",
-  "দ্রুত বদল — বিস্তারিত পছন্দে":"Quick switch — full options in Preferences",
-  "নিজের আবেদন নিজে অনুমোদন করা যায় না":"You cannot approve your own application",
-  "নিজের ভূমিকা নিজে বাড়ানো যায় না":"You cannot raise your own role",
-  "নিজের অ্যাডমিন অ্যাক্সেস নিজে সরানো যায় না":"You cannot remove your own admin access",
-  "অডিট লগ একবার লেখা হলে বদলানো যায় না":"Audit entries cannot be changed once written",
-  "ফোন নম্বর দেখলে তা লগে থেকে যায়":"Revealing a phone number is always logged",
-  "ওয়েবসাইটের হোমপেজে ব্যানার হিসেবে":"As a banner on the website homepage",
-  "ডোনার অ্যাপের হোম স্ক্রিনে":"On the donor app home screen",
-  "নির্দিষ্ট গ্রুপ বা এলাকা বেছে দিলে শুধু তাদের কাছে":"Only to the chosen blood group or area"
-  });
-  [
-  ["হোম","Home"],
-  ["কাজ","Work"],
-  ["মানুষ","People"],
-  ["নিয়ন্ত্রণ","Control"],
-  ["ওয়েবসাইট","Website"],
-  ["নির্বাচিত","selected"],
-  ["অনুমোদন","Approve"],
-  ["বাতিল","Reject"],
-  ["মুছুন","Clear"],
-  ["বার্তা","Messages"],
-  ["রক্তদাতা","Donors"],
-  ["প্রস্তুত","Ready"],
-  ["অভিযোগ","Reports"],
-  ["স্থগিত","Suspended"],
-  ["সংক্ষিপ্ত","Overview"],
-  ["তথ্য","Details"],
-  ["রক্তদান","Donations"],
-  ["আবেদন","Requests"],
-  ["কার্যকলাপ","Activity"],
-  ["কল","Call"],
-  ["সম্পাদনা","Edit"],
-  ["আরও","More"],
-  ["যাচাইকৃত","Verified"],
-  ["সিস্টেম","System"],
-  ["গ্যালারি","Gallery"],
-  ["ডেস্কটপ","Desktop"],
-  ["ট্যাব","Tablet"],
-  ["মোবাইল","Mobile"],
-  ["হেডলাইন","Headline"],
-  ["প্রকাশিত","Published"],
-  ["খসড়া","Draft"],
-  ["প্রকাশ","Publish"],
-  ["লুকান","Hide"],
-  ["সবাই","Everyone"],
-  ["শুরু","From"],
-  ["শেষ","To"],
-  ["পরিসংখ্যান","Statistics"],
-  ["সংযোগ","Integrations"],
-  ["অপেক্ষায়","Pending"],
-  ["সক্রিয়","Active"],
-  ["অ্যাকাউন্ট","Account"],
-  ["নিরাপত্তা","Security"],
-  ["গোপনীয়তা","Privacy"],
-  ["বিজ্ঞপ্তি","Notifications"],
-  ["পছন্দ","Preferences"],
-  ["সরান","Remove"],
-  ["পরিচয়","Identity"],
-  ["ব্যক্তিগত","Personal"],
-  ["সংগঠনে","In the organisation"],
-  ["পদবি","Designation"],
-  ["ভূমিকা","Role"],
-  ["লিঙ্গ","Gender"],
-  ["এলাকা","Area"],
-  ["ঠিকানা","Address"],
-  ["উন্নত","Advanced"],
-  ["যোগাযোগ","Contact"],
-  ["সারসংক্ষেপ","Summary"],
-  ["চেহারা","Appearance"],
-  ["থিম","Theme"],
-  ["আলো","Light"],
-  ["আঁধার","Dark"],
-  ["স্বাভাবিক","Normal"],
-  ["ঘন","Compact"],
-  ["ভাষা","Language"],
-  ["অন্যান্য","Other"],
-  ["সেশন","Session"],
-  ["লগআউট","Sign out"],
-  ["বিপজ্জনক","Danger zone"],
-  ["আছে","Yes"],
-  ["নেই","No"],
-  ["সংরক্ষণ","Save"],
-  ["সংরক্ষিত","Saved"],
-  ["বন্ধ","Close"],
-  ["হ্যাঁ","Yes"],
-  ["যোগ করুন","Add"],
-  ["নামান","Download"],
-  ["রপ্তানি","Export"],
-  ["রিফ্রেশ","Refresh"],
-  ["দেখুন","View"],
-  ["শীঘ্রই","Soon"],
-  ["অপেক্ষমাণ","Pending"],
-  ["সংস্করণ","Version"],
-  ["স্থান","Place"],
-  ["তারিখ","Date"],
-  ["ব্যাগ","bags"],
-  ["রোগী","Patient"],
-  ["সময়","Time"],
-  ["সম্পন্ন","Done"],
-  ["জন","people"],
-  ["টি",""],
-  ["সব","All"],
-  ["নাম","Name"],
-  ["ইমেইল","Email"],
-  ["ফোন","Phone"],
-  ["বয়স","Age"],
-  ["পুরুষ","Male"],
-  ["মহিলা","Female"],
-  ["বছর","years"],
-  ["অবস্থা","Status"],
-  ["গ্রুপ","Group"],
-  ["নিষ্ক্রিয়","Inactive"],
-  ["বিশ্লেষণ","Analytics"],
-  ["টিম","Team"],
-  ["নোটিশ","Notices"],
-  ["ব্যবহারকারী","Users"],
-  ["নতুন","new"],
-  ["বার","times"],
-  ["জানুয়া","Jan"],
-  ["ফেব্রু","Feb"],
-  ["মার্চ","Mar"],
-  ["এপ্রি","Apr"],
-  ["মে","May"],
-  ["জুন","Jun"],
-  ["জুল","Jul"],
-  ["আগ","Aug"],
-  ["সেপ","Sep"],
-  ["অক্টো","Oct"],
-  ["নভে","Nov"],
-  ["ডিসে","Dec"]
-  ].forEach(pair=>TOKEN_EN.unshift(pair));
-  DICT_KEYS.length=0;
-  Object.keys(DICT_EN).sort((a,b)=>b.length-a.length).forEach(k=>DICT_KEYS.push(k));
-  
-  /* counted phrases: the engine strips "টি" after a digit, so register the
-     remainder as whole tokens */
-  [["অনুমতি","permissions"],["সদস্য","members"],["ছবি","photos"],["অ্যাপ","app"],
-   ["ক্যাম্প","camp"],["আপনি","you"],["এখনই","now"],["মাত্র","only"],["কোনো","No"],
-   ["হবে","will be"],["ও","and"],["অনুমোদন","approval"],["যোগ","added"],["গ্যালারিতে","to the gallery"]
-  ].forEach(pair=>TOKEN_EN.unshift(pair));
-  
-  /* full sentences that must never be assembled from fragments */
-  Object.assign(DICT_EN,{
-  "ভূমিকা ডেটাবেজ থেকে নির্ধারিত হয় — নিজে বদলানো যায় না। কিছু দরকার হলে অ্যাডমিনকে বলুন।":
-    "Your role is set from the database and cannot be changed by you. Ask an admin if you need more access.",
-  "আসল সিস্টেমে ভূমিকা ডেটাবেজ থেকে আসবে। এখন পরীক্ষার জন্য বদলে দেখতে পারেন।":
-    "In the real system the role comes from the database. Switch it here to test the panel.",
-  "রক্তদাতা, অপেক্ষমাণ আবেদন ও চলমান আবেদন — সব একসাথে খোঁজা হবে।":
-    "Donors, pending applications and active requests are all searched together.",
-  "নিয়ন্ত্রণ → নিয়ম ও সেটিংস থেকে API কী দিলে সরাসরি আপলোড চালু হবে।":
-    "Add an API key under Control → Rules and settings to turn on direct uploads.",
-  "আপনার অ্যাকাউন্টে":"Your account has","পাসওয়ার্ড কারও সাথে ভাগ করবেন না।":"Never share your password with anyone.",
-  "এই নিয়মগুলো আবেদন যাচাইয়ের সময় সতর্কতা হিসেবে দেখানো হয়।":
-    "These rules are shown as warnings while reviewing an application.",
-  "আমি নতুন ডোনার হিসেবে যুক্ত হতে চাই, কীভাবে করব?":
-    "I would like to join as a new donor — how do I do that?",
-  "আমার মায়ের জন্য B− রক্ত দরকার, কাল সকালে।":"My mother needs B− blood tomorrow morning.",
-  "ঈদের ছুটিতে জরুরি হটলাইন চালু":"Emergency hotline open through the Eid holidays",
-  "ঈদের ছুটিতেও ২৪ ঘণ্টা হটলাইন খোলা থাকবে":"The hotline stays open 24 hours during the Eid holidays",
-  "রক্তদান ক্যাম্প ২০২৬":"Blood donation camp 2026","স্বেচ্ছাসেবক দল":"Volunteer team",
-  "নতুন ডোনার অনুমোদন":"New donor approval","ডোনার অনুমোদন":"Donor approved",
-  "জরুরি আবেদন অনুমোদন":"Emergency request approved","রক্তদান যাচাই":"Donation verified",
-  "গ্যালারিতে ছবি যোগ":"Photo added to the gallery","ভূমিকা পরিবর্তন":"Role changed",
-  "আমার এলাকা ভুল দেখাচ্ছে — পাঁচলাইশ হবে, চকবাজার নয়।":
-    "My area is wrong — it should be Panchlaish, not Chawkbazar.",
-  "নম্বরের ডোনার টাকা চেয়েছেন বলে অভিযোগ।":"A complaint says this donor asked for money.",
-  "হাসপাতালের রিপোর্টে ভিন্ন গ্রুপ এসেছে":"The hospital report shows a different group",
-  "সম্পূর্ণ সুস্থ।":"Completely healthy.","কোনো রোগ নেই।":"No illnesses.","সুস্থ।":"Healthy.",
-  "থাইরয়েডের ওষুধ চলছে।":"Currently on thyroid medication.",
-  "নতুন যোগ করতে নিচে দেখুন":"scroll down to add a new one",
-  "ভুল তথ্য":"Wrong information","অন্য ব্যবহারকারীর অভিযোগ":"Complaint about another user",
-  "ক্লাবের রক্তদান ক্যাম্প":"Club blood donation camp","চমেক ব্লাড ব্যাংক":"CMCH Blood Bank"
-  });
-  DICT_KEYS.length=0;
-  Object.keys(DICT_EN).sort((a,b)=>b.length-a.length).forEach(k=>DICT_KEYS.push(k));
-  
-  /* last pass — long notes, exact strings */
-  Object.assign(DICT_EN,{
-  "অ্যাডমিন অ্যাকাউন্ট নিজে থেকে মুছে ফেলা যায় না — শেষ অ্যাডমিন হারিয়ে গেলে পুরো সিস্টেম আটকে যাবে। অ্যাডমিনকে বলুন।":
-    "An admin account cannot delete itself — losing the last admin would lock the whole system. Ask an admin.",
-  "এই সেটিংস আপনার নিজের তথ্যের জন্য — টিমের অন্য সদস্য ও পাবলিক তালিকায় কী দেখা যাবে তা ঠিক করে।":
-    "These settings cover your own details — they control what teammates and the public list can see.",
-  "অ্যাডমিন হিসেবে আপনি যা যা করেন তা":"Everything you do as an admin",
-  "অডিট লগে থেকেই যায় — এটি গোপনীয়তা সেটিংস দিয়ে বন্ধ করা যায় না।":
-    "stays in the audit log — privacy settings cannot switch that off.",
-  "আপনার অ্যাকাউন্টে যেসব ডিভাইসে লগইন আছে তার তালিকা। অচেনা কিছু দেখলে সাথে সাথে বের করে দিন।":
-    "Devices currently signed in to your account. If you see anything unfamiliar, sign it out immediately.",
-  "ভূমিকা ডেটাবেজ থেকে নির্ধারিত হয় — নিজে বদলানো যায় না।":
-    "Your role is set from the database and cannot be changed by you.",
-  "কিছু দরকার হলে অ্যাডমিনকে বলুন।":"Ask an admin if you need more access.",
-  "শাহাদাত আহমেদ":"Shahadat Ahmed","শাহাদাত":"Shahadat"
-  });
-  DICT_KEYS.length=0;
-  Object.keys(DICT_EN).sort((a,b)=>b.length-a.length).forEach(k=>DICT_KEYS.push(k));
-  
-  /* ---- access & roles, More screen, logout ---- */
-  Object.assign(DICT_EN,{
-  "অ্যাক্সেস ও ভূমিকা":"Access and roles","কাকে অ্যাডমিন বা মডারেটর করবেন":"Who becomes an admin or moderator",
-  "অ্যাকাউন্ট ও নিয়ন্ত্রণ":"Account and controls","ব্যবস্থাপনা":"Management",
-  "নাম, ইউজারনেম বা ইমেইল…":"Name, username or email…",
-  "সবাই":"Everyone","টিমে আছে":"On the team","সাধারণ":"Regular",
-  "কেউ মেলেনি":"Nobody matched","অন্য নাম, ইউজারনেম বা ইমেইল দিয়ে চেষ্টা করুন":"Try another name, username or email",
-  "সাধারণ ব্যবহারকারী":"Regular user","শুধু ডোনার অ্যাপ ব্যবহার করতে পারবেন":"Can only use the donor app",
-  "সব দেখতে পারবেন, কিছু বদলাতে পারবেন না":"Can see everything, change nothing",
-  "অপেক্ষমাণ আবেদন যাচাই ও অনুমোদন করবেন":"Reviews and approves the pending queue",
-  "ওয়েবসাইট ও রক্তদাতা ব্যবস্থাপনা করবেন":"Manages the website and donors",
-  "সবকিছু — ভূমিকা দেওয়াসহ":"Everything, including granting roles",
-  "বর্তমান ভূমিকা":"Current role","নতুন ভূমিকা":"New role","কারণ":"Reason",
-  "কেন এই পরিবর্তন করছেন…":"Why are you making this change…",
-  "যা পারবেন":"Can do","যা পারবেন না":"Cannot do","এটিই বর্তমান ভূমিকা।":"This is the current role.",
-  "ভূমিকা বদলানো হয়নি":"Role unchanged","কারণ লিখতে হবে":"A reason is required",
-  "অ্যাক্সেস দেবেন?":"Grant access?","অ্যাক্সেস তুলে নেবেন?":"Revoke access?",
-  "অ্যাক্সেস দিন":"Grant access","তুলে নিন":"Revoke",
-  "অ্যাক্সেস দেওয়া হয়েছে":"Access granted","অ্যাক্সেস তুলে নেওয়া হয়েছে":"Access revoked",
-  "নিয়ম":"Rules","আরও":"More",
-  "লগআউট করবেন?":"Sign out?",
-  "প্যানেল থেকে বের হয়ে মূল ওয়েবসাইটে ফিরে যাবেন। আবার ঢুকতে হলে নতুন করে লগইন করতে হবে।":
-    "You will leave the panel and return to the main website. You must log in again to come back.",
-  "লগআউট হয়েছে — মূল ওয়েবসাইটে ফিরে যাচ্ছেন":"Signed out — returning to the main website",
-  "প্যানেল থেকে বের হয়েছেন":"Left the panel",
-  "যাকে অ্যাক্সেস দেবেন তার অ্যাকাউন্ট আগে থেকেই থাকতে হবে। নাম, ইউজারনেম বা ইমেইল দিয়ে খুঁজুন।":
-    "The person must already have an account. Search by name, username or email.",
-  "অ্যাডমিন ভূমিকা Admin Panel থেকে নিয়ন্ত্রিত হয়":"Admin role is controlled from the Admin Panel",
-  "প্রতিটি পরিবর্তন কারণসহ অডিট লগে থাকে":"Every change is logged with its reason",
-  "নিজের ভূমিকা এখান থেকে বদলানো যায় না।":"Your own role cannot be changed from here.",
-  "নিজের অ্যাডমিন অ্যাক্সেস নিজে পরিবর্তন করা যাবে না।":
-    "You cannot change your own admin access from here.",
-  "ডোনার আইডি":"Donor ID"
-  });
-  DICT_KEYS.length=0;
-  Object.keys(DICT_EN).sort((a,b)=>b.length-a.length).forEach(k=>DICT_KEYS.push(k));
   
   /* ═══════════════════════════════════════════════════════════════
      COMMON UI RUNTIME — shared by every panel
@@ -2405,9 +1058,11 @@ function initPage() {
   async function pushSettings(){
     if(ME.role!=="admin")throw new Error("Only an authorized Admin may change approval settings.");
     if(SETTINGS_PULLING)return;
-    await setRow(NODES.settings,"app",{
-      rules:DB.rules||{},
-      autoApproveEmergency:DB.rules&&DB.rules.emergencyApproval===false
+    /* আংশিক (multi-path) আপডেট — settings/app-এর অজানা/অন্য key কখনো মুছে যায় না;
+       সব প্যানেল/ওয়েবসাইট এই একটাই নির্ভরযোগ্য উৎস (settings/app/rules) পড়ে (item 10) */
+    await updatePaths({
+      [`${NODES.settings}/app/rules`]:DB.rules||{},
+      [`${NODES.settings}/app/autoApproveEmergency`]:DB.rules&&DB.rules.emergencyApproval===false
     });
   }
   /* settings live listener — এক প্যানেলে বদলালে অন্য প্যানেল ও ওয়েবসাইটেও সাথে সাথে
@@ -2637,17 +1292,6 @@ function initPage() {
   const RENDER={};
   const SUBP={};
   
-  /* proper nouns must survive translation — register them once */
-  (function(){
-    if(typeof protectNames!=="function")return;
-    protectNames([...AREAS,...HOSPITALS]);
-    protectNames(DB.donors.map(d=>d.name));
-    protectNames(DB.team.map(t=>t.name));
-    protectNames(DB.queue.map(q=>q.name||q.patient));
-    protectNames(DB.live.map(r=>r.patient));
-    protectNames(DB.messages.map(m=>m.name));
-    protectNames([ME&&ME.name,ME&&ME.area,ME&&ME.designation]);
-  })();
   
   /* ══════════════════════════════════════════════════════════════
      MY ACCOUNT — the admin's own account, exactly like a normal user's
@@ -2758,6 +1402,9 @@ function initPage() {
         const p=(row.data&&row.data.panel)||{};
         ["security","privacy","notif","prefs"].forEach(k=>{
           if(p[k]&&typeof p[k]==="object")Object.assign(ME[k],p[k])});
+        /* RTDB-তে অন্য ডিভাইস থেকে সংরক্ষিত পুরোনো "en" preference ফিরলেও
+           বাংলা-ই থাকে — English এখনো চালু নয় (Coming Soon)। */
+        ME.prefs.lang="bn";
         /* Donor state panel preference থেকে অনুমান করা হয় না। users/{uid}-এর
            approved status-ই authoritative — পুরোনো local toggle কোনো
            অসম্পূর্ণ/ভুয়া donor state দেখাতে পারে না। */
@@ -2905,6 +1552,9 @@ function initPage() {
   
   /* replaces the plain object created in the data block */
   ME=Object.assign(loadMe(),{role:ME.role||PANEL.role});
+  /* প্যানেলে English UI এখনো চালু নয় (Coming Soon) — পুরোনো cached "en"
+     preference থাকলেও প্যানেল সবসময় বাংলায় থাকে। */
+  ME.prefs.lang="bn";
   if(!ROLES[ME.role])ME.role=PANEL.role;
   lastPersistedME=CBDCShared.clone(ME);
   function watchModeratorNoticeReads(){
@@ -3007,21 +1657,20 @@ function initPage() {
           <span class="tx"><b>নতুন লগইন সতর্কতা</b><small>অচেনা ডিভাইসে লগইন হলে জানানো হবে</small></span>
           <button class="tg ${ME.security.loginAlert?"on":""}" data-tgl="security.loginAlert"></button></div>
         <button class="row" data-sub="devices"><span class="ic">${SI.device(19)}</span>
-          <span class="tx"><b>লগইন ও ডিভাইস</b><small>${tp(bn(ME.sessions.length)+"টি সক্রিয় সেশন",ME.sessions.length+" active sessions")}</small></span>
+          <span class="tx"><b>লগইন ও ডিভাইস</b><small>${tp(bn(ME.sessions.length)+"টি সক্রিয় সেশন")}</small></span>
           <span class="rt">${SI.right(17)}</span></button>
         <button class="row" data-sub="myactivity"><span class="ic">${SI.clock(19)}</span>
           <span class="tx"><b>আমার কার্যকলাপ</b><small>আমার অ্যাকাউন্টে কী কী বদলেছে</small></span>
           <span class="rt">${SI.right(17)}</span></button>
       </div>
-      <div class="note w">${SI.warn(17)}<span>${tp("আপনার অ্যাকাউন্টে","Your account has")} <b>${tp(bn(myPerms().size)+"টি অনুমতি",myPerms().size+" permissions")}</b>${tp(" আছে","")} —
+      <div class="note w">${SI.warn(17)}<span>${tp("আপনার অ্যাকাউন্টে")} <b>${tp(bn(myPerms().size)+"টি অনুমতি")}</b>${tp(" আছে")} —
         পাসওয়ার্ড কারও সাথে ভাগ করবেন না।</span></div>`;
     bindMe(el,"security");
   };
   
   SUBP.devices=el=>{
-    el.innerHTML=`<div class="note i" data-noi18n>${SI.info(17)}<span>${tp(
-        "আপনার অ্যাকাউন্টে যেসব ডিভাইসে লগইন আছে তার তালিকা। অচেনা কিছু দেখলে সাথে সাথে বের করে দিন।",
-        "Devices currently signed in to your account. If you see anything unfamiliar, sign it out immediately.")}</span></div>
+    el.innerHTML=`<div class="note i">${SI.info(17)}<span>${tp(
+        "আপনার অ্যাকাউন্টে যেসব ডিভাইসে লগইন আছে তার তালিকা। অচেনা কিছু দেখলে সাথে সাথে বের করে দিন।")}</span></div>
       ${ME.sessions.map(s=>`<div class="card" style="padding:13px">
         <div style="display:flex;align-items:center;gap:11px">
           <span class="ic" style="width:38px;height:38px;border-radius:10px;
@@ -3054,9 +1703,8 @@ function initPage() {
   };
   
   SUBP.privacy=el=>{
-    el.innerHTML=`<div class="note i" data-noi18n>${SI.info(17)}<span>${tp(
-        "এই সেটিংস আপনার নিজের তথ্যের জন্য — টিমের অন্য সদস্য ও পাবলিক তালিকায় কী দেখা যাবে তা ঠিক করে।",
-        "These settings cover your own details — they control what teammates and the public list can see.")}</span></div>
+    el.innerHTML=`<div class="note i">${SI.info(17)}<span>${tp(
+        "এই সেটিংস আপনার নিজের তথ্যের জন্য — টিমের অন্য সদস্য ও পাবলিক তালিকায় কী দেখা যাবে তা ঠিক করে।")}</span></div>
       <div class="sec-t">টিমে আমার প্রোফাইল</div>
       <div class="card pad0">
         ${tgRow("টিম তালিকায় আমাকে দেখান","বন্ধ করলে শুধু অ্যাডমিন দেখবেন","privacy.showInTeam")}
@@ -3077,9 +1725,8 @@ function initPage() {
             <option value="none" ${ME.privacy.showEmail==="none"?"selected":""}>কেউ না</option>
           </select></div>
       </div>
-      <div class="note w" data-noi18n>${SI.warn(17)}<span>${tp(
-        "অ্যাডমিন হিসেবে আপনি যা যা করেন তা <b>অডিট লগে থেকেই যায়</b> — এটি গোপনীয়তা সেটিংস দিয়ে বন্ধ করা যায় না।",
-        "Everything you do as an admin <b>stays in the audit log</b> — privacy settings cannot switch that off.")}</span></div>`;
+      <div class="note w">${SI.warn(17)}<span>${tp(
+        "অ্যাডমিন হিসেবে আপনি যা যা করেন তা <b>অডিট লগে থেকেই যায়</b> — এটি গোপনীয়তা সেটিংস দিয়ে বন্ধ করা যায় না।")}</span></div>`;
     bindMe(el,"privacy");
   };
   
@@ -3119,11 +1766,10 @@ function initPage() {
       </div>
       <div class="sec-t">ভাষা</div>
       <div class="card"><div class="strip seg" id="plg">
-        <button data-lg="bn" class="${ME.prefs.lang==="bn"?"on":""}" data-noi18n>বাংলা</button>
-        <button data-lg="en" class="${ME.prefs.lang==="en"?"on":""}" data-noi18n>English</button></div>
-        <p class="hint2" style="margin-top:9px" data-noi18n>${tp(
-          "ভাষা বদলালে পুরো প্যানেল সেই ভাষায় দেখা যাবে।",
-          "Changing the language switches the entire panel.")}</p></div>
+        <button data-lg="bn" class="${ME.prefs.lang==="bn"?"on":""}">বাংলা</button>
+        <button data-lg="en">English</button></div>
+        <p class="hint2" style="margin-top:9px">${tp(
+          "ভাষা বদলালে পুরো প্যানেল সেই ভাষায় দেখা যাবে।")}</p></div>
       <div class="sec-t">শুরুর পাতা</div>
       <div class="card">
         <div class="f" style="margin-bottom:0"><label>লগইনের পর কোন পাতা খুলবে</label>
@@ -3141,10 +1787,18 @@ function initPage() {
     bindMe(el,"prefs");
     el.querySelectorAll("[data-dn]").forEach(b=>b.onclick=async()=>{
       ME.prefs.dense=b.dataset.dn==="1";await saveMe();applyPrefs();paintTop();paintNav();renderSub("prefs")});
+    /* ভাষা — English এখনো চালু নয় (Coming Soon); বাংলা-ই একমাত্র ভাষা।
+       English-এ click করলে শুধু বার্তা দেখায় — state/সংরক্ষণ/রেন্ডার কিছুই বদলায় না। */
     el.querySelectorAll("[data-lg]").forEach(b=>b.onclick=async()=>{
+      if(b.dataset.lg==="en"){
+        b.classList.remove("on");
+        el.querySelectorAll("[data-lg]").forEach(x=>{if(x.dataset.lg==="bn")x.classList.add("on")});
+        toast("English ভাষা খুব শীঘ্রই আসছে — বর্তমানে শুধু বাংলা ভাষা উপলব্ধ।");
+        return;
+      }
       if(ME.prefs.lang===b.dataset.lg)return;
-      ME.prefs.lang=b.dataset.lg;await saveMe();applyLang();
-      toast(isEN()?"Language changed to English":"ভাষা বাংলা করা হয়েছে","ok")});
+      ME.prefs.lang="bn";await saveMe();applyLang();
+      toast("ভাষা বাংলা করা হয়েছে","ok")});
   };
   
   SUBP.myperm=el=>{
@@ -3152,10 +1806,9 @@ function initPage() {
     el.innerHTML=`<div class="card">
         <div class="per"><span class="bg2" style="width:46px;height:46px;border-radius:50%;
           background:var(--grn-s);color:var(--grn);font-size:1.1rem">${ROLES[ME.role].icon}</span>
-          <div class="i"><b>${esc(ME.name)}</b><small>${ROLES[ME.role].label} · ${tp(bn(mine.size)+"টি অনুমতি",mine.size+" permissions")}</small></div></div>
-        <p class="hint2" style="margin-top:10px" data-noi18n>${tp(
-          "ভূমিকা ডেটাবেজ থেকে নির্ধারিত হয় — নিজে বদলানো যায় না। কিছু দরকার হলে অ্যাডমিনকে বলুন।",
-          "Your role is set from the database and cannot be changed by you. Ask an admin if you need more access.")}</p></div>
+          <div class="i"><b>${esc(ME.name)}</b><small>${ROLES[ME.role].label} · ${tp(bn(mine.size)+"টি অনুমতি")}</small></div></div>
+        <p class="hint2" style="margin-top:10px">${tp(
+          "ভূমিকা ডেটাবেজ থেকে নির্ধারিত হয় — নিজে বদলানো যায় না। কিছু দরকার হলে অ্যাডমিনকে বলুন।")}</p></div>
       ${Object.entries(PERM_GROUPS).map(([g,ps])=>`
         <div class="sec-t">${esc(g)}</div>
         <div class="card pad0">${ps.map(p=>`<div class="row">
@@ -3186,9 +1839,8 @@ function initPage() {
           <small style="white-space:normal">অনুরোধ করার পর ২৪ ঘণ্টার মধ্যে অ্যাকাউন্ট ও এর সাথে সম্পর্কিত সকল ডাটা মুছে যাবে</small></span>
           <span class="rt">${SI.right(17)}</span></button>
       </div>
-      <div class="note w" data-noi18n>${SI.warn(17)}<span>${tp(
-        "অ্যাডমিন অ্যাকাউন্ট নিজে থেকে মুছে ফেলা যায় না — শেষ অ্যাডমিন হারিয়ে গেলে পুরো সিস্টেম আটকে যাবে। অ্যাডমিনকে বলুন।",
-        "An admin account cannot delete itself — losing the last admin would lock the whole system. Ask an admin.")}</span></div>`;
+      <div class="note w">${SI.warn(17)}<span>${tp(
+        "অ্যাডমিন অ্যাকাউন্ট নিজে থেকে মুছে ফেলা যায় না — শেষ অ্যাডমিন হারিয়ে গেলে পুরো সিস্টেম আটকে যাবে। অ্যাডমিনকে বলুন।")}</span></div>`;
     bindMe(el,"manage");
   };
   
@@ -3231,7 +1883,7 @@ function initPage() {
     localStorage.setItem("cbdc.admin.theme",ME.prefs.theme);
     document.body.dataset.dense=ME.prefs.dense?"1":"0";
     document.body.dataset.anim=ME.prefs.anim?"1":"0";
-    document.documentElement.lang=ME.prefs.lang==="en"?"en":"bn";
+    document.documentElement.lang="bn";
     document.body.dataset.lang=ME.prefs.lang;
   }
 
@@ -3610,49 +2262,49 @@ function initPage() {
   /* ---------- policies (full text, shared with the donor app) ---------- */
   /* built per call so tp() picks up the current language */
   const POLICY=()=>({
-    pol_terms:{title:"ব্যবহারের শর্তাবলী",updated:tp("১ আগস্ট ২০২৬","1 August 2026"),
-      intro:tp("চকবাজার ব্লাড ডোনার\u0027স ক্লাবের অ্যাপ ও ওয়েবসাইট ব্যবহার করার আগে এই শর্তগুলো পড়ে নিন। অ্যাকাউন্ট খোলা বা অ্যাপ ব্যবহার করার অর্থ আপনি এই শর্তগুলো মেনে নিয়েছেন।","Please read these terms before using the Chakbazar Blood Donor's Club app and website. Creating an account or using the app means you accept these terms."),
+    pol_terms:{title:"ব্যবহারের শর্তাবলী",updated:tp("১ আগস্ট ২০২৬"),
+      intro:tp("চকবাজার ব্লাড ডোনার\u0027স ক্লাবের অ্যাপ ও ওয়েবসাইট ব্যবহার করার আগে এই শর্তগুলো পড়ে নিন। অ্যাকাউন্ট খোলা বা অ্যাপ ব্যবহার করার অর্থ আপনি এই শর্তগুলো মেনে নিয়েছেন।"),
       sec:[
-        [tp("সেবার উদ্দেশ্য","Purpose of the service"),tp("এই অ্যাপ স্বেচ্ছায় রক্তদাতা ও রক্তের প্রয়োজন আছে এমন মানুষের মধ্যে যোগাযোগ তৈরি করে। ক্লাব কোনো হাসপাতাল, ব্লাড ব্যাংক বা চিকিৎসাসেবা প্রতিষ্ঠান নয় এবং রক্ত সংগ্রহ, সংরক্ষণ বা বিক্রি করে না।","This app connects voluntary blood donors with people who need blood. The club is not a hospital, blood bank or medical provider, and does not collect, store or sell blood.")],
-        [tp("অ্যাকাউন্ট","Your account"),tp("একজন ব্যক্তি একটি অ্যাকাউন্ট খুলতে পারবেন। দেওয়া সব তথ্য সত্য ও হালনাগাদ হতে হবে। অ্যাকাউন্টের নিরাপত্তা ও পাসওয়ার্ড গোপন রাখার দায়িত্ব আপনার। অন্যের নামে বা ভুয়া তথ্য দিয়ে অ্যাকাউন্ট খোলা যাবে না।","One person may hold one account. All information you give must be true and up to date. Keeping your password safe is your responsibility. Accounts using someone else's identity or false information are not allowed.")],
-        [tp("বয়স ও যোগ্যতা","Age and eligibility"),tp("রক্তদাতা হিসেবে যুক্ত হতে হলে বয়স কমপক্ষে ১৮ বছর হতে হবে এবং রক্তদানের শারীরিক যোগ্যতা থাকতে হবে। ভুল তথ্য দিয়ে তালিকাভুক্ত হলে অ্যাকাউন্ট স্থগিত করা হবে।","To join as a donor you must be at least 18 years old and physically fit to donate. Accounts listed with false information will be suspended.")],
-        [tp("রক্ত বেচাকেনা নিষিদ্ধ","Selling blood is forbidden"),tp("রক্তদান সম্পূর্ণ স্বেচ্ছায় ও বিনামূল্যে। রক্তের বিনিময়ে টাকা বা কোনো সুবিধা চাওয়া বা দেওয়া কঠোরভাবে নিষিদ্ধ এবং আইনত দণ্ডনীয়। এমন অভিযোগ প্রমাণিত হলে অ্যাকাউন্ট স্থায়ীভাবে বাতিল হবে।","Blood donation is entirely voluntary and free. Asking for or offering money or any benefit in exchange for blood is strictly forbidden and punishable by law. A proven complaint results in permanent account cancellation.")],
-        [tp("আচরণবিধি","Code of conduct"),tp("অন্য ব্যবহারকারীর সাথে সম্মানজনক আচরণ করুন। হয়রানি, হুমকি, অশালীন বার্তা, অপ্রয়োজনীয় ফোন বা যোগাযোগের তথ্য অন্যত্র ছড়িয়ে দেওয়া নিষিদ্ধ। রক্তদাতার নম্বর শুধু রক্তসংক্রান্ত প্রয়োজনেই ব্যবহার করা যাবে।","Treat other users with respect. Harassment, threats, indecent messages, unnecessary calls and sharing someone's contact details elsewhere are forbidden. A donor's number may only be used for blood-related needs.")],
-        [tp("ভুল বা অপব্যবহার","Misuse"),tp("মিথ্যা জরুরি আবেদন, ভুয়া রক্তদানের রেকর্ড বা অন্যের ছবি-তথ্য ব্যবহার করা যাবে না। ক্লাব যেকোনো সময় যাচাই চাইতে পারে এবং প্রয়োজনে অ্যাকাউন্ট স্থগিত বা বাতিল করতে পারে।","False emergency requests, fake donation records and using another person's photo or information are not allowed. The club may ask for verification at any time and may suspend or cancel an account when needed.")],
-        [tp("দায়সীমা","Limits of liability"),tp("ক্লাব রক্তদাতা ও গ্রহীতার মধ্যে শুধু যোগাযোগের সুযোগ করে দেয়। রক্তদানের সিদ্ধান্ত, শারীরিক পরীক্ষা, ক্রসম্যাচিং ও চিকিৎসা সংক্রান্ত সব দায়িত্ব সংশ্লিষ্ট হাসপাতাল ও ব্যক্তির। এ থেকে উদ্ভূত কোনো ক্ষতির জন্য ক্লাব দায়ী থাকবে না।","The club only creates the opportunity for donor and recipient to contact each other. The decision to donate, physical screening, cross-matching and all medical matters are the responsibility of the hospital and the individuals involved. The club is not liable for any resulting harm.")],
-        [tp("শর্ত পরিবর্তন","Changes to these terms"),tp("প্রয়োজনে এই শর্তাবলী হালনাগাদ করা হতে পারে। বড় পরিবর্তন হলে অ্যাপে বিজ্ঞপ্তির মাধ্যমে জানানো হবে।","These terms may be updated when necessary. Significant changes will be announced through an in-app notification.")],
-        [tp("যোগাযোগ","Contact"),tp(`শর্তাবলী নিয়ে কোনো প্রশ্ন থাকলে হেল্পলাইন ${bn(SITE.phone)} নম্বরে যোগাযোগ করুন।`,`If you have questions about these terms, call the helpline on ${SITE.phone}.`)]]},
+        [tp("সেবার উদ্দেশ্য"),tp("এই অ্যাপ স্বেচ্ছায় রক্তদাতা ও রক্তের প্রয়োজন আছে এমন মানুষের মধ্যে যোগাযোগ তৈরি করে। ক্লাব কোনো হাসপাতাল, ব্লাড ব্যাংক বা চিকিৎসাসেবা প্রতিষ্ঠান নয় এবং রক্ত সংগ্রহ, সংরক্ষণ বা বিক্রি করে না।")],
+        [tp("অ্যাকাউন্ট"),tp("একজন ব্যক্তি একটি অ্যাকাউন্ট খুলতে পারবেন। দেওয়া সব তথ্য সত্য ও হালনাগাদ হতে হবে। অ্যাকাউন্টের নিরাপত্তা ও পাসওয়ার্ড গোপন রাখার দায়িত্ব আপনার। অন্যের নামে বা ভুয়া তথ্য দিয়ে অ্যাকাউন্ট খোলা যাবে না।")],
+        [tp("বয়স ও যোগ্যতা"),tp("রক্তদাতা হিসেবে যুক্ত হতে হলে বয়স কমপক্ষে ১৮ বছর হতে হবে এবং রক্তদানের শারীরিক যোগ্যতা থাকতে হবে। ভুল তথ্য দিয়ে তালিকাভুক্ত হলে অ্যাকাউন্ট স্থগিত করা হবে।")],
+        [tp("রক্ত বেচাকেনা নিষিদ্ধ"),tp("রক্তদান সম্পূর্ণ স্বেচ্ছায় ও বিনামূল্যে। রক্তের বিনিময়ে টাকা বা কোনো সুবিধা চাওয়া বা দেওয়া কঠোরভাবে নিষিদ্ধ এবং আইনত দণ্ডনীয়। এমন অভিযোগ প্রমাণিত হলে অ্যাকাউন্ট স্থায়ীভাবে বাতিল হবে।")],
+        [tp("আচরণবিধি"),tp("অন্য ব্যবহারকারীর সাথে সম্মানজনক আচরণ করুন। হয়রানি, হুমকি, অশালীন বার্তা, অপ্রয়োজনীয় ফোন বা যোগাযোগের তথ্য অন্যত্র ছড়িয়ে দেওয়া নিষিদ্ধ। রক্তদাতার নম্বর শুধু রক্তসংক্রান্ত প্রয়োজনেই ব্যবহার করা যাবে।")],
+        [tp("ভুল বা অপব্যবহার"),tp("মিথ্যা জরুরি আবেদন, ভুয়া রক্তদানের রেকর্ড বা অন্যের ছবি-তথ্য ব্যবহার করা যাবে না। ক্লাব যেকোনো সময় যাচাই চাইতে পারে এবং প্রয়োজনে অ্যাকাউন্ট স্থগিত বা বাতিল করতে পারে।")],
+        [tp("দায়সীমা"),tp("ক্লাব রক্তদাতা ও গ্রহীতার মধ্যে শুধু যোগাযোগের সুযোগ করে দেয়। রক্তদানের সিদ্ধান্ত, শারীরিক পরীক্ষা, ক্রসম্যাচিং ও চিকিৎসা সংক্রান্ত সব দায়িত্ব সংশ্লিষ্ট হাসপাতাল ও ব্যক্তির। এ থেকে উদ্ভূত কোনো ক্ষতির জন্য ক্লাব দায়ী থাকবে না।")],
+        [tp("শর্ত পরিবর্তন"),tp("প্রয়োজনে এই শর্তাবলী হালনাগাদ করা হতে পারে। বড় পরিবর্তন হলে অ্যাপে বিজ্ঞপ্তির মাধ্যমে জানানো হবে।")],
+        [tp("যোগাযোগ"),tp(`শর্তাবলী নিয়ে কোনো প্রশ্ন থাকলে হেল্পলাইন ${bn(SITE.phone)} নম্বরে যোগাযোগ করুন।`)]]},
   
-    pol_privacy:{title:"গোপনীয়তা নীতি",updated:tp("১ আগস্ট ২০২৬","1 August 2026"),
-      intro:tp("আপনার তথ্য আমাদের কাছে গুরুত্বপূর্ণ। কী তথ্য নেওয়া হয়, কেন নেওয়া হয় এবং কে দেখতে পায় — এই নীতিতে তা পরিষ্কারভাবে বলা আছে।","Your information matters to us. This policy explains clearly what is collected, why it is collected and who can see it."),
+    pol_privacy:{title:"গোপনীয়তা নীতি",updated:tp("১ আগস্ট ২০২৬"),
+      intro:tp("আপনার তথ্য আমাদের কাছে গুরুত্বপূর্ণ। কী তথ্য নেওয়া হয়, কেন নেওয়া হয় এবং কে দেখতে পায় — এই নীতিতে তা পরিষ্কারভাবে বলা আছে।"),
       sec:[
-        [tp("কী তথ্য সংগ্রহ করা হয়","What we collect"),tp("অ্যাকাউন্টের জন্য: নাম, ইউজারনেম, ইমেইল, মোবাইল নম্বর, জন্মতারিখ, লিঙ্গ ও এলাকা। রক্তদাতা হলে অতিরিক্ত: রক্তের গ্রুপ, ওজন, সর্বশেষ রক্তদানের তারিখ ও স্বাস্থ্য সংক্রান্ত সংক্ষিপ্ত তথ্য।","For your account: name, username, email, mobile number, date of birth, gender and area. If you are a donor, additionally: blood group, weight, last donation date and brief health information.")],
-        [tp("কেন সংগ্রহ করা হয়","Why we collect it"),tp("জরুরি প্রয়োজনে সঠিক গ্রুপের রক্তদাতা খুঁজে বের করা, রক্তদানের হিসাব রাখা, বিশ্রামের সময় গণনা করা এবং আপনাকে প্রয়োজনীয় বিজ্ঞপ্তি পাঠানোর জন্য।","To find the right blood group quickly in an emergency, to keep a record of donations, to count your rest period, and to send you the notifications you need.")],
-        [tp("পাবলিক তালিকায় কী দেখা যায়","What the public list shows"),tp("আপনার নাম, রক্তের গ্রুপ ও এলাকা দেখা যায়। সম্পূর্ণ ঠিকানা, জন্মতারিখ, ইমেইল ও স্বাস্থ্য তথ্য কখনো প্রকাশ করা হয় না। মোবাইল নম্বর দেখা যাবে কি না তা আপনি গোপনীয়তা সেটিংস থেকে নিজে ঠিক করতে পারবেন।","Your name, blood group and area are visible. Your full address, date of birth, email and health information are never made public. Whether your mobile number is visible is your own choice in privacy settings.")],
-        [tp("আপনার নিয়ন্ত্রণ","Your control"),tp("যেকোনো সময় প্রোফাইল লুকাতে পারবেন, প্রাপ্যতা বন্ধ রাখতে পারবেন, তথ্য সম্পাদনা করতে পারবেন, সব তথ্য JSON বা CSV ফাইলে নামাতে পারবেন এবং অ্যাকাউন্ট মুছে ফেলতে পারবেন।","At any time you can hide your profile, turn off availability, edit your information, download everything as a JSON or CSV file, and delete your account.")],
-        [tp("তথ্য কার সাথে ভাগ করা হয়","Who we share with"),tp("আপনার তথ্য কোনো তৃতীয় পক্ষের কাছে বিক্রি বা ভাড়া দেওয়া হয় না। শুধু ক্লাবের অনুমোদিত স্বেচ্ছাসেবক ও অ্যাডমিনরা প্রয়োজনের সময় তথ্য দেখতে পান, এবং প্রতিটি দেখা কার্যকলাপ লগে রাখা হয়।","Your information is never sold or rented to any third party. Only authorised club volunteers and admins can see it when needed, and every such view is written to the activity log.")],
-        [tp("তথ্য সংরক্ষণ","How long we keep it"),tp("অ্যাকাউন্ট সক্রিয় থাকা পর্যন্ত তথ্য সংরক্ষিত থাকে। অ্যাকাউন্ট মুছে ফেলার অনুরোধ করলে ২৪ ঘণ্টার মধ্যে সব ব্যক্তিগত তথ্য মুছে যায়। শুধু নামবিহীন রক্তদানের পরিসংখ্যান থেকে যায়, কারণ তা অন্য রোগীর চিকিৎসার রেকর্ডের সাথে যুক্ত।","Information is kept while the account is active. If you request deletion, all personal information is removed within 24 hours. Only anonymous donation statistics remain, because they are tied to other patients' treatment records.")],
-        [tp("নিরাপত্তা","Security"),tp("পাসওয়ার্ড এনক্রিপ্ট করে রাখা হয়। অচেনা ডিভাইসে লগইন হলে আপনাকে জানানো হয় এবং যেকোনো ডিভাইস থেকে দূর থেকে লগআউট করতে পারবেন।","Passwords are stored encrypted. You are alerted when a login happens on an unknown device, and you can sign out of any device remotely.")],
-        [tp("শিশুদের তথ্য","Children"),tp("১৮ বছরের কম বয়সীদের জন্য এই সেবা নয় এবং আমরা জেনেশুনে তাদের তথ্য সংগ্রহ করি না।","This service is not for anyone under 18, and we do not knowingly collect their information.")],
-        [tp("যোগাযোগ","Contact"),tp(`গোপনীয়তা নিয়ে কোনো প্রশ্ন বা অনুরোধ থাকলে হেল্পলাইন ${bn(SITE.phone)} নম্বরে জানান।`,`For any privacy question or request, call the helpline on ${SITE.phone}.`)]]},
+        [tp("কী তথ্য সংগ্রহ করা হয়"),tp("অ্যাকাউন্টের জন্য: নাম, ইউজারনেম, ইমেইল, মোবাইল নম্বর, জন্মতারিখ, লিঙ্গ ও এলাকা। রক্তদাতা হলে অতিরিক্ত: রক্তের গ্রুপ, ওজন, সর্বশেষ রক্তদানের তারিখ ও স্বাস্থ্য সংক্রান্ত সংক্ষিপ্ত তথ্য।")],
+        [tp("কেন সংগ্রহ করা হয়"),tp("জরুরি প্রয়োজনে সঠিক গ্রুপের রক্তদাতা খুঁজে বের করা, রক্তদানের হিসাব রাখা, বিশ্রামের সময় গণনা করা এবং আপনাকে প্রয়োজনীয় বিজ্ঞপ্তি পাঠানোর জন্য।")],
+        [tp("পাবলিক তালিকায় কী দেখা যায়"),tp("আপনার নাম, রক্তের গ্রুপ ও এলাকা দেখা যায়। সম্পূর্ণ ঠিকানা, জন্মতারিখ, ইমেইল ও স্বাস্থ্য তথ্য কখনো প্রকাশ করা হয় না। মোবাইল নম্বর দেখা যাবে কি না তা আপনি গোপনীয়তা সেটিংস থেকে নিজে ঠিক করতে পারবেন।")],
+        [tp("আপনার নিয়ন্ত্রণ"),tp("যেকোনো সময় প্রোফাইল লুকাতে পারবেন, প্রাপ্যতা বন্ধ রাখতে পারবেন, তথ্য সম্পাদনা করতে পারবেন, সব তথ্য JSON বা CSV ফাইলে নামাতে পারবেন এবং অ্যাকাউন্ট মুছে ফেলতে পারবেন।")],
+        [tp("তথ্য কার সাথে ভাগ করা হয়"),tp("আপনার তথ্য কোনো তৃতীয় পক্ষের কাছে বিক্রি বা ভাড়া দেওয়া হয় না। শুধু ক্লাবের অনুমোদিত স্বেচ্ছাসেবক ও অ্যাডমিনরা প্রয়োজনের সময় তথ্য দেখতে পান, এবং প্রতিটি দেখা কার্যকলাপ লগে রাখা হয়।")],
+        [tp("তথ্য সংরক্ষণ"),tp("অ্যাকাউন্ট সক্রিয় থাকা পর্যন্ত তথ্য সংরক্ষিত থাকে। অ্যাকাউন্ট মুছে ফেলার অনুরোধ করলে ২৪ ঘণ্টার মধ্যে সব ব্যক্তিগত তথ্য মুছে যায়। শুধু নামবিহীন রক্তদানের পরিসংখ্যান থেকে যায়, কারণ তা অন্য রোগীর চিকিৎসার রেকর্ডের সাথে যুক্ত।")],
+        [tp("নিরাপত্তা"),tp("পাসওয়ার্ড এনক্রিপ্ট করে রাখা হয়। অচেনা ডিভাইসে লগইন হলে আপনাকে জানানো হয় এবং যেকোনো ডিভাইস থেকে দূর থেকে লগআউট করতে পারবেন।")],
+        [tp("শিশুদের তথ্য"),tp("১৮ বছরের কম বয়সীদের জন্য এই সেবা নয় এবং আমরা জেনেশুনে তাদের তথ্য সংগ্রহ করি না।")],
+        [tp("যোগাযোগ"),tp(`গোপনীয়তা নিয়ে কোনো প্রশ্ন বা অনুরোধ থাকলে হেল্পলাইন ${bn(SITE.phone)} নম্বরে জানান।`)]]},
   
-    pol_donate:{title:"রক্তদান নির্দেশিকা",updated:tp("১ আগস্ট ২০২৬","1 August 2026"),
-      intro:tp("নিরাপদ রক্তদানের জন্য নিচের নির্দেশনাগুলো মেনে চলুন। এগুলো সাধারণ পরামর্শ — চূড়ান্ত সিদ্ধান্ত সবসময় হাসপাতালের চিকিৎসকের।","Follow the guidance below for safe donation. These are general suggestions — the final decision always rests with the doctor at the hospital."),
+    pol_donate:{title:"রক্তদান নির্দেশিকা",updated:tp("১ আগস্ট ২০২৬"),
+      intro:tp("নিরাপদ রক্তদানের জন্য নিচের নির্দেশনাগুলো মেনে চলুন। এগুলো সাধারণ পরামর্শ — চূড়ান্ত সিদ্ধান্ত সবসময় হাসপাতালের চিকিৎসকের।"),
       sec:[
-        [tp("কারা রক্ত দিতে পারবেন","Who can donate"),tp("বয়স ১৮ থেকে ৬০ বছর · ওজন কমপক্ষে ৫০ কেজি · হিমোগ্লোবিন কমপক্ষে ১২.৫ গ্রাম/ডেসিলিটার · সাধারণভাবে সুস্থ শরীর ও স্বাভাবিক রক্তচাপ।","Age 18 to 60 · Weight at least 50 kg · Haemoglobin at least 12.5 g/dL · Generally good health and normal blood pressure.")],
-        [tp("কারা দিতে পারবেন না","Who cannot donate"),tp("হেপাটাইটিস বি বা সি, এইচআইভি বা অন্য রক্তবাহিত রোগ থাকলে · হৃদরোগ, ক্যান্সার বা অনিয়ন্ত্রিত ডায়াবেটিস থাকলে · গর্ভবতী বা সন্তান জন্মের ছয় মাসের মধ্যে · সাম্প্রতিক বড় অস্ত্রোপচার বা রক্ত গ্রহণের ইতিহাস থাকলে।","People with hepatitis B or C, HIV or another blood-borne disease · People with heart disease, cancer or uncontrolled diabetes · Anyone pregnant or within six months of childbirth · Anyone with recent major surgery or a history of receiving blood.")],
-        [tp("কতদিন পর পর","How often"),tp("পুরুষরা ৩ মাস (৯০ দিন) পর পর এবং নারীরা ৪ মাস পর পর রক্ত দিতে পারেন। অ্যাপে আপনার পরবর্তী রক্তদানের তারিখের কাউন্টডাউন দেখানো হয়।","Men can donate every 3 months (90 days) and women every 4 months. The app shows a countdown to your next donation date.")],
-        [tp("রক্তদানের আগে","Before donating"),tp("আগের রাতে অন্তত ৭ ঘণ্টা ঘুমান · খালি পেটে রক্ত দেবেন না, হালকা খাবার খেয়ে যান · প্রচুর পানি পান করুন · রক্তদানের ২৪ ঘণ্টা আগে থেকে ধূমপান ও মদ্যপান এড়িয়ে চলুন · জাতীয় পরিচয়পত্র সাথে নিন।","Sleep at least 7 hours the night before · Never donate on an empty stomach, eat a light meal first · Drink plenty of water · Avoid smoking and alcohol for 24 hours beforehand · Bring your national ID card.")],
-        [tp("রক্তদানের সময়","During donation"),tp("পুরো প্রক্রিয়ায় ৮ থেকে ১০ মিনিট সময় লাগে এবং ৩৫০ থেকে ৪৫০ মিলিলিটার রক্ত নেওয়া হয়। প্রতিবার নতুন ও জীবাণুমুক্ত সুচ ব্যবহার করা হয়, তাই সংক্রমণের কোনো ঝুঁকি নেই। শরীর ২৪ থেকে ৪৮ ঘণ্টার মধ্যে রক্তের তরল অংশ পূরণ করে নেয়।","The whole process takes 8 to 10 minutes and 350 to 450 millilitres of blood is taken. A fresh sterile needle is used every time, so there is no risk of infection. Your body replaces the fluid within 24 to 48 hours.")],
-        [tp("রক্তদানের পর","After donating"),tp("১০ থেকে ১৫ মিনিট শুয়ে বা বসে বিশ্রাম নিন · পানি, শরবত বা ফলের রস পান করুন · হাতের ব্যান্ডেজ ৪ ঘণ্টা রাখুন · ওই দিন ভারী কাজ, ব্যায়াম বা দীর্ঘ ভ্রমণ এড়িয়ে চলুন · মাথা ঘোরালে সাথে সাথে শুয়ে পড়ুন ও পা উঁচু করে রাখুন।","Rest lying down or seated for 10 to 15 minutes · Drink water, sherbet or fruit juice · Keep the bandage on for 4 hours · Avoid heavy work, exercise and long journeys that day · If you feel dizzy, lie down at once and raise your legs.")],
-        [tp("রক্তদানের উপকারিতা","Benefits of donating"),tp("প্রতিবার রক্তদানে তিনজন পর্যন্ত মানুষের জীবন বাঁচতে পারে। নিয়মিত রক্তদানে শরীরে নতুন রক্তকণিকা তৈরি হয় এবং প্রতিবার রক্তদানের আগে বিনামূল্যে কয়েকটি স্বাস্থ্য পরীক্ষা হয়ে যায়।","Each donation can save up to three lives. Regular donation helps your body make fresh blood cells, and you get a few free health checks before every donation.")],
-        [tp("জরুরি সতর্কতা","Important warning"),tp("রক্ত কখনো টাকার বিনিময়ে দেবেন না বা নেবেন না। অচেনা কেউ হাসপাতালের বাইরে দেখা করতে বললে সতর্ক থাকুন — রক্তদান সবসময় স্বীকৃত হাসপাতাল বা ব্লাড ব্যাংকে করুন।","Never give or take blood in exchange for money. Be careful if a stranger asks to meet outside a hospital — always donate at a recognised hospital or blood bank.")]]}
+        [tp("কারা রক্ত দিতে পারবেন"),tp("বয়স ১৮ থেকে ৬০ বছর · ওজন কমপক্ষে ৫০ কেজি · হিমোগ্লোবিন কমপক্ষে ১২.৫ গ্রাম/ডেসিলিটার · সাধারণভাবে সুস্থ শরীর ও স্বাভাবিক রক্তচাপ।")],
+        [tp("কারা দিতে পারবেন না"),tp("হেপাটাইটিস বি বা সি, এইচআইভি বা অন্য রক্তবাহিত রোগ থাকলে · হৃদরোগ, ক্যান্সার বা অনিয়ন্ত্রিত ডায়াবেটিস থাকলে · গর্ভবতী বা সন্তান জন্মের ছয় মাসের মধ্যে · সাম্প্রতিক বড় অস্ত্রোপচার বা রক্ত গ্রহণের ইতিহাস থাকলে।")],
+        [tp("কতদিন পর পর"),tp("পুরুষরা ৩ মাস (৯০ দিন) পর পর এবং নারীরা ৪ মাস পর পর রক্ত দিতে পারেন। অ্যাপে আপনার পরবর্তী রক্তদানের তারিখের কাউন্টডাউন দেখানো হয়।")],
+        [tp("রক্তদানের আগে"),tp("আগের রাতে অন্তত ৭ ঘণ্টা ঘুমান · খালি পেটে রক্ত দেবেন না, হালকা খাবার খেয়ে যান · প্রচুর পানি পান করুন · রক্তদানের ২৪ ঘণ্টা আগে থেকে ধূমপান ও মদ্যপান এড়িয়ে চলুন · জাতীয় পরিচয়পত্র সাথে নিন।")],
+        [tp("রক্তদানের সময়"),tp("পুরো প্রক্রিয়ায় ৮ থেকে ১০ মিনিট সময় লাগে এবং ৩৫০ থেকে ৪৫০ মিলিলিটার রক্ত নেওয়া হয়। প্রতিবার নতুন ও জীবাণুমুক্ত সুচ ব্যবহার করা হয়, তাই সংক্রমণের কোনো ঝুঁকি নেই। শরীর ২৪ থেকে ৪৮ ঘণ্টার মধ্যে রক্তের তরল অংশ পূরণ করে নেয়।")],
+        [tp("রক্তদানের পর"),tp("১০ থেকে ১৫ মিনিট শুয়ে বা বসে বিশ্রাম নিন · পানি, শরবত বা ফলের রস পান করুন · হাতের ব্যান্ডেজ ৪ ঘণ্টা রাখুন · ওই দিন ভারী কাজ, ব্যায়াম বা দীর্ঘ ভ্রমণ এড়িয়ে চলুন · মাথা ঘোরালে সাথে সাথে শুয়ে পড়ুন ও পা উঁচু করে রাখুন।")],
+        [tp("রক্তদানের উপকারিতা"),tp("প্রতিবার রক্তদানে তিনজন পর্যন্ত মানুষের জীবন বাঁচতে পারে। নিয়মিত রক্তদানে শরীরে নতুন রক্তকণিকা তৈরি হয় এবং প্রতিবার রক্তদানের আগে বিনামূল্যে কয়েকটি স্বাস্থ্য পরীক্ষা হয়ে যায়।")],
+        [tp("জরুরি সতর্কতা"),tp("রক্ত কখনো টাকার বিনিময়ে দেবেন না বা নেবেন না। অচেনা কেউ হাসপাতালের বাইরে দেখা করতে বললে সতর্ক থাকুন — রক্তদান সবসময় স্বীকৃত হাসপাতাল বা ব্লাড ব্যাংকে করুন।")]]}
   });
   function sheetPolicy(key){
     const d=POLICY()[key]; if(!d)return;
     const s=sheet(d.title,`
-      <div data-noi18n>
-      <p class="mut" style="font-size:.75rem;margin:-2px 0 12px">${tp("সর্বশেষ হালনাগাদ:","Last updated:")} ${esc(d.updated)}</p>
+      <div>
+      <p class="mut" style="font-size:.75rem;margin:-2px 0 12px">${tp("সর্বশেষ হালনাগাদ:")} ${esc(d.updated)}</p>
       <p style="font-size:.85rem;line-height:1.75;margin-bottom:4px">${esc(d.intro)}</p>
       ${d.sec.map((x,i)=>`<div style="margin-top:15px">
         <b style="display:block;font-size:.87rem;margin-bottom:5px">${isEN()?(i+1)+".":bn(i+1)+"."} ${esc(x[0])}</b>
@@ -3736,19 +2388,18 @@ function initPage() {
   RENDER.home=()=>{
     const el=$("#s-home");
     const hr=new Date().getHours();
-    const greet=tp(hr<12?"শুভ সকাল":hr<17?"শুভ দুপুর":hr<20?"শুভ সন্ধ্যা":"শুভ রাত্রি",
-      hr<12?"Good morning":hr<17?"Good afternoon":hr<20?"Good evening":"Good night");
+    const greet=tp(hr<12?"শুভ সকাল":hr<17?"শুভ দুপুর":hr<20?"শুভ সন্ধ্যা":"শুভ রাত্রি");
     const c=bloodCounts(),ready=DB.donors.filter(readyOf).length;
     const low=GROUPS.filter(g=>c[g]<3);
   
     const alerts=[];
-    if(qCount("request"))alerts.push({cl:"var(--red)",ic:"warn",b:tp(`${bn(qCount("request"))}টি জরুরি আবেদন অপেক্ষমাণ`,`${qCount("request")} emergency requests waiting`),
+    if(qCount("request"))alerts.push({cl:"var(--red)",ic:"warn",b:tp(`${bn(qCount("request"))}টি জরুরি আবেদন অপেক্ষমাণ`),
       s:"রোগীর জীবন জড়িত — আগে দেখুন",fn:()=>{wTab="request";go("work")}});
-    if(low.length)alerts.push({cl:"var(--amb)",ic:"drop",b:tp(`${low.join(", ")} গ্রুপে ডোনার কম`,`${low.join(", ")} running low on donors`),
+    if(low.length)alerts.push({cl:"var(--amb)",ic:"drop",b:tp(`${low.join(", ")} গ্রুপে ডোনার কম`),
       s:"৩ জনের কম প্রস্তুত ডোনার আছে",fn:()=>go("home","stats")});
-    if(qCount("donor"))alerts.push({cl:"var(--grn)",ic:"user",b:tp(`${bn(qCount("donor"))}টি নতুন ডোনার আবেদন`,`${qCount("donor")} new donor applications`),
+    if(qCount("donor"))alerts.push({cl:"var(--grn)",ic:"user",b:tp(`${bn(qCount("donor"))}টি নতুন ডোনার আবেদন`),
       s:"যাচাই করে অনুমোদন দিন",fn:()=>{wTab="donor";go("work")}});
-    if(unread())alerts.push({cl:"var(--blu)",ic:"mail",b:tp(`${bn(unread())}টি নতুন বার্তা`,`${unread()} new messages`),
+    if(unread())alerts.push({cl:"var(--blu)",ic:"mail",b:tp(`${bn(unread())}টি নতুন বার্তা`),
       s:"ওয়েবসাইটের যোগাযোগ ফর্ম থেকে",fn:()=>go("home","inbox")});
   
     /* বাস্তব সংখ্যা — ঐ দিনে সত্যিই যত রক্তদান রেকর্ড আছে (কোনো random নয়) */
@@ -3757,7 +2408,7 @@ function initPage() {
     const wMax=Math.max(3,...week.map(w=>w.v));
   
     el.innerHTML=ptitle(greet+", "+ME.name.split(" ")[0],
-      tp(`${ROLES[ME.role].label} · আজ ${dL(iso(now()))}`,`${ROLES[ME.role].label} · today, ${dL(iso(now()))}`))
+      tp(`${ROLES[ME.role].label} · আজ ${dL(iso(now()))}`))
   
     +`<div class="astat">
         <button class="g" data-sub="donors"><b>${bn(DB.donors.length)}</b><span>মোট রক্তদাতা</span></button>
@@ -3855,17 +2506,32 @@ function initPage() {
       </button>
       <span class="go">${SI.right(17)}</span></div>`;
   }
+  /* bulk অনুমোদন/বাতিল — একবারই চলে: চলাকালীন বোতাম সাথে সাথে disabled/loading হয়,
+     দ্বিতীয় click/request নিঃশব্দে বাতিল হয় এবং প্রতিটি রেকর্ড ঠিক একবার process হয়
+     (items 2, 11)। */
+  let bulkBusy=false;
   async function bulkDo(ok){
+    if(bulkBusy)return;                              /* ইতিমধ্যে চলছে — দ্বিতীয় request নয় */
     if(!can("donor.approve"))return toast("আপনার অনুমতি নেই","er");
     if(!ok)return rejectSheet([...wSel],()=>{wSel.clear();RENDER.work()});
-    const n=wSel.size;
-    /* Serial Donor UID হিসাবের জন্য সব approve সম্পূর্ণ হওয়া পর্যন্ত অপেক্ষা */
-    const results=await Promise.all([...wSel].map(id=>decide(id,true,"",true)));
-    if(results.some(result=>result!==true))return toast("এক বা একাধিক পরিবর্তন RTDB-তে সংরক্ষণ করা যায়নি","er");
-    try{await persist();}
-    catch(e){return toast("পরিবর্তন RTDB-তে সংরক্ষণ করা যায়নি — সফলতা দেখানো হয়নি","er");}
-    wSel.clear();RENDER.work();paintNav();paintTop();
-    toast(bn(n)+"টি অনুমোদন করা হয়েছে","ok");
+    bulkBusy=true;
+    const okBtn=$("#skOk"),noBtn=$("#skNo");
+    if(okBtn){okBtn.disabled=true;okBtn.textContent="প্রসেস হচ্ছে…";}
+    if(noBtn)noBtn.disabled=true;
+    try{
+      const n=wSel.size;
+      /* Serial Donor UID হিসাবের জন্য সব approve সম্পূর্ণ হওয়া পর্যন্ত অপেক্ষা */
+      const results=await Promise.all([...wSel].map(id=>decide(id,true,"",true)));
+      if(results.some(result=>result!==true))return toast("এক বা একাধিক পরিবর্তন RTDB-তে সংরক্ষণ করা যায়নি","er");
+      try{await persist();}
+      catch(e){return toast("পরিবর্তন RTDB-তে সংরক্ষণ করা যায়নি — সফলতা দেখানো হয়নি","er");}
+      wSel.clear();RENDER.work();paintNav();paintTop();
+      toast(bn(n)+"টি অনুমোদন করা হয়েছে","ok");
+    }finally{
+      bulkBusy=false;
+      if(okBtn&&okBtn.isConnected){okBtn.disabled=false;okBtn.textContent="অনুমোদন";}
+      if(noBtn&&noBtn.isConnected)noBtn.disabled=false;
+    }
   }
   function reviewWarning(q){
     const w=[];
@@ -3892,7 +2558,7 @@ function initPage() {
       <p class="hint2" style="margin-bottom:8px">${group} রোগী ${ok.join(", ")} গ্রুপ থেকে রক্ত নিতে পারেন।</p>
       ${pool.length?`<div class="card pad0" style="margin:0">${pool.slice(0,5).map(d=>`<div class="prow">
         <span class="bg2">${d.group}</span>
-        <span class="tx"><b>${esc(d.name)}</b><small>${esc(d.area)} · ${d.last?tp(dL(d.last)+" শেষ দান","last donated "+dL(d.last)):tp("প্রথমবার","first time")}</small></span>
+        <span class="tx"><b>${esc(d.name)}</b><small>${esc(d.area)} · ${d.last?tp(dL(d.last)+" শেষ দান"):tp("প্রথমবার")}</small></span>
         <span class="tag">${esc(maskPhone(d.phone))}</span></div>`).join("")}</div>
         ${pool.length>5?`<p class="hint2" style="margin-top:7px">আরও ${bn(pool.length-5)} জন আছেন</p>`:""}`
       :`<div class="card" style="margin:0">${emptyBox("warn","এই মুহূর্তে প্রস্তুত ডোনার নেই","অন্য এলাকায় খোঁজ নিন বা ক্যাম্পের ঘোষণা দিন")}</div>`}`;
@@ -3935,7 +2601,8 @@ function initPage() {
     if(can("contact.reveal"))logAudit("যোগাযোগ দেখা হয়েছে",q.id,q.kind);
     if(may){
       /* Double-click / multi-click রোধ — একই action-এর দ্বিতীয় request যায় না (item 2, 11). */
-      const setBusy=b=>{s.q("#rv_yes").disabled=b;s.q("#rv_no").disabled=b;};
+      const setBusy=b=>{s.q("#rv_yes").disabled=b;s.q("#rv_no").disabled=b;
+        if(b)s.q("#rv_yes").textContent="প্রসেস হচ্ছে…";};
       s.q("#rv_yes").onclick=async()=>{if(s.q("#rv_yes").disabled)return;setBusy(true);try{await decide(id,true,s.q("#rv_note").value);}finally{s.close();}};
       s.q("#rv_no").onclick=()=>{s.close();rejectSheet([id])};
     }
@@ -4383,10 +3050,10 @@ function initPage() {
           <option value="unver" ${dF.st==="unver"?"selected":""}>যাচাই বাকি</option>
           <option value="susp" ${dF.st==="susp"?"selected":""}>স্থগিত</option></select>
       </div>
-      <p class="hint2" style="margin-bottom:9px">${tp(bn(list.length)+" জন পাওয়া গেছে",list.length+" donors found")}${can("donor.edit")?tp(" · নতুন যোগ করতে নিচে দেখুন"," · add a new one below"):""}</p>`
+      <p class="hint2" style="margin-bottom:9px">${tp(bn(list.length)+" জন পাওয়া গেছে")}${can("donor.edit")?tp(" · নতুন যোগ করতে নিচে দেখুন"):""}</p>`
     +(rows.length?`<div class="card pad0">${rows.map(d=>`<button class="prow" data-dn="${d.id}">
         <span class="bg2">${d.group}</span>
-        <span class="tx"><b>${esc(d.name)}</b><small>${d.id} · ${esc(d.area)} · ${d.last?tp(dS(d.last)+" শেষ দান","last donated "+dS(d.last)):tp("দান করেননি","never donated")}</small></span>
+        <span class="tx"><b>${esc(d.name)}</b><small>${d.id} · ${esc(d.area)} · ${d.last?tp(dS(d.last)+" শেষ দান"):tp("দান করেননি")}</small></span>
         ${d.suspended?`<span class="pill r">স্থগিত</span>`:readyOf(d)?`<span class="pill g">প্রস্তুত</span>`
           :!d.verified?`<span class="pill a">যাচাই বাকি</span>`:`<span class="pill m">বিশ্রামে</span>`}
         </button>`).join("")}</div>
@@ -4531,11 +3198,11 @@ function initPage() {
           <span class="bg2">${d.group}</span>
           <span class="tx"><b>${esc(d.name)}</b><small>${d.id} · ${esc(d.area)}</small></span>
           <span class="pill r">স্থগিত</span></button>`).join("")}</div>`
-      :`<div class="card">${emptyBox("check",tp("কোনো স্থগিত অ্যাকাউন্ট নেই","No suspended accounts"))}</div>`)
+      :`<div class="card">${emptyBox("check",tp("কোনো স্থগিত অ্যাকাউন্ট নেই"))}</div>`)
     +`<div class="sec-t">সব ব্যবহারকারী</div>
       <div class="card pad0">
         <button class="row" data-sub="donors"><span class="ic">${SI.users(18)}</span>
-          <span class="tx"><b>${tp("রক্তদাতা তালিকা দেখুন","Open the donor list")}</b><small>খোঁজা, ফিল্টার ও সম্পাদনা</small></span>
+          <span class="tx"><b>${tp("রক্তদাতা তালিকা দেখুন")}</b><small>খোঁজা, ফিল্টার ও সম্পাদনা</small></span>
           <span class="rt">${SI.right(16)}</span></button></div>`;
     el.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>openReview(b.dataset.open));
     el.querySelectorAll("[data-dn]").forEach(b=>b.onclick=()=>openDonor(b.dataset.dn));
@@ -4545,15 +3212,15 @@ function initPage() {
   SUBP.team=el=>{
     el.innerHTML=`<div class="card pad0">${DB.team.map(t=>`<div class="prow">
         <span class="bg2" style="background:var(--grn-s);color:var(--grn)">${ROLES[t.role].icon}</span>
-        <span class="tx"><b>${esc(t.name)}${t.uid===ME.uid?tp(" (আপনি)"," (you)"):""}</b>
-          <small>${ROLES[t.role].label} · ${tp(timeAgo(t.last)+" সক্রিয়","active "+timeAgo(t.last))}</small></span>
+        <span class="tx"><b>${esc(t.name)}${t.uid===ME.uid?tp(" (আপনি)"):""}</b>
+          <small>${ROLES[t.role].label} · ${tp(timeAgo(t.last)+" সক্রিয়")}</small></span>
         ${can("team.manage")?`<button class="btn gh sm" data-mr="${t.uid}">${SI.edit(14)}</button>`
           :`<span class="tag">${ROLES[t.role].label}</span>`}</div>`).join("")}</div>`
     +`<div class="sec-t">ভূমিকা অনুযায়ী অনুমতি</div>
       <div class="card pad0">${Object.entries(ROLES).map(([k,r])=>`<div class="row">
         <span class="ic">${r.icon}</span>
-        <span class="tx"><b>${r.label}</b><small>${tp(bn(r.perms.length)+"টি অনুমতি",r.perms.length+" permissions")}</small></span>
-        <span class="rt">${tp(bn(DB.team.filter(t=>t.role===k).length)+" জন",DB.team.filter(t=>t.role===k).length+" people")}</span></div>`).join("")}</div>`
+        <span class="tx"><b>${r.label}</b><small>${tp(bn(r.perms.length)+"টি অনুমতি")}</small></span>
+        <span class="rt">${tp(bn(DB.team.filter(t=>t.role===k).length)+" জন")}</span></div>`).join("")}</div>`
     +`<div class="sec-t">নিরাপত্তা নিয়ম</div>
       <div class="card"><ul class="wl">
         <li>নিজের আবেদন নিজে অনুমোদন করা যায় না</li>
@@ -4816,14 +3483,36 @@ function initPage() {
         <label>ব্যাগ</label><input id="ad_b" type="number" value="1" min="1" max="3"></div>`,
         `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="ad_ok">যোগ করুন</button>`);
       s.q("#ad_ok").onclick=async()=>{
+        const btn=s.q("#ad_ok");
+        if(btn.disabled)return;                /* ডুপ্লিকেট click/request বাতিল (item 1, 11) */
         const dt=s.q("#ad_d").value,pl=s.q("#ad_p").value.trim()||"অজানা স্থান";
         if(!dt)return toast("তারিখ দিন","er");
+        btn.disabled=true;btn.textContent="সংরক্ষণ হচ্ছে…";
         const bags=Math.max(1,Math.floor(Number(s.q("#ad_b").value)||1));
-        d.log=d.log||[];d.log.push({date:dt,place:pl,bags,ok:true});
-        d.donations=(Number(d.donations)||0)+bags;d.totalDonations=d.donations;
-        if(!d.last||dt>d.last)d.last=dt;
-        logAudit("রক্তদান যোগ",d.id+" — "+dL(dt)+" · "+bn(bags)+" ব্যাগ","donation");await persist();
-        s.close();renderSub("donor");toast("রক্তদান যোগ হয়েছে","ok")};
+        /* Admin panel-এর মতোই shared donation log ব্যবহার — donations node-এ
+           deterministic id-র authoritative record (একই event দ্বিতীয়বার যোগ হলে
+           একই id → duplicate নয়), আর পরিসংখ্যান increment নয়, পূর্ণ তালিকা
+           থেকে পুনরায় হিসাব হয় (1 event = 1 জীবন; ব্যাগ আলাদা)। আগে এখানে
+           donations += bags করা হতো — duplicate/ভুল পরিসংখ্যানের উৎস (item 1, 10)। */
+        const at=nowIso();
+        const record={id:safeDonationId(d.ownerUid||"",dt,pl),
+          donorId:d.id,ownerUid:Object(d).ownerUid||"",name:d.name,group:d.group,area:d.area||"",
+          photo:d.photo||"",phone:d.phone||"",place:pl,date:dt,bags,proof:"",patient:"",note:"",
+          livesSaved:1,submittedAt:at,approvedAt:at,approvedBy:ME.name||"মডারেটর",updatedAt:at,source:"moderator"};
+        try{
+          const {paths,stats}=await writeApprovedDonation(record,null,donationIo);
+          await updatePaths(paths);
+          d.log=Array.isArray(d.log)?d.log:[];
+          if(!d.log.some(x=>x&&String(x.date||"")===dt&&String(x.place||"")===pl))
+            d.log.push({date:dt,place:pl,bags,ok:true});
+          d.donations=stats.lives;d.totalDonations=stats.lives;d.totalBags=stats.bags;
+          if(stats.last)d.last=stats.last;
+          logAudit("রক্তদান যোগ",d.id+" — "+dL(dt)+" · "+bn(bags)+" ব্যাগ","donation");
+          await persist();
+        }catch(e){console.warn("moderator add donation:",e&&e.message);
+          btn.disabled=false;btn.textContent="যোগ করুন";
+          return toast("রক্তদান সংরক্ষণ করা যায়নি","er");}
+        s.close();renderSub("donor");toast("রক্তদান যোগ হয়েছে — পরিসংখ্যান হালনাগাদ হয়েছে","ok")};
       return;
     }
     if(a==="more"){
@@ -4945,8 +3634,7 @@ function initPage() {
   
     el.innerHTML=`
       <div class="note i">${SI.info(17)}<span>${tp(
-        "যাকে অ্যাক্সেস দেবেন তার অ্যাকাউন্ট আগে থেকেই থাকতে হবে। নাম, ইউজারনেম বা ইমেইল দিয়ে খুঁজুন।",
-        "The person must already have an account. Search by name, username or email.")}</span></div>
+        "যাকে অ্যাক্সেস দেবেন তার অ্যাকাউন্ট আগে থেকেই থাকতে হবে। নাম, ইউজারনেম বা ইমেইল দিয়ে খুঁজুন।")}</span></div>
       <div class="f"><input id="acq"
         value="${esc(acQuery)}" autocomplete="off"></div>
       <div class="strip chips" id="acf">
@@ -4959,7 +3647,7 @@ function initPage() {
           <span class="bg2" style="${isStaff(a.role)
             ?"background:var(--grn-s);color:var(--grn)":"background:var(--red-s);color:var(--red-d)"}"
             >${roleIcon(a.role)}</span>
-          <span class="tx"><b>${esc(a.name)}${a.uid===ME.uid?tp(" (আপনি)"," (you)"):""}</b>
+          <span class="tx"><b>${esc(a.name)}${a.uid===ME.uid?tp(" (আপনি)"):""}</b>
             <small>@${esc(a.username)} · ${esc(a.email)}</small></span>
           <span class="tag ${isStaff(a.role)?"g":""}">${roleLabel(a.role)}</span>
         </button>`).join("")}</div>`
@@ -4967,9 +3655,9 @@ function initPage() {
           "অন্য নাম, ইউজারনেম বা ইমেইল দিয়ে চেষ্টা করুন")}</div>`)
     +`<div class="sec-t">নিয়ম</div>
       <div class="card"><ul class="wl">
-        <li>${tp("নিজের ভূমিকা নিজে বদলানো যায় না","You cannot change your own role")}</li>
-        <li>${tp("অ্যাডমিনের কাছে Full Access থাকবে","Admin has full access")}</li>
-        <li>${tp("প্রতিটি পরিবর্তন কারণসহ অডিট লগে থাকে","Every change is logged with its reason")}</li>
+        <li>${tp("নিজের ভূমিকা নিজে বদলানো যায় না")}</li>
+        <li>${tp("অ্যাডমিনের কাছে Full Access থাকবে")}</li>
+        <li>${tp("প্রতিটি পরিবর্তন কারণসহ অডিট লগে থাকে")}</li>
       </ul></div>`;
   
     let t;
@@ -5009,11 +3697,10 @@ function initPage() {
         <div><span>যুক্ত হয়েছেন</span><b>${dL(a.joined)}</b></div>
         ${donor?`<div><span>ডোনার আইডি</span><b>${donor.id}</b></div>
           <div><span>রক্তের গ্রুপ</span><b>${donor.group} · ${esc(donor.area)}</b></div>`:
-          `<div><span>ডোনার</span><b>${tp("নন","No")}</b></div>`}
+          `<div><span>ডোনার</span><b>${tp("নন")}</b></div>`}
       </div>
-      ${isMe?`<div class="note w" data-noi18n>${SI.warn(17)}<span>${tp(
-          "নিরাপত্তার জন্য নিজের ভূমিকা নিজে বদলানো যায় না।",
-          "For safety you cannot change your own role.")}</span></div>`:""}
+      ${isMe?`<div class="note w">${SI.warn(17)}<span>${tp(
+          "নিরাপত্তার জন্য নিজের ভূমিকা নিজে বদলানো যায় না।")}</span></div>`:""}
       <div class="sec-t">নতুন ভূমিকা</div>
         <div class="strip wrap chips" id="acr">${GRANTABLE.map(r=>
           `<button data-r="${r}" class="${pick===r?"on":""}" ${isMe?"disabled":""}
@@ -5031,16 +3718,16 @@ function initPage() {
     const paintPowers=()=>{
       const box=s.q("#acpw");if(!box)return;
       if(pick===a.role){box.innerHTML=
-        `<p class="hint2" style="margin-top:10px">${tp("এটিই বর্তমান ভূমিকা।","This is the current role.")}</p>`;return}
+        `<p class="hint2" style="margin-top:10px">${tp("এটিই বর্তমান ভূমিকা।")}</p>`;return}
       const p=rolePowers(pick);
       box.innerHTML=`
         <div class="card flat" style="margin-top:11px;background:var(--card2)">
           <b style="font-size:.82rem;display:block;margin-bottom:6px">${ROLE_META[pick].icon} ${ROLE_META[pick].label}</b>
           <p class="hint2" style="margin-bottom:8px">${esc(ROLE_META[pick].desc)}</p>
           <div style="font-size:.78rem;line-height:1.85">
-            <b style="color:var(--grn)">${tp("যা পারবেন","Can do")}</b>
+            <b style="color:var(--grn)">${tp("যা পারবেন")}</b>
             <ul class="wl" style="margin:2px 0 8px">${p.can.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>
-            ${p.cant.length?`<b style="color:var(--red-d)">${tp("যা পারবেন না","Cannot do")}</b>
+            ${p.cant.length?`<b style="color:var(--red-d)">${tp("যা পারবেন না")}</b>
             <ul class="wl" style="margin:2px 0 0">${p.cant.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`:""}
           </div></div>`;
     };
@@ -5052,42 +3739,68 @@ function initPage() {
       b.classList.add("on");pick=b.dataset.r;paintPowers()});
   
     const ok=s.q("#acok");
+    /* একই অ্যাকাউন্টে একসাথে দ্বিতীয় সংরক্ষণ নয় (duplicate request/race guard) */
+    let acSaving=false;
     if(ok)ok.onclick=async()=>{
-      if(pick===a.role)return toast(tp("ভূমিকা বদলানো হয়নি","Role unchanged"));
+      if(acSaving)return;
+      if(pick===a.role)return toast(tp("ভূমিকা বদলানো হয়নি"));
       const why=(s.q("#acwhy").value||"").trim();
-      if(why.length<4)return toast(tp("কারণ লিখতে হবে","A reason is required"),"er");
+      if(why.length<4)return toast(tp("কারণ লিখতে হবে"),"er");
       const grant=isStaff(pick);
       if(!await confirmS({
-        title:grant?tp("অ্যাক্সেস দেবেন?","Grant access?"):tp("অ্যাক্সেস তুলে নেবেন?","Revoke access?"),
+        title:grant?tp("অ্যাক্সেস দেবেন?"):tp("অ্যাক্সেস তুলে নেবেন?"),
         desc:grant
-          ?`${a.name} ${tp("এখন থেকে","will now be a")} ${ROLE_META[pick].label} ${tp("হিসেবে প্যানেলে ঢুকতে পারবেন।","and can sign in to the panel.")}`
-          :`${a.name} ${tp("আর প্যানেলে ঢুকতে পারবেন না। ডোনার অ্যাকাউন্ট ঠিক থাকবে।","will no longer reach the panel. Their donor account is untouched.")}`,
-        ok:grant?tp("অ্যাক্সেস দিন","Grant"):tp("তুলে নিন","Revoke"),danger:!grant}))return;
-  
+          ?`${a.name} ${tp("এখন থেকে")} ${ROLE_META[pick].label} ${tp("হিসেবে প্যানেলে ঢুকতে পারবেন।")}`
+          :`${a.name} ${tp("আর প্যানেলে ঢুকতে পারবেন না। ডোনার অ্যাকাউন্ট ঠিক থাকবে।")}`,
+        ok:grant?tp("অ্যাক্সেস দিন"):tp("তুলে নিন"),danger:!grant}))return;
+
+      acSaving=true;
+      const okHtml=ok.innerHTML;
+      ok.disabled=true;ok.textContent=tp("সংরক্ষণ হচ্ছে…");
       const before=a.role;
-      a.role=pick;
       const staffRole = pick === "admin" ? "admin" : pick === "mod" ? "moderator" : "donor";
-      if(grant){
-        setRow(NODES.admins, a.uid, {
-          uid:a.uid, email:a.email||"", name:a.name||"", username:a.username||"",
-          role:staffRole, permissions:pick==="admin"?PERMS:ROLES.mod.perms, updatedAt:nowIso()
-        }).catch(e=>console.warn("role grant:",e&&e.message));
-      }else{
-        removeRow(NODES.admins, a.uid).catch(e=>console.warn("role revoke:",e&&e.message));
-      }
-      updateRow(NODES.users, a.uid, {role:staffRole}).catch(e=>console.warn("user role update:",e&&e.message));
-      /* keep the team list in step: staff appear there, users do not */
-      const tIdx=DB.team.findIndex(t=>t.uid===a.uid);
-      if(isStaff(pick)){
-        if(tIdx<0)DB.team.push({uid:a.uid,name:a.name,role:pick,last:new Date().toISOString()});
-        else DB.team[tIdx].role=pick;
-      }else if(tIdx>=0)DB.team.splice(tIdx,1);
-  
-      logAudit(grant?"অ্যাক্সেস দেওয়া হয়েছে":"অ্যাক্সেস তুলে নেওয়া হয়েছে",
-        `${a.name} · ${roleLabel(before)} → ${roleLabel(pick)} — ${why.slice(0,60)}`,"access");
-      await persist();s.close();renderSub("access");paintNav();paintTop();
-      toast(grant?tp(a.name+" এখন "+ROLE_META[pick].label,a.name+" is now "+ROLE_META[pick].label)
-                 :tp("অ্যাক্সেস তুলে নেওয়া হয়েছে","Access revoked"),"ok");
+      try{
+        /* ══ Root-cause fix ══
+           আগে setRow/removeRow/updateRow গুলো fire-and-forget ছিল (.catch শুধু
+           console.warn) এবং তারপর পুরো shared-store persist() হতো — ফলে
+           ডাটাবেসে লেখা ব্যর্থ হলেও (যেমন Security Rules-এ মডারেটরের
+           access-grant অনুমতি নেই) সবুজ "সফল" toast দেখাত, আর persist() ব্যর্থ
+           হলে sheet/বোতাম আটকে থাকত। এখন এক **atomic multi-path write** await
+           করা হয় — ডাটাবেস সফল হলে তবেই UI বদলায়; ব্যর্থ হলে আগের অবস্থাই
+           থাকে এবং স্পষ্ট বাংলা কারণ দেখানো হয়। কোনো full-store persist()
+           দরকার নেই — role-এর উৎস users/{uid} · admins/{uid}, listener-ই
+           বাকি সব প্যানেলে realtime পৌঁছে দেয়। */
+        const paths={[`${NODES.users}/${a.uid}/role`]:staffRole};
+        if(grant){
+          paths[`${NODES.admins}/${a.uid}`]={
+            uid:a.uid, email:a.email||"", name:a.name||"", username:a.username||"",
+            role:staffRole, permissions:pick==="admin"?PERMS:ROLES.mod.perms, updatedAt:nowIso()
+          };
+        }else{
+          paths[`${NODES.admins}/${a.uid}`]=null;
+        }
+        await updatePaths(paths);
+
+        /* ডাটাবেস সফল — এবার লোকাল state (শুধু role; অন্য কোনো তথ্য নয়) */
+        a.role=pick;
+        const tIdx=DB.team.findIndex(t=>t.uid===a.uid);
+        if(isStaff(pick)){
+          if(tIdx<0)DB.team.push({uid:a.uid,name:a.name,role:pick,last:new Date().toISOString()});
+          else DB.team[tIdx].role=pick;
+        }else if(tIdx>=0)DB.team.splice(tIdx,1);
+
+        logAudit(grant?"অ্যাক্সেস দেওয়া হয়েছে":"অ্যাক্সেস তুলে নেওয়া হয়েছে",
+          `${a.name} · ${roleLabel(before)} → ${roleLabel(pick)} — ${why.slice(0,60)}`,"access");
+        s.close();renderSub("access");paintNav();paintTop();
+        toast(grant?tp(a.name+" এখন "+ROLE_META[pick].label)
+                   :tp("অ্যাক্সেস তুলে নেওয়া হয়েছে"),"ok");
+      }catch(e){
+        console.warn("access save:",e&&e.message);
+        ok.disabled=false;ok.innerHTML=okHtml;
+        toast(/permission.denied|PERMISSION/i.test(String(e&&e.message||""))
+          ?tp("অনুমতি নেই — ভূমিকা দেওয়া/তুলে নেওয়া শুধু অ্যাডমিন করতে পারেন")
+          :tp("ভূমিকা সংরক্ষণ করা যায়নি — আবার চেষ্টা করুন"),"er");
+      }finally{acSaving=false;}
     };
   }
   
@@ -5371,7 +4084,7 @@ function initPage() {
         <div class="sparkx">${months.map(m=>`<span>${m.m}</span>`).join("")}</div></div>
       <div class="sec-t">ঘাটতি সতর্কতা</div>
       <div class="card">${low.length
-        ?`<ul class="wl">${low.map(g=>`<li><b>${g}</b> — ${tp(`মাত্র ${bn(c[g])} জন প্রস্তুত`,`only ${c[g]} ready`)}</li>`).join("")}</ul>
+        ?`<ul class="wl">${low.map(g=>`<li><b>${g}</b> — ${tp(`মাত্র ${bn(c[g])} জন প্রস্তুত`)}</li>`).join("")}</ul>
           <button class="btn sm w" style="margin-top:11px" data-sub="notice">${SI.bell(15)} ক্যাম্পের ঘোষণা দিন</button>`
         :emptyBox("check","সব গ্রুপে যথেষ্ট ডোনার আছে")}</div>
       ${can("data.export")?`<button class="btn gh w" style="margin-top:12px" id="sExp">${SI.dl(15)} রপ্তানি</button>`:""}`;
@@ -5488,12 +4201,9 @@ function initPage() {
   (function boot(){
     applyPrefs();
     UI.init();          /* common UI runtime: strips, hit areas, viewport */
-    watchI18n();
-    if(isEN())document.documentElement.lang="en";
     const proceed=()=>{
       const [a,b]=(panelSubPath("moderator")||location.hash.replace("#","")).split("/");
       go(RENDER[a]?a:"home",b||null,false);
-      if(isEN())translateNode(document.body);
     };
     /* ══════════ Firebase Auth gate + role (Realtime Database `admins`) ══════════
        role শুধু ডাটাবেস থেকে আসে — RTDB-তে `admins/{uid}` রেকর্ড বদলালেই

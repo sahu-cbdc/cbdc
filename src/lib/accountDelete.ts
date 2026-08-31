@@ -211,7 +211,46 @@ export function isAuthUid(value: unknown): boolean {
 }
 
 const ENDPOINT = "api/admin/delete";
+const CONFIG_ENDPOINT = "api/admin/config-check";
 const TIMEOUT_MS = 20000;
+
+/**
+ * ডিলিট শুরু করার আগে সার্ভার কনফিগারেশন preflight —
+ * FIREBASE_SERVICE_ACCOUNT secret কনফিগার করা আছে কি না।
+ *
+ *   configured === true   → লগইন অ্যাকাউন্টসহ সম্পূর্ণ ডিলিট সম্ভব
+ *   configured === false  → secret নেই — লিংকড-লগইন ডিলিট শুরুই করা উচিত নয়
+ *   configured === null   → জানা যায়নি (পুরোনো সার্ভার/নেটওয়ার্ক) — ব্লক নয়;
+ *                           সার্ভারের atomic delete নিজেই নিরাপত্তা দেয়
+ */
+export async function checkDeleteServerConfig(): Promise<{ configured: boolean | null; error?: string }> {
+  try {
+    const auth = getAuthInstance();
+    const user = (auth?.currentUser ?? null) as any;
+    if (!user || typeof user.getIdToken !== "function") return { configured: null, error: "লগইন করা নেই।" };
+    const token = await user.getIdToken();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    let res: Response | null = null;
+    try {
+      res = await fetch(`${appBase()}${CONFIG_ENDPOINT}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({}),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    const data: any = await res.json().catch(() => null);
+    if (!res.ok || !data || data.ok !== true || typeof data.serviceAccountConfigured !== "boolean") {
+      return { configured: null };
+    }
+    return { configured: data.serviceAccountConfigured === true };
+  } catch {
+    return { configured: null };
+  }
+}
 
 /**
  * Secure server-side delete — ব্রাউজার শুধু token-সহ অনুরোধ পাঠায়।

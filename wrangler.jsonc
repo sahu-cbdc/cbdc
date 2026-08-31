@@ -24,8 +24,12 @@
 //    ঐচ্ছিক: wrangler secret put FIREBASE_PROJECT_ID (ডিফল্ট নিচের প্রজেক্টই)
 //
 //   বাকি শুধু public মানগুলোর `vars` — client bundle-এ থাকা হুবহু একই মান।
-//   secret না দেওয়া থাকলে RTDB ডিলিট নিরাপদে চলে, শুধু লগইন অ্যাকাউন্ট
-//   মোছা হয় না — UI-তে স্পষ্ট বাংলা warning দেখানো হয়।
+//   ⚠️ secret না দেওয়া থাকলে লিংকড-লগইন ডোনার/অ্যাকাউন্টের ডিলিট **শুরুই হয় না**
+//   (atomic — কোনো আংশিক ডিলিট নয়); Admin panel-এ স্পষ্ট বাংলা error দেখানো হয়
+//   এবং `POST <base>api/admin/config-check` দিয়ে অ্যাডমিন কনফিগারেশনের অবস্থা
+//   যাচাই করতে পারেন। তাই deploy-র পর secret সেট করা বাধ্যতামূলক:
+//      npm run build && npx wrangler deploy
+//      npx wrangler secret put FIREBASE_SERVICE_ACCOUNT
   "name": "cbdc",
   "compatibility_date": "2026-08-16",
   "main": "server/index.ts",
