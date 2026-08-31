@@ -99,7 +99,7 @@ test("Donor management = only donors on the donor list (no account-only rows)", 
   /* ডোনার ব্যবস্থাপনার ডিলিট = তালিকা থেকে সরানো (permanent নয়) */
   assert.match(admin, /\$\("#tdel"\)\.onclick=\(\)=>scope==="list"\?removeDonorsFromList\(\[\.\.\.sel\]\):bulkDeleteEntities\("donor",\[\.\.\.sel\]\)/);
   /* সরানো = donors/{id} + queue/members + users/{uid}/donorStatus... — অ্যাকাউন্ট/ইতিহাস অক্ষত */
-  const rm = admin.slice(admin.indexOf("async function removeDonorsFromList"), admin.indexOf("/* Team editing and the account directory"));
+  const rm = admin.slice(admin.indexOf("async function removeDonorsFromList"), admin.indexOf("function roleSheet(uid){"));
   assert.match(rm, /paths\[`donors\/\$\{id\}`\]=null/);
   assert.match(rm, /paths\[`users\/\$\{uid\}\/donorStatus`\]=null/);
   assert.match(rm, /paths\[`users\/\$\{uid\}\/donorId`\]=null/);
@@ -198,11 +198,11 @@ test("Panels read users/{uid} once at boot (faster login, no duplicate read)", (
 test("Role change preserves existing identity (no blank re-entry, no duplicate)", () => {
   const i = admin.indexOf("async function roleManageSheet(");
   assert.ok(i >= 0, "roleManageSheet not found");
-  const sheet = admin.slice(i, admin.indexOf("/* সম্পূর্ণ অ্যাকাউন্ট ডিলিট", i));
+  const sheet = admin.slice(i, admin.indexOf("async function deleteManagedAccount(uid)", i));
   assert.match(sheet, /liveUser=accountUsers\.find/);
   assert.match(sheet, /liveAdmin=accountAdmins\.find/);
   assert.match(sheet, /firstFilled\(/);
-  assert.match(sheet, /Existing account information কখনো overwrite করা হয় না/);
+  assert.match(sheet, /firstFilled\(a\.name,liveAdmin&&liveAdmin\.name/);
   /* admins/{uid} — merge; খালি মান লেখা হয় না */
   assert.match(sheet, /Object\.keys\(identity\)\.forEach\(k=>\{if\(identity\[k\]\)staff\[k\]=identity\[k\]\}\)/);
   /* duplicate user data তৈরি হয় না — শুধু role/permission + identity copy */
@@ -218,7 +218,7 @@ test("Access & Role: account rows fall back to donors/{id} via ownerUid (no blan
   assert.match(admin, /String\(d\.uid\|\|""\)===u/);
   /* refreshAccounts-এ শুধু ফাঁকা ফিল্ড পূরণ হয় (আগের মান overwrite নয়) */
   const ra = admin.slice(admin.indexOf("function refreshAccounts(){"), admin.indexOf("function watchAccounts(){"));
-  assert.match(ra, /donors\/\{id\} fallback/);
+  assert.match(ra, /const d=accountDonorRow\(uid\);if\(!d\)return;/);
   assert.match(ra, /fillIf\(/);
   assert.match(ra, /fillIf\("name",d\.name\)/);
   /* roleManageSheet-এও liveDonor fallback */
@@ -436,7 +436,7 @@ test("Moderator: join form writes users/{uid} + donors/{id} in one multi-locatio
   assert.match(form, /const base=`donors\/\$\{donorId\}`;/);
   assert.match(form, /id:donorId,donorId,uid,ownerUid:uid,name:identity\.name,bloodGroup,/);
   /* প্রোফাইলের আগের identity overwrite হয় না — শুধু ফাঁকা field পূরণ হয় */
-  assert.match(form, /Existing identity wins\. কেবল database-এ ফাঁকা field-ই পূরণ করা হয়/);
+  assert.match(form, /const existingValue=k=>String\(current\[k\]\|\|ME\[k\]\|\|""\)\.trim\(\)/);
   /* রক্তের গ্রুপ select সক্রিয় (এখান থেকেই গ্রুপ বদল) */
   assert.match(form, /<select id="ad_group" name="ad_group">/);
   assert.doesNotMatch(form, /id="ad_group"[^>]*disabled/);

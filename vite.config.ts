@@ -11,21 +11,12 @@ import { handleImageUpload } from "./server/imagesApi";
 import { makeApplyIo, makeHttpIo, makeImagesIo, makePrivilegedIo } from "./server/httpIo";
 import { serviceAccountConfigured } from "./server/authAdmin";
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   Admin Panel → "ওয়েবসাইট" সেটিংস ↔ Main Website-এর src/config/site.ts
-   ═══════════════════════════════════════════════════════════════════════════
 
-   অ্যাডমিন প্যানেলের "ওয়েবসাইট" ফর্মে সেভ করা মান আর Realtime Database-এ
-   যায় না — এই dev-only middleware সেগুলো সরাসরি `src/config/site.ts`
-   (Main Website-এর কেন্দ্রীয় কনফিগ ফাইল)-এ লিখে দেয়। ফাইল বদলালে Vite-এর
-   HMR সাথে সাথে সব খোলা পেজ রিলোড করে দেয়, তাই ওয়েবসাইটে পরিবর্তন সঙ্গে
-   সঙ্গে দেখা যায়। ফাইলের বাকি সব অংশ (comment, structure) অপরিবর্তিত থাকে —
-   শুধু নির্দিষ্ট মানগুলো replace হয়। */
 
 const PROJECT_ROOT = path.dirname(fileURLToPath(import.meta.url));
 const SITE_TS = path.resolve(PROJECT_ROOT, "src/config/site.ts");
 
-/* অ্যাডমিন ফর্মের key → src/config/site.ts-এর field path */
+
 const SITE_FIELDS: Record<string, string[]> = {
   heroTitle: ["hero", "title"],
   heroText: ["hero", "text"],
@@ -38,14 +29,14 @@ const SITE_FIELDS: Record<string, string[]> = {
   showEmergency: ["showEmergency"],
 };
 
-/* মান → TypeScript literal (string escape-সহ) */
+
 const toLiteral = (v: string | boolean): string =>
   typeof v === "boolean" ? String(v) : JSON.stringify(v);
 
-/* একটি string/boolean literal-এর regex — escaped অক্ষরসহ */
+
 const LIT = `(?:"[^"\\\\]*(?:\\\\.[^"\\\\])*"|true|false)`;
 
-/* src/config/site.ts-এ নির্দিষ্ট field-এর মান বদলায় (বাকি সব হুবহু রেখে) */
+
 function setSiteField(src: string, fieldPath: string[], value: string | boolean): string {
   const [outer, inner] = fieldPath;
   if (!inner) {
@@ -53,7 +44,7 @@ function setSiteField(src: string, fieldPath: string[], value: string | boolean)
     if (!re.test(src)) throw new Error(`field not found: ${outer}`);
     return src.replace(re, (_m, g1: string) => g1 + toLiteral(value));
   }
-  /* nested block — যেমন hero: { title: "…", text: "…" } */
+  
   const blockRe = new RegExp(`(\\b${outer}:\\s*\\{)([\\s\\S]*?)(\\n\\s*\\})`);
   const block = src.match(blockRe);
   if (!block) throw new Error(`block not found: ${outer}`);
@@ -67,7 +58,7 @@ function writeSiteConfig(values: Record<string, unknown>): { ok: boolean; update
   const updates: Array<[string[], string | boolean]> = [];
   for (const [key, raw] of Object.entries(values || {})) {
     const fieldPath = SITE_FIELDS[key];
-    if (!fieldPath) continue; // অজানা key নীরবে উপেক্ষা
+    if (!fieldPath) continue; 
     if (typeof raw === "boolean") updates.push([fieldPath, raw]);
     else if (typeof raw === "string" && raw.length <= 2000) updates.push([fieldPath, raw.trim()]);
   }
@@ -78,17 +69,7 @@ function writeSiteConfig(values: Record<string, unknown>): { ok: boolean; update
   return { ok: true, updated: updates.map(([p]) => p.join(".")) };
 }
 
-/**
- * dev-server middleware — POST <base>__admin/site-config
- *
- * নিরাপত্তা (এটি source code-এ লেখে, তাই কঠোরভাবে সীমিত):
- *   • শুধু `vite dev` (`apply: "serve"`, command === "serve")-এ চালু —
- *     `vite build`/`vite preview`-এ endpoint-ই থাকে না,
- *   • same-origin কড়া যাচাই (Origin/Host header অবশ্যই মিলতে হবে) → অন্য সাইট
- *     বা অন্য ডিভাইস থেকে POST করে source বদলানো যায় না,
- *   • JSON body 64 KB-এ সীমিত, শুধু অনুমোদিত field-ই লেখা হয়।
- * Production deploy-এ এই endpoint কোনোভাবেই বিদ্যমান নেই।
- */
+
 function cbdcSiteConfig(): Plugin {
   const send = (res: any, status: number, payload: unknown) => {
     res.statusCode = status;
@@ -100,11 +81,11 @@ function cbdcSiteConfig(): Plugin {
     name: "cbdc-site-config",
     apply: "serve",
     configureServer(server) {
-      if (server.config.command !== "serve") return; // build/preview — কিছুই রেজিস্টার হয় না
+      if (server.config.command !== "serve") return; 
       server.middlewares.use((req, res, next) => {
         const url = (req.url || "").split("?")[0];
         if (!url.endsWith("__admin/site-config")) return next();
-        /* same-origin যাচাই — cross-site POST থেকে source-লেখা বন্ধ */
+        
         const host = String(req.headers.host || "").split(":")[0];
         const origin = String(req.headers.origin || req.headers.referer || "");
         let originHost = "";
@@ -142,22 +123,7 @@ function cbdcSiteConfig(): Plugin {
   };
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   Admin Panel → secure server-side delete (dev-only middleware)
-   ═══════════════════════════════════════════════════════════════════════════
 
-   The same logic that runs in production on the Cloudflare Worker
-   (server/index.ts) is mounted here for `vite dev` — so the delete flow works
-   identically in development (Real Firebase: Identity Toolkit + RTDB REST,
-   no private keys). It is explicitly dev-only (`apply: "serve"`):
-   `vite build`/`vite preview` never register this endpoint — production uses
-   the Worker (`wrangler.jsonc` → `main`).
-
-   Safety mirror of the site-config middleware:
-   • same-origin only (Origin/Host must match),
-   • JSON body limited to 64 KB, POST only,
-   • client's Firebase ID token in `Authorization: Bearer` is verified
-     (Identity Toolkit) + admin role checked before any delete. */
 function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
   const send = (res: any, status: number, payload: unknown) => {
     res.statusCode = status;
@@ -180,7 +146,7 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
         const isApplyApi = apiPath.endsWith("/api/donor/apply");
         const isUploadApi = apiPath.endsWith("/api/images/upload");
         if (!isDeleteApi && !isDedupeApi && !isConfigCheckApi && !isResolveApi && !isApplyApi && !isUploadApi) return next();
-        /* same-origin যাচাই — cross-site থেকে token-সহ delete বন্ধ */
+        
         const host = String(req.headers.host || "").split(":")[0];
         const origin = String(req.headers.origin || req.headers.referer || "");
         let originHost = "";
@@ -202,7 +168,7 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
           send(res, 401, { ok: false, error: "অনুমোদন প্রয়োজন — লগইন করে আবার চেষ্টা করুন।" });
           return;
         }
-        /* upload — raw binary body (JSON নয়); বাকি — buffered JSON। */
+        
         const chunks: Buffer[] = [];
         let bodySize = 0;
         let oversized = false;
@@ -218,13 +184,11 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
               if (oversized) throw new Error(isUploadApi ? "ছবির আকার ৮ MB-র বেশি — ছোট ছবি দিন।" : "payload too large");
               const raw = Buffer.concat(chunks);
               const payload = isUploadApi ? {} : (JSON.parse(raw.toString("utf8") || "{}") as Record<string, unknown>);
-              /* 🔐 Firebase Authentication (লগইন) ডিলিট, legacy-merge ও ImgBB
-                 upload-এর server-side secret — শুধু dev-এ `.env` (loadEnv)
-                 থেকে; client bundle-এ কখনো যায় না। */
+              
               const serverEnv = {
                 FIREBASE_SERVICE_ACCOUNT: devEnv.FIREBASE_SERVICE_ACCOUNT || "",
                 FIREBASE_PROJECT_ID: devEnv.FIREBASE_PROJECT_ID || "",
-                /* ImgBB API key — server-ই ব্যবহার করে; client-এ কখনো যায় না। */
+                
                 IMGBB_API_KEY: devEnv.IMGBB_API_KEY || "",
               };
               let result: unknown;
@@ -237,11 +201,14 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
                   makeImagesIo(serverEnv),
                 );
               } else if (isConfigCheckApi) {
-                /* ডিলিট preflight — secret কনফিগার আছে কি না (মান নয়, শুধু boolean) */
+                
                 result = await handleAdminConfigCheck(
                   { idToken },
                   makeHttpIo(serverEnv, idToken),
-                  { serviceAccountConfigured: serviceAccountConfigured(serverEnv) },
+                  {
+                    serviceAccountConfigured: serviceAccountConfigured(serverEnv),
+                    imgbbConfigured: await makeImagesIo(serverEnv).hasKey(),
+                  },
                 );
               } else if (isDedupeApi) {
                 result = await handleAdminDedupe(
@@ -276,30 +243,22 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
   };
 }
 
-// https://vitejs.dev/config/
-//
-// `base: "/"` — absolute asset paths are required for SPA deep links.
-// Cloudflare/Firebase rewrites `/doner/req`, `/admin/...` etc. to `index.html`;
-// if assets are emitted as `./assets/...`, a browser refresh from `/doner/req`
-// tries to load `/doner/req/assets/...` and the app never boots. Root-relative
-// assets always load from `/assets/...` on the deployed root domain.
-//
-// Single-page build — শুধুমাত্র index.html। সব পেজ (Home / Doner / Admin /
-// Moderator) .tsx কম্পোনেন্ট হিসেবে একই entry থেকে বুট হয়
-// (src/main.tsx + src/lib/router.ts)। প্যানেলগুলো lazy-loaded chunk হিসেবে আসে।
-/* `base` — host-independent:
-   • ডিফল্ট "/" (root deploy — Firebase Hosting, Cloudflare Pages, Netlify, Vite
-     preview … সব জায়গায় একই)। SPA deep-link-এর জন্য root-relative asset path
-     বাধ্যতামূলক, তাই এটাই নিরাপদ ডিফল্ট।
-   • কোনো host-এ sub-directory-তে serve করতে হলে শুধু env দিন:
-     VITE_BASE=/cbdc/ — কোডে কোনো host-নির্দিষ্ট hardcoded path নেই। */
+
+
+
+
+
+
+
+
+
+
+
+
 const BASE = process.env.VITE_BASE || "/";
 
 export default defineConfig(({ mode }) => {
-  /* `.env` (এবং `.env.local`/`.env.{mode}`) থেকে সব env-var লোড — ফলে dev-এ
-     `FIREBASE_SERVICE_ACCOUNT` / `FIREBASE_PROJECT_ID` `.env`-এ রাখলেই সার্ভার-
-     side (লগইন/ডাটা) ডিলিট কাজ করে। শুধু `process.env` পড়লে `.env` ফাইল
-     থেকে আসত না — root cause-এর একটি অংশ। */
+  
   const env = loadEnv(mode, process.cwd(), "");
   const devServerEnv: Record<string, string> = {
     FIREBASE_SERVICE_ACCOUNT: env.FIREBASE_SERVICE_ACCOUNT || process.env.FIREBASE_SERVICE_ACCOUNT || "",
@@ -313,7 +272,7 @@ export default defineConfig(({ mode }) => {
       host: "0.0.0.0",
       port: 5173,
       strictPort: false,
-      // Preview environment proxies traffic under a generated e2b host.
+      
       allowedHosts: true,
     },
     preview: {

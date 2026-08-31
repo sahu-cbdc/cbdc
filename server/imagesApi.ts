@@ -1,32 +1,15 @@
-/**
- * CBDC — Secure server-side image upload (ImgBB proxy)
- * ═══════════════════════════════════════════════════════════════════════════
- *
- *  সমস্যা: আগে browser সরাসরি ImgBB-তে আপলোড করত — তাই ImgBB API key
- *  (`VITE_IMGBB_API_KEY`) client bundle-এ ও public RTDB `settings/imgbb`
- *  node-এ থাকত। যেকোনো visitor সেই key পড়ে upload quota/account ব্যবহার করতে
- *  পারত। এটা একটি **private API secret leak**।
- *
- *  সমাধান: আপলোড এখন **শুধুই server** করে।
- *   • Browser শুধু `POST <base>api/images/upload`-এ authenticated অনুরোধ পাঠায়
- *     (যাজ্ঞা: `Authorization: Bearer <Firebase ID token>` + raw image bytes),
- *   • Server caller-এর ID token যাচাই করে (Identity Toolkit),
- *   • তারপর **server-side secret** (`IMGBB_API_KEY` env, অথবা privileged RTDB
- *     `settings/imgbb` read — service-account token) দিয়ে ImgBB-তে আপলোড করে,
- *   • শুধু প্রাপ্ত URL/metadata ফেরত দেয় — key কখনোই browser-এ যায় না।
- *
- *  মডিউলটি pure (I/O injected) — `ImagesIo` inject করে যেকোনো পরিবেশে (Worker,
- *  dev middleware, verification harness) একই logic চালানো যায়।
- */
+
 
 import { ApiError } from "./deleteApi.ts";
 
-/** I/O seam — Worker/dev-middleware/পরীক্ষা সবাই নিজের fetch দিয়ে inject করে। */
+
 export type ImagesIo = {
-  /** Firebase ID token যাচাই → { uid }; invalid হলে null। */
+  
   verifyToken(idToken: string): Promise<{ uid: string } | null>;
-  /** Server-side ImgBB API key — ক্লায়েন্টকে কখনো দেওয়া হয় না। */
+  
   getImgbbKey(): Promise<string>;
+  
+  hasKey(): Promise<boolean>;
 };
 
 export type ImageUploadResult = {
@@ -39,12 +22,12 @@ export type ImageUploadResult = {
 };
 
 const IMGBB_URL = "https://api.imgbb.com/1/upload";
-/** ৮ MB — ছবির সর্বোচ্চ আকার; এর বড় ফাইল বাদ। */
+
 const MAX_BYTES = 8 * 1024 * 1024;
-/** সর্বোচ্চ MIME-length (জাল/দীর্ঘ header প্রতিরোধ)। */
+
 const MAX_MIME_LEN = 80;
 
-/** ছবির filename নিরাপদ করা — path-traversal/নিয়ন্ত্রণ-অক্ষর বাদ। */
+
 function safeFilename(value: unknown): string {
   const s = String(value || "image.jpg")
     .replace(/[\u0000-\u001f\u007f\\/]+/g, "")
@@ -53,15 +36,7 @@ function safeFilename(value: unknown): string {
   return s.length > 120 ? s.slice(-120) : s;
 }
 
-/**
- * Secure image upload handler।
- *
- * @param input  `{ idToken }` — Authorization header থেকে আসা token।
- * @param bytes  raw image bytes (browser `fetch` body)।
- * @param mime   Image MIME type (headers থেকে; খালি হলে JPEG ধরা হয়)।
- * @param filename  Client-পাঠানো filename (X-Filename header; ঐচ্ছিক)।
- * @param io     I/O seam।
- */
+
 export async function handleImageUpload(
   input: { idToken?: string } | null | undefined,
   bytes: Uint8Array,
@@ -82,7 +57,7 @@ export async function handleImageUpload(
   if (!data.length) throw new ApiError(400, "ছবি ফাইল খালি।");
   if (data.length > MAX_BYTES) throw new ApiError(413, "ছবির আকার ৮ MB-র বেশি — ছোট ছবি দিন।");
 
-  /* server-side key — ক্লায়েন্ট/বান্ডলে কখনো যায় না */
+  
   const key = await io.getImgbbKey().catch(() => "");
   if (!key) {
     throw new ApiError(
@@ -94,7 +69,7 @@ export async function handleImageUpload(
   const type = String(mime || "image/jpeg").trim().slice(0, MAX_MIME_LEN) || "image/jpeg";
   const name = safeFilename(filename);
   const fd = new FormData();
-  /* `data` একটি Uint8Array — BlobPart টাইপ-সামঞ্জস্যের জন্য cast; runtime একই। */
+  
   fd.append("key", key);
   fd.append("image", new Blob([data as unknown as BlobPart], { type }), name);
 
@@ -103,7 +78,7 @@ export async function handleImageUpload(
 
   const json: any = await res.json().catch(() => ({}));
   if (!res.ok || !json?.success) {
-    /* ImgBB-র অভ্যন্তরীণ ত্রুটি বাইরে পাঠানো হয় না — শুধু সাধারণ বার্তা */
+    
     throw new ApiError(502, "ImgBB-তে আপলোড ব্যর্থ হয়েছে — আবার চেষ্টা করুন।");
   }
   const d = json.data || {};
@@ -120,5 +95,5 @@ export async function handleImageUpload(
   };
 }
 
-/** default export — existing call-site convention */
+
 export default handleImageUpload;

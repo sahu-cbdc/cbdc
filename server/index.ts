@@ -1,31 +1,4 @@
-/**
- * CBDC — Cloudflare Worker entry
- * ═══════════════════════════════════════════════════════════════════════════
- *
- *  Server endpoints (base path সহ, যেমন `/cbdc/api/...`):
- *    • POST /api/admin/delete          — Admin panel-এর অ্যাকাউন্ট/ডোনার আইডি deletion
- *    • POST /api/admin/dedupe           — Admin duplicate cleanup
- *    • POST /api/admin/config-check     — Admin deletion preflight (secret আছে কি না)
- *    • POST /api/account/resolve-legacy — legacy-merge (নিজের পুরোনো রেকর্ড)
- *    • POST /api/donor/apply            — Approval-settings OFF → direct processing
- *    • POST /api/images/upload          — Secure server-side image upload (ImgBB proxy)
- *
- *  নিরাপত্তা:
- *    • সব আটটি endpoint-ই authenticated — `Authorization: Bearer <Firebase ID
- *      token>` Identity Toolkit দিয়ে যাচাই হয় (401/403 condition);
- *    • **কোনো private key / service-account / API secret ক্লায়েন্ট bundle-এ নেই**।
- *      কোনো secret-ই কখনো API response-এ ফেরত যায় না;
- *    • CORS — allowlist-ভিত্তিক; CORS কখনোই authentication নয়; `*` ব্যবহার হয় না;
- *    • **Intelligent abuse protection** — fixed normal-user quota নয়; শুধু স্পষ্ট
- *      flooding (একই উৎস থেকে দ্রুত ধারাবাহিক অনুরোধ) 429 দেয়। legitimate
- *      usage কার্যত unlimited।
- *    • upload-এ raw image body ৮ MB-এ সীমিত; ছবি কখনো সার্ভারে সংরক্ষণ হয় না —
- *      শুধু ImgBB-তে যায় ও URL ফেরত আসে।
- *
- *  Deploy: `npm run build && npx wrangler deploy` (wrangler.jsonc-এ `main`
- *  ও `vars` সেট আছে — উভয় মান public: client config-এর হুবহু মান; আর সব
- *  secret (`FIREBASE_SERVICE_ACCOUNT`, `IMGBB_API_KEY`) wrangler secret-এ)।
- */
+
 
 import { handleAdminEntityDelete, handleAdminConfigCheck, type ServerDeleteResult } from "./deleteApi.ts";
 import { handleAdminDedupe } from "./dedupeApi.ts";
@@ -37,14 +10,7 @@ import { serviceAccountConfigured } from "./authAdmin.ts";
 import { corsForRequest, parseAllowedOrigins } from "./cors.ts";
 import { createAbuseGuard, guardKey } from "./abuseGuard.ts";
 
-/*
- * Intelligent abuse protection — module-level (per worker isolate) in-memory.
- * Fixed normal-user quota নয়: threshold খুবই উদার (ডিফল্ট ৬০০/মিনিট/উৎস) —
- * স্বাভাবিক ব্যবহার (এমনকি অ্যাডমিনের bulk-delete) এতে স্পর্শ হয় না; শুধু স্পষ্ট
- * flood (একই উৎস থেকে দ্রুত ধারাবাহিক অনুরোধ) 429 দেয়। Multi-user legitimate
- * traffic প্রত্যেকের নিজস্ব bucket-এ পড়ে — aggregate কার্যত unlimited।
- * `ABUSE_GUARD_MAX` / `ABUSE_GUARD_WINDOW_MS` env দিয়ে আরও উদার করা যায়।
- */
+
 function makeGuard(env: any) {
   const max = Number(env && env.ABUSE_GUARD_MAX) || 600;
   const windowMs = Number(env && env.ABUSE_GUARD_WINDOW_MS) || 60_000;
@@ -76,7 +42,7 @@ function jsonResponse(payload: unknown, opts: JsonOptions = {}): Response {
 
 const AUTH_MSG = "অনুমোদন প্রয়োজন — লগইন করে আবার চেষ্টা করুন।";
 
-/** অনুরোধটি API endpoint কিনা — base path-এর সাথে মিলিয়ে, শেষে `/api/...`। */
+
 function apiPaths(requestUrl: URL): Record<string, boolean> {
   const path = requestUrl.pathname.replace(/\/+$/, "");
   return {
@@ -91,7 +57,7 @@ function apiPaths(requestUrl: URL): Record<string, boolean> {
 
 const isApi = (p: Record<string, boolean>): boolean => Object.values(p).some(Boolean);
 
-/** স্পষ্ট flooding দমন — per-উৎস (IP বা, না থাকলে, origin)। auth হিসেবে নয়। */
+
 function clientKey(request: Request): string {
   const ip = request.headers.get("CF-Connecting-IP");
   if (ip && ip.trim()) return ip.trim();
@@ -105,7 +71,7 @@ function readRequestBody(request: Request, api: Record<string, boolean>): Promis
   mime: string;
   filename: string;
 }> {
-  /* upload — raw image bytes (JSON নয়)। */
+  
   if (api.upload) {
     return request
       .arrayBuffer()
@@ -135,25 +101,25 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "");
     const apis = apiPaths(url);
-    /* wiring-compat name — আচরণ apis.apply-র সমতুল্য */
+    
     const isApply = path.endsWith("/api/donor/apply");
     const allowedOrigins = parseAllowedOrigins(env && env.ALLOWED_ORIGINS);
 
-    /* ── static assets (Vite build) — SPA fallback সহ; API-র কোনো CORS না। ── */
+    
     if (!isApi(apis)) {
       return env.ASSETS && typeof env.ASSETS.fetch === "function"
         ? env.ASSETS.fetch(request)
         : new Response("Not found", { status: 404 });
     }
 
-    /* ── CORS — allowlist-ভিত্তিক; CORS auth নয়, token-ই auth। ── */
+    
     const cors = corsForRequest(
       request.headers.get("Origin"),
       request.method,
       allowedOrigins,
       request.headers.get("Access-Control-Request-Method"),
     );
-    /* Preflight (OPTIONS + Origin) — header-সহ 204। */
+    
     if (request.method === "OPTIONS") {
       if (cors.preflight) {
         return new Response(null, { status: 204, headers: cors.headers });
@@ -163,7 +129,7 @@ export default {
 
     if (request.method !== "POST") return jsonResponse({ ok: false, error: "POST only" }, { status: 405 });
 
-    /* ── Abuse/flood protection — উদার per-উৎস; legitimate unlimited। ── */
+    
     const guardKeyStr = guardKey(clientKey(request), apis.upload ? "images/upload" : "api");
     if (!getGuard(env).check(guardKeyStr)) {
       return jsonResponse(
@@ -193,7 +159,7 @@ export default {
     }
 
     try {
-      /* ── upload — কোনো token ছাড়া সম্ভব নয়; raw body only। ── */
+      
       if (apis.upload) {
         if (!idToken) return jsonResponse({ ok: false, error: AUTH_MSG }, { status: 401, corsHeaders: cors.headers });
         const result = await handleImageUpload(
@@ -206,7 +172,7 @@ export default {
         return jsonResponse(result, { corsHeaders: cors.headers });
       }
 
-      /* ── বাকি সব JSON API — token বাধ্যতামূলক। ── */
+      
       if (!idToken) return jsonResponse({ ok: false, error: AUTH_MSG }, { status: 401, corsHeaders: cors.headers });
 
       if (apis.delete) {
@@ -227,7 +193,10 @@ export default {
         const result = await handleAdminConfigCheck(
           { idToken },
           makeHttpIo(env, idToken),
-          { serviceAccountConfigured: serviceAccountConfigured(env) },
+          {
+            serviceAccountConfigured: serviceAccountConfigured(env),
+            imgbbConfigured: await makeImagesIo(env).hasKey(),
+          },
         );
         return jsonResponse(result, { corsHeaders: cors.headers });
       }
@@ -235,7 +204,7 @@ export default {
         const result = await handleDonorApply({ ...body, idToken }, makeApplyIo(env, idToken));
         return jsonResponse(result, { corsHeaders: cors.headers });
       }
-      /* legacy-merge — সাধারণ (লগইন করা) ব্যবহারকারীর নিজের পুরোনো রেকর্ড */
+      
       const privileged = makePrivilegedIo(env);
       const result = await handleResolveLegacy({ idToken }, privileged);
       return jsonResponse(result, { corsHeaders: cors.headers });

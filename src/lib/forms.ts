@@ -1,55 +1,31 @@
-/**
- * CBDC — ফর্ম ভ্যালিডেশন ও ইনলাইন এরর সিস্টেম
- * ═══════════════════════════════════════════════════════════════════════════
- *
- *  পুরো সাইটে ফর্মের আচরণ এখন এক রকম:
- *
- *    • Input box-এ কোনো example/placeholder লেখা থাকে না — শুধু label থাকে।
- *    • আবশ্যিক ঘর ফাঁকা রেখে submit করলে **কোনো popup / alert আসে না**।
- *    • ফাঁকা বা ভুল ঘরটি লাল করে **highlight** হয় এবং প্রথম ঘরে ফোকাস যায়।
- *    • এরর বার্তা ঐ ঘরের **নিচে** ছোট করে দেখা যায়।
- *    • ব্যবহারকারী পূরণ করা শুরু করলেই highlight ও বার্তা মুছে যায়।
- *
- *  ব্যবহার:
- *      import { validateForm, clearFieldError, setFieldError, attachLiveClear } from "../lib/forms";
- *
- *      const result = validateForm(formEl, {
- *        name:  { required: true, label: "নাম" },
- *        email: { required: true, email: true, label: "ইমেইল" },
- *        dob:   { required: true, dob: {min:18, max:60}, label: "জন্ম তারিখ" },
- *      });
- *      if (!result.ok) return;   // UI-তে সব highlight/বার্তা ইতিমধ্যে বসে গেছে
- *
- *  স্টাইল: `.is-invalid` (ইনপুট) এবং `.field-error` (বার্তা) — CSS প্রতিটি পেজের
- *  নিজস্ব stylesheet-এ যুক্ত করা আছে যাতে বিদ্যমান ডিজাইন অপরিবর্তিত থাকে।
- */
+
 
 import { ageFromDob, isValidDob, toEnglishDigits, toBanglaDigits } from "./age";
 
 export interface FieldRule {
-  /** ফাঁকা রাখা যাবে না। */
+  
   required?: boolean;
-  /** বৈধ ইমেইল কিনা। */
+  
   email?: boolean;
-  /** ১১ সংখ্যার বাংলাদেশি মোবাইল নম্বর কিনা। */
+  
   phone?: boolean;
-  /** জন্ম তারিখ — বৈধ তারিখ এবং (দেওয়া থাকলে) বয়সসীমার ভেতরে। */
+  
   dob?: boolean | { min?: number; max?: number };
-  /** সর্বনিম্ন দৈর্ঘ্য। */
+  
   minLength?: number;
-  /** সর্বোচ্চ দৈর্ঘ্য। */
+  
   maxLength?: number;
-  /** রেগুলার এক্সপ্রেশন। */
+  
   pattern?: RegExp;
-  /** এই ঘরটির মান অন্য ঘরের সমান হতে হবে (যেমন পাসওয়ার্ড নিশ্চিতকরণ)। */
+  
   matches?: string;
-  /** checkbox — টিক দেওয়া বাধ্যতামূলক। */
+  
   checked?: boolean;
-  /** কাস্টম যাচাই — সমস্যা থাকলে বার্তা, না থাকলে "" ফেরত দিন। */
+  
   custom?: (value: string, form: HTMLFormElement) => string;
-  /** বার্তায় ব্যবহৃত ঘরের নাম। */
+  
   label?: string;
-  /** নিজের বার্তা (ডিফল্ট বার্তা বদলাতে)। */
+  
   message?: string;
 }
 
@@ -64,7 +40,7 @@ export interface ValidationResult {
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const PHONE_RE = /^01[3-9]\d{8}$/;
 
-/** ফর্মের ভেতরে একটি ঘর খোঁজা — আগে id, তারপর name দিয়ে। */
+
 export function findField(form: HTMLFormElement | Document, key: string): HTMLElement | null {
   const root: ParentNode = form as ParentNode;
   const byId = (root as any).querySelector?.("#" + cssEscape(key)) as HTMLElement | null;
@@ -77,12 +53,12 @@ function cssEscape(v: string): string {
   return String(v).replace(/["\\]/g, "\\$&");
 }
 
-/** ঘরটির চারপাশের `.field` কনটেইনার (এরর বার্তা এখানেই বসে)। */
+
 function fieldWrap(el: HTMLElement): HTMLElement {
   return (el.closest(".field, .f, .form-field, .fld") as HTMLElement) || (el.parentElement as HTMLElement) || el;
 }
 
-/** একটি ঘরে এরর বসানো — highlight + নিচে বার্তা। */
+
 export function setFieldError(el: HTMLElement | null, message: string): void {
   if (!el) return;
   el.classList.add("is-invalid");
@@ -93,7 +69,7 @@ export function setFieldError(el: HTMLElement | null, message: string): void {
     box = document.createElement("span");
     box.className = "field-error";
     box.setAttribute("role", "alert");
-    // ঘরের ঠিক নিচে — pw-wrap-এর মতো wrapper থাকলে তার পরেই
+    
     const anchor = el.closest(".pw-wrap") || el;
     if (anchor.parentElement === wrap) wrap.insertBefore(box, anchor.nextSibling);
     else wrap.appendChild(box);
@@ -102,7 +78,7 @@ export function setFieldError(el: HTMLElement | null, message: string): void {
   box.classList.add("show");
 }
 
-/** একটি ঘরের এরর/highlight মুছে ফেলা। */
+
 export function clearFieldError(el: HTMLElement | null): void {
   if (!el) return;
   el.classList.remove("is-invalid");
@@ -111,7 +87,7 @@ export function clearFieldError(el: HTMLElement | null): void {
   if (box) box.remove();
 }
 
-/** ফর্মের সব এরর একবারে মুছে ফেলা। */
+
 export function clearFormErrors(form: HTMLElement | null): void {
   if (!form) return;
   form.querySelectorAll<HTMLElement>(".is-invalid").forEach((el) => {
@@ -121,10 +97,7 @@ export function clearFormErrors(form: HTMLElement | null): void {
   form.querySelectorAll<HTMLElement>(".field-error").forEach((el) => el.remove());
 }
 
-/**
- * ব্যবহারকারী টাইপ/নির্বাচন শুরু করলেই ঐ ঘরের highlight ও বার্তা চলে যাবে।
- * ফর্ম তৈরি হওয়ার পর একবার ডাকলেই যথেষ্ট (delegated listener)।
- */
+
 export function attachLiveClear(form: HTMLElement | null): void {
   if (!form || (form as any).__cbdcLiveClear) return;
   (form as any).__cbdcLiveClear = true;
@@ -140,7 +113,7 @@ export function attachLiveClear(form: HTMLElement | null): void {
   form.addEventListener("change", handler);
 }
 
-/** checkbox / radio কিনা — `instanceof` ছাড়াই (SSR-নিরাপদ)। */
+
 function isToggle(el: any): boolean {
   const tag = String(el?.tagName || "").toUpperCase();
   const type = String(el?.type || "").toLowerCase();
@@ -182,10 +155,7 @@ function defaultMessage(rule: FieldRule, kind: string, extra?: Record<string, an
   }
 }
 
-/**
- * ফর্ম যাচাই করে — সমস্যা থাকলে সব ঘরে highlight + নিচে বার্তা বসিয়ে দেয়,
- * প্রথম সমস্যাযুক্ত ঘরে scroll ও focus করে। **কোনো popup দেখায় না।**
- */
+
 export function validateForm(form: HTMLFormElement | null, rules: FormRules): ValidationResult {
   const out: ValidationResult = { ok: true, errors: {}, values: {} };
   if (!form) return out;
@@ -241,22 +211,18 @@ export function validateForm(form: HTMLFormElement | null, rules: FormRules): Va
     try {
       firstBad.scrollIntoView({ behavior: "smooth", block: "center" });
     } catch {
-      /* ignore */
+      
     }
     try {
       (firstBad as HTMLInputElement).focus({ preventScroll: true } as any);
     } catch {
-      /* ignore */
+      
     }
   }
   return out;
 }
 
-/**
- * সব পেজে ব্যবহারের জন্য অভিন্ন CSS — highlight ও ইনলাইন এরর বার্তা।
- * পেজের নিজস্ব stylesheet-এর সাথে যোগ করা হয়, তাই ডিজাইন আগের মতোই থাকে,
- * শুধু ভুল ঘরের বর্ডার লাল হয় ও নিচে ছোট বার্তা আসে।
- */
+
 export const FORM_ERROR_CSS = `
 .is-invalid,
 input.is-invalid,

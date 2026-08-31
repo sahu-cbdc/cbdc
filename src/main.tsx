@@ -1,18 +1,11 @@
-/**
- * CBDC — একক entry point (শুধু index.html)
- *
- * এখন আর doner.html / admin.html / moderator.html নেই — চারটি পেজই .tsx
- * কম্পোনেন্ট হিসেবে থাকে। বুটের সময় resolveBootPage() বলে কোন পেজ মাউন্ট
- * হবে (URL হিন্ট, শেষ-ভিজিট বা ডিফল্ট home)। পেজ বদলাতে
- * navigateToPage() (src/lib/router.ts) ব্যবহার করা হয়।
- */
+
 import { Component, Suspense, lazy, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import "./lib/router";
 import { resolveBootPage, navigateToPage } from "./lib/router";
 import Home from "./pages/Home";
 
-/* প্যানেলগুলো lazy-load — হোমপেজ দ্রুত খোলে, প্যানেল দরকার হলেই ডাউনলোড হয় */
+
 const Doner = lazy(() => import("./pages/Doner"));
 const Admin = lazy(() => import("./pages/Admin"));
 const Moderator = lazy(() => import("./pages/Moderator"));
@@ -32,12 +25,7 @@ function ActivePage() {
   }
 }
 
-/**
- * Error boundary — যে-কোনো প্যানেল/পেজ মাউন্ট বা render-এর সময় অপ্রত্যাশিত
- * ত্রুটি ঘটলেও **blank/সাদা পেজ না দেখিয়ে** একটি পরিষ্কার recoverable UI দেখায়।
- * Refresh-এর পরেও যদি কোনো কারণে মাউন্ট ব্যর্থ হয়, ব্যবহারকারী এখান থেকে
- * home-এ ফিরে গিয়ে পুনরায় চেষ্টা করতে পারেন — সাইট পুরোপুরি অচল থাকে না।
- */
+
 interface EBState {
   error: Error | null;
 }
@@ -59,7 +47,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, EBState> {
       try {
         window.location.assign(window.location.origin + "/");
       } catch {
-        /* ignore */
+        
       }
     }
   };
@@ -68,7 +56,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, EBState> {
     try {
       window.location.reload();
     } catch {
-      /* ignore */
+      
     }
   };
 

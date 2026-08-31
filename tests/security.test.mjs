@@ -50,10 +50,11 @@ function apiErrorStatus(fn) {
 test("secret: ImgBB key never read/bundled client-side (imgbb.ts)", () => {
   const src = read("src/lib/imgbb.ts");
   assert.match(src, /api\/images\/upload/);
-  /* key আর client-এ পড়া হয় না — কোনো env/cache/direct-upload নেই */
-  assert.match(src, /getImgbbKey/); // admin status read (RTDB admin-only)
-  assert.match(src, /server-side|server-ই|server secret/); // doc
+  /* key আর client-এ পড়া হয় না — upload server-এ যায়; শুধু boolean status server থেকে */
+  assert.match(src, /getImgbbStatus/);
+  assert.match(src, /imgbbConfigured/); // status is a boolean only
   assert.doesNotMatch(src, /getEnvImgbbKey/);
+  assert.doesNotMatch(src, /getRow\(|setRow\(/); // no browser RTDB read/write of the key
   assert.doesNotMatch(src, /cbdc\.imgbb\.key/); // localStorage cache removed
   assert.doesNotMatch(src, /localStorage\.setItem|localStorage\.getItem/);
   assert.doesNotMatch(src, /api\.imgbb\.com\/1\/upload/); // no direct ImgBB from client
@@ -387,8 +388,9 @@ test("rules: settings/imgbb not public-read; settings/app stays public; no naked
 
 test("server: protected endpoints share Bearer-token auth + images endpoint present", () => {
   const index = read("server/index.ts");
-  assert.match(index, /api\/images\/upload/);
-  assert.match(index, /Authorization: Bearer/);
+  assert.match(index, /api[\\\/]+images[\\\/]+upload/);
+  assert.match(index, /headers\.get\("Authorization"\)/);
+  assert.match(index, /Bearer\\s\+/);
   assert.match(index, /handleImageUpload/);
   assert.match(index, /makeImagesIo/);
   assert.match(index, /createAbuseGuard/);
@@ -422,7 +424,7 @@ test("API response leakage: server results never contain the ImgBB secret / serv
   const io = makeIo({ uid: "admin-1", role: "admin" });
   /* config-check returns only a boolean, never the secret value */
   const cfg = await handleAdminConfigCheck({ idToken: "t" }, io, { serviceAccountConfigured: true });
-  assert.deepEqual(Object.keys(cfg).sort(), ["ok", "serviceAccountConfigured"]);
+  assert.deepEqual(Object.keys(cfg).sort(), ["imgbbConfigured", "ok", "serviceAccountConfigured"]);
   assert.equal(JSON.stringify(cfg).includes("private_key"), false);
   assert.equal(JSON.stringify(cfg).includes("AIzaSy"), false);
   assert.equal(JSON.stringify(cfg).includes("8a5458"), false);

@@ -1,27 +1,7 @@
-/**
- * CBDC — Notification System (আলাদা Website Notification Data/Storage)
- * ═══════════════════════════════════════════════════════════════════════════
- *
- *  Notification **মূল Firebase Realtime Database-এ সংরক্ষিত হয় না।** এগুলো এই
- *  ওয়েবসাইটের আলাদা Notification Data/Storage-এ থাকে — ব্রাউজারের localStorage
- *  (key: `cbdc.notifications.v1`) + in-memory। ফলে:
- *
- *    • Notification auto-clear (২৪ ঘণ্টা) করলে main RTDB-র Donor / আবেদন /
- *      অন্যান্য ডাটার কোনো প্রভাব পড়ে না — RTDB-তে কোনো notifications নোডই নেই,
- *    • RTDB শুধু source data দেয়: ডোনার প্যানেল RTDB-র live পরিবর্তন দেখে
- *      (status approved/rejected, নতুন matching জরুরি আবেদন) এখানে notification
- *      তৈরি করে — তাই notification real-time দেখা যায়,
- *    • তৈরি হওয়ার ২৪ ঘণ্টা পরে notification **এই storage থেকেও** স্বয়ংক্রিয়ভাবে
- *      মুছে যায় (read/prune + periodic prune)।
- *
- *  Cross-tab real-time: BroadcastChannel + storage event — এক ট্যাবে notification
- *  তৈরি/পড়া হলে অন্য খোলা ট্যাবের UI-ও সাথে সাথে update হয়।
- *
- *  ⚠️ এই মডিউলে কোনো Firebase import নেই — notification কখনোই RTDB-তে যায় না।
- */
-export const NOTIF_EXPIRE_MS = 24 * 60 * 60 * 1000; // ২৪ ঘণ্টা
-const STORE_KEY = "cbdc.notifications.v1"; // আলাদা website notification storage
-const SEEN_KEY = "cbdc.notifseen.v1"; // কোন কোন RTDB পরিবর্তন ইতিমধ্যে notify করা হয়েছে
+
+export const NOTIF_EXPIRE_MS = 24 * 60 * 60 * 1000; 
+const STORE_KEY = "cbdc.notifications.v1"; 
+const SEEN_KEY = "cbdc.notifseen.v1"; 
 const MAX_NOTIFS = 100;
 const CHANNEL = "cbdc-notifs";
 
@@ -48,24 +28,24 @@ export type NotifInput = {
   go?: string;
 };
 
-/** localStorage key-তে/notification id-তে ব্যবহারযোগ্য নিরাপদ string। */
+
 export function sanitizeKey(s: string): string {
   return String(s || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 80) || "n";
 }
 
-/** ২৪ ঘণ্টা পরে মেয়াদোত্তীর্ণ হওয়ার ISO timestamp। */
+
 export function notifExpiry(): string {
   return new Date(Date.now() + NOTIF_EXPIRE_MS).toISOString();
 }
 
-/* ── storage layer ── */
+
 let memory: Notif[] | null = null;
 const subs = new Set<(list: Notif[]) => void>();
 let bc: BroadcastChannel | null = null;
 try {
   bc = new BroadcastChannel(CHANNEL);
 } catch (e) {
-  /* BroadcastChannel unavailable */
+  
 }
 
 function readRaw(): Notif[] {
@@ -83,7 +63,7 @@ function writeRaw(list: Notif[]) {
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify(list));
   } catch (e) {
-    /* quota/private-mode */
+    
   }
 }
 
@@ -93,7 +73,7 @@ function emit() {
     try {
       fn(list);
     } catch (e) {
-      /* ignore subscriber error */
+      
     }
   });
 }
@@ -102,7 +82,7 @@ function broadcast() {
   try {
     bc && bc.postMessage({ t: 1 });
   } catch (e) {
-    /* ignore */
+    
   }
 }
 
@@ -113,7 +93,7 @@ function persist(list: Notif[]) {
   broadcast();
 }
 
-/* cross-tab real-time sync */
+
 if (typeof window !== "undefined") {
   window.addEventListener("storage", (e) => {
     if (e.key === STORE_KEY) {
@@ -129,7 +109,7 @@ if (bc) {
   };
 }
 
-/** সব notification (expired বাদে) — পড়ার সময়ই ২৪ ঘণ্টা পুরোনো entries মুছে যায়। */
+
 export function loadNotifs(): Notif[] {
   if (!memory) memory = readRaw();
   const now = Date.now();
@@ -141,7 +121,7 @@ export function loadNotifs(): Notif[] {
   return memory;
 }
 
-/** নতুন notification — duplicate id হলে overwrite হয় না (dedupe)। */
+
 export function addNotif(input: NotifInput): Notif | null {
   if (!input || !input.title) return null;
   const id = input.id || sanitizeKey(input.title);
@@ -190,10 +170,7 @@ export function unreadNotifs(): Notif[] {
   return loadNotifs().filter((n) => !n.read);
 }
 
-/**
- * ২৪ ঘণ্টা পার হয়ে যাওয়া notification এই storage থেকেও মুছে ফেলে।
- * রিটার্ন: মুছে ফেলা notification-এর সংখ্যা।
- */
+
 export function pruneExpired(): number {
   if (!memory) memory = readRaw();
   const now = Date.now();
@@ -207,7 +184,7 @@ export function pruneExpired(): number {
   return removed;
 }
 
-/** real-time subscriber — notification list বদলালে কল হবে। */
+
 export function subscribe(fn: (list: Notif[]) => void): () => void {
   subs.add(fn);
   return () => {
@@ -215,9 +192,9 @@ export function subscribe(fn: (list: Notif[]) => void): () => void {
   };
 }
 
-/* ── seen-state (কোন RTDB পরিবর্তন ইতিমধ্যে notify করা হয়েছে) ── */
+
 export type SeenState = {
-  /** কোন user-এর notification context (seen + notifications) এই storage-তে আছে */
+  
   uid?: string;
   booted?: boolean;
   reqStatus: Record<string, string>;
@@ -225,9 +202,9 @@ export type SeenState = {
   donorStatus?: string;
   bloodGroup?: string;
   lastDonation?: string;
-  /** রক্তের গ্রুপ পরিবর্তনের অনুরোধের সর্বশেষ দেখা status (pending/approved/rejected) */
+  
   groupChangeStatus?: string;
-  /** যে donationNotes verKey-গুলোর "বাতিল" notification ইতিমধ্যে পাঠানো হয়েছে */
+  
   donRej?: Record<string, number>;
 };
 
@@ -240,7 +217,7 @@ export function loadSeen(): SeenState {
       if (p && typeof p === "object") s = { ...s, ...p };
     }
   } catch (e) {
-    /* ignore */
+    
   }
   if (!s.reqStatus || typeof s.reqStatus !== "object") s.reqStatus = {};
   if (!s.incoming || typeof s.incoming !== "object") s.incoming = {};
@@ -252,25 +229,18 @@ export function saveSeen(s: SeenState) {
   try {
     localStorage.setItem(SEEN_KEY, JSON.stringify(s));
   } catch (e) {
-    /* ignore */
+    
   }
 }
 
-/**
- * কোনো user-এর notification context নতুন করে শুরু করা।
- *
- * Notification ও seen-state একটাই browser-level storage-এ রাখা হয়। দুই
- * আলাদা অ্যাকাউন্ট একই ব্রাউজারে লগইন করলে পুরোনো অ্যাকাউন্টের
- * “pending → rejected” অবস্থা নতুন অ্যাকাউন্টের উপর চাপিয়ে দেওয়া উচিত নয় —
- * তাই UID বদলালে পুরোনো notification-সহ context reset করা হয়।
- */
+
 export function resetNotificationContext(uid: string): void {
   const key = String(uid || "").trim();
   if (!key) return;
   try {
     localStorage.removeItem(STORE_KEY);
   } catch (e) {
-    /* ignore */
+    
   }
   memory = null;
   writeRaw([]);
@@ -279,9 +249,7 @@ export function resetNotificationContext(uid: string): void {
   saveSeen({ reqStatus: {}, incoming: {}, uid: key });
 }
 
-/* ── matching predicate (pure — টেস্টযোগ্য) ─────────────────────────
-   জরুরি আবেদনের notification শুধু সেই ডোনারদের জন্য যাদের blood group
-   মেলে, Availability ON, non-suspended, approved এবং ownerUid আছে। */
+
 export function donorMatchesRequest(
   d: Record<string, any>,
   group: string,

@@ -1,27 +1,4 @@
-/**
- * CBDC — কেন্দ্রীয় Firebase Authentication হেল্পার
- * ═══════════════════════════════════════════════════════════════════════════
- *
- *  এই মডিউলে থাকে:
- *    ১. authErrorMessage() — Firebase-এর raw error code কখনোই ইউজারকে সরাসরি
- *       না দেখিয়ে বাংলা ও পরিষ্কার বার্তা দেয়। auth/configuration-not-found-এর
- *       জন্য আলাদা diagnostic বার্তা।
- *    ২. googleSignInWithFallback() — ডেস্কটপে signInWithPopup, আর মোবাইল ব্রাউজার /
- *       পপ-আপ ব্লক / webview-এ প্রয়োজন হলে স্বয়ংক্রিয়ভাবে signInWithRedirect।
- *    ৩. consumeGoogleRedirect() — redirect দিয়ে ফেরার পর ফলাফল পুনরুদ্ধার
- *       (getRedirectResult) — intent ("login"|"signup")-সহ।
- *    ৪. ensureUserProfile() — login/signup সফল হলে Realtime Database-এর
- *       `users/{uid}` নোডে প্রোফাইল তৈরি/আপডেট (merge) — আগের role/status নষ্ট হয় না।
- *    ৫. onAuthUserChanged() — shared auth-state subscriber (src/lib/authState.ts-এর
- *       single `onAuthStateChanged`-এ), কোনো duplicate auth listener নয়।
- *    ৬. resolveUserRole() — role কোথা থেকে আসে তার একমাত্র সিদ্ধান্তকেন্দ্র
- *       (RTDB `admins` → তারপর `users`)।
- *    ৭. requestPasswordReset() / completePasswordReset() — Firebase-এর built-in
- *       password reset link ব্যবহার করে (কোনো custom OTP backend নেই)।
- *    ৮. Google + Email/Password linking — account-exists হলে Google credential
- *       একই UID-এ যুক্ত করা (setOrChangePassword / googleCredentialFromError /
- *       userHasPasswordProvider)।
- */
+
 
 import {
   GoogleAuthProvider,
@@ -50,11 +27,9 @@ import { NODES } from "./firebase";
 import { getRow, updateRow, setRow, findBy, nowIso, probeRow, type Row } from "./rtdb";
 import { isValidDob, toEnglishDigits } from "./age";
 
-/* ═══════════════════════════════════════════════════════════════════
-   ১. বাংলা error message
-   ═══════════════════════════════════════════════════════════════════ */
 
-/** FirebaseError-এর `code` নিরাপদে বের করা (message ভেতরেও থাকতে পারে)। */
+
+
 export function authErrorCode(err: unknown): string {
   try {
     const anyErr = err as any;
@@ -63,17 +38,12 @@ export function authErrorCode(err: unknown): string {
     const found = m.match(/\(?(auth\/[a-z0-9-]+)\)?/i);
     if (found) return found[1].toLowerCase();
   } catch {
-    /* ignore */
+    
   }
   return "";
 }
 
-/**
- * auth/configuration-not-found — এটা UI message দিয়ে hide করা সমস্যা নয়।
- * এই বার্তাটি শুধু তখনই আসে যখন ব্যাকএন্ড (Identity Toolkit) সত্যিই প্রজেক্টের
- * auth কনফিগারেশন খুঁজে পায় না — তাই ইউজার/অ্যাডমিনকে করণীয় জানানোই সঠিক fix-এর
- * একমাত্র উপায়।
- */
+
 export const CONFIG_NOT_FOUND_MESSAGE =
   "Firebase Authentication কনফিগারেশন খুঁজে পাওয়া যায়নি। " +
   "কারণ: প্রজেক্টের Auth সার্ভিসটি এখনো সার্ভারে পুরোপুরি সক্রিয় হয়নি, অথবা " +
@@ -84,10 +54,10 @@ export const CONFIG_NOT_FOUND_MESSAGE =
   "③ Project settings-এর API key-এ restriction থাকলে বর্তমান ওয়েবসাইটের ডোমেইনটি allowed রাখুন, " +
   "④ সাইটের সর্বশেষ build deploy করে ব্রাউজার হার্ড-রিফ্রেশ (Ctrl+Shift+R) করুন।";
 
-/** সাইটের production Authorized domains (Firebase Console-এ থাকা)। */
+
 export const AUTHORIZED_HOSTS = ["chawkbazarbloodclub.com", "www.chawkbazarbloodclub.com"] as const;
 
-/** বর্তমান browser host — SSR/অসমর্থিত পরিবেশে "". */
+
 export function currentHost(): string {
   try {
     return String(window.location.host || "").toLowerCase();
@@ -96,7 +66,7 @@ export function currentHost(): string {
   }
 }
 
-/** বর্তমান host production authorized domain-এর মধ্যে কিনা। */
+
 export function isKnownAuthorizedHost(host: string = currentHost()): boolean {
   const h = String(host || "").toLowerCase().replace(/[:/].*$/, "");
   return (AUTHORIZED_HOSTS as readonly string[]).includes(h);
@@ -114,22 +84,19 @@ const KNOWN_HOST_UNAUTHORIZED_MESSAGE = (host: string) =>
   `Project settings-এর সর্বশেষ config ও Authentication → Authorized domains যাচাই করুন।`;
 
 type MessageOptions = {
-  /** ভুল পাসওয়ার্ড/ইমেইলের ক্ষেত্রে প্রেক্ষাপট-নির্দিষ্ট বার্তা (যেমন পাসওয়ার্ড পরিবর্তনের সময়) */
+  
   wrongCredentials?: string;
-  /** অজানা ত্রুটির ডিফল্ট বার্তা */
+  
   fallback?: string;
 };
 
-/**
- * Firebase auth error → বাংলায় পরিষ্কার বার্তা।
- * raw error code/message কখনোই ইউজারকে ফেরত দেয় না (নিজের তৈরি বাংলা বার্তা ছাড়া)।
- */
+
 export function authErrorMessage(err: unknown, opts: MessageOptions = {}): string {
   const code = authErrorCode(err);
   const wrong = opts.wrongCredentials || "ইমেইল/ইউজার নেইম অথবা পাসওয়ার্ড সঠিক নয়।";
 
   switch (code) {
-    /* ── লগইন ── */
+    
     case "auth/invalid-credential":
     case "auth/invalid-login-credentials":
     case "auth/wrong-password":
@@ -140,7 +107,7 @@ export function authErrorMessage(err: unknown, opts: MessageOptions = {}): strin
     case "auth/user-disabled":
       return "এই অ্যাকাউন্টটি নিষ্ক্রিয় করা হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।";
 
-    /* ── সাইন-আপ ── */
+    
     case "auth/email-already-in-use":
       return "এই ইমেইলে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।";
     case "auth/invalid-email":
@@ -148,14 +115,14 @@ export function authErrorMessage(err: unknown, opts: MessageOptions = {}): strin
     case "auth/weak-password":
       return "পাসওয়ার্ড খুব দুর্বল, কমপক্ষে ৬ অক্ষর দিন।";
 
-    /* ── নেটওয়ার্ক / পরিবেশ ── */
+    
     case "auth/network-request-failed":
       return "নেটওয়ার্ক সংযোগ নেই। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।";
     case "auth/internal-error":
     case "auth/timeout":
       return "Firebase সার্ভারে অস্থায়ী সমস্যা হয়েছে। কিছুক্ষণ পর আবার চেষ্টা করুন।";
 
-    /* ── Google popup / redirect ── */
+    
     case "auth/popup-closed-by-user":
       return "লগইন উইন্ডোটি বন্ধ হয়ে গেছে, তাই প্রক্রিয়া সম্পন্ন হয়নি। আবার চেষ্টা করুন।";
     case "auth/cancelled-popup-request":
@@ -170,7 +137,7 @@ export function authErrorMessage(err: unknown, opts: MessageOptions = {}): strin
         "নতুন অ্যাকাউন্ট না তৈরি করে অনুগ্রহ করে ইমেইল/পাসওয়ার্ড দিয়ে লগইন করুন — " +
         "চাইলে লগইন করার পর সেটিংস থেকে এই Google অ্যাকাউন্টটিও যুক্ত করে নিতে পারবেন।";
 
-    /* ── কনফিগারেশন (root-cause diagnostic) ── */
+    
     case "auth/configuration-not-found":
       return CONFIG_NOT_FOUND_MESSAGE;
     case "auth/unauthorized-domain": {
@@ -199,30 +166,24 @@ export function authErrorMessage(err: unknown, opts: MessageOptions = {}): strin
   }
 
   if (!code) {
-    // নিজেদের তৈরি (বাংলা) ব্যবসায়িক বার্তা — যেমন "এই আইডির সাথে যুক্ত ইমেইল পাওয়া যায়নি।"
+    
     const msg = err && typeof (err as any).message === "string" ? String((err as any).message) : "";
     if (msg && !/auth\/|Firebase:|firebase/i.test(msg) && msg.length <= 240) return msg;
   }
   try {
-    // ডেভেলপারদের জন্য আসল কোড কনসোলে রাখি — UI-তে নয়।
+    
     console.warn("[auth] unmapped firebase error:", code || (err as any)?.message || err);
   } catch {
-    /* ignore */
+    
   }
   return opts.fallback || "অপ্রত্যাশিত সমস্যা হয়েছে। কিছুক্ষণ পর আবার চেষ্টা করুন।";
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   ২. Google সাইন-ইন — popup + redirect fallback
-   ═══════════════════════════════════════════════════════════════════ */
+
 
 export type GoogleProfile = { uid: string; email: string; name: string; photo: string };
 
-/**
- * Firebase Auth user থেকে Google প্রোফাইল (UID, Name, Email, Photo URL) নিরাপদে বের করা।
- * `user.displayName`/`user.photoURL` কোনো কারণে খালি থাকলে Google provider-এর
- * `providerData` থেকে পড়া হয় — ফলে Google থেকে পাওয়া তথ্য সবসময় সঠিকভাবে আসে।
- */
+
 export function profileFromFirebaseUser(u: { uid?: string; email?: string | null; displayName?: string | null; photoURL?: string | null; providerData?: ReadonlyArray<{ email?: string | null; displayName?: string | null; photoURL?: string | null } | null> } | null): GoogleProfile {
   const out: GoogleProfile = { uid: "", email: "", name: "", photo: "" };
   if (!u) return out;
@@ -238,32 +199,32 @@ export function profileFromFirebaseUser(u: { uid?: string; email?: string | null
       if (!out.photo && p.photoURL) out.photo = String(p.photoURL);
     }
   } catch {
-    /* ignore */
+    
   }
   return out;
 }
 
 const GOOGLE_INTENT_KEY = "cbdc.pendingGoogleIntent";
 
-/** redirect-এ যাওয়ার আগে login না signup — সেটা মনে রাখা হয় (ট্যাব রিলোড বেঁচে যায়)। */
+
 export function setGoogleIntent(intent: "login" | "signup" | null): void {
   try {
     if (intent) sessionStorage.setItem(GOOGLE_INTENT_KEY, intent);
     else sessionStorage.removeItem(GOOGLE_INTENT_KEY);
   } catch {
-    /* ignore */
+    
   }
 }
 
 const GOOGLE_PROFILE_KEY = "cbdc.pendingGoogleProfile";
 
-/** Google সাইন-ইন সফল হলে প্রোফাইল (uid/email/photo) মনে রাখা — signup ফর্ম রিলোডেও থাকে। */
+
 export function setPendingGoogleProfile(profile: GoogleProfile | null): void {
   try {
     if (profile && profile.uid) sessionStorage.setItem(GOOGLE_PROFILE_KEY, JSON.stringify(profile));
     else sessionStorage.removeItem(GOOGLE_PROFILE_KEY);
   } catch {
-    /* ignore */
+    
   }
 }
 
@@ -281,27 +242,24 @@ export function getPendingGoogleProfile(): GoogleProfile | null {
       };
     }
   } catch {
-    /* ignore */
+    
   }
   return null;
 }
 
-/** ১১ সংখ্যার বাংলাদেশি মোবাইল (বাংলা অঙ্ক সহ)। */
+
 export function isPhoneOk(value: unknown): boolean {
   return /^01[3-9]\d{8}$/.test(toEnglishDigits(value).replace(/\s/g, ""));
 }
 
-/**
- * Dashboard-এ ঢোকার জন্য ন্যূনতম প্রোফাইল: নাম + মোবাইল + জন্ম তারিখ।
- * এগুলো RTDB-তে থাকলে onboarding আর দেখানো হয় না।
- */
+
 export function isProfileComplete(profile: Record<string, unknown> | null | undefined): boolean {
   if (!profile) return false;
   const name = String(profile.name || "").trim();
   return name.length >= 2 && isPhoneOk(profile.phone) && isValidDob(profile.dob);
 }
 
-/** এই uid-এর সংরক্ষিত ছবি; না থাকলে (ঐচ্ছিক) Google ছবি। অন্য user-এর ছবি কখনোই ফেরত দেয় না। */
+
 export function photoForUid(
   profile: Record<string, unknown> | null | undefined,
   googlePhoto?: string
@@ -311,7 +269,7 @@ export function photoForUid(
   return String(googlePhoto || "").trim();
 }
 
-/** `users/{uid}` থেকে প্রোফাইল পড়া। */
+
 export async function loadUserProfile(uid: string): Promise<Record<string, any> | null> {
   if (!uid) return null;
   try {
@@ -322,36 +280,25 @@ export async function loadUserProfile(uid: string): Promise<Record<string, any> 
   }
 }
 
-/**
- * redirect সরাসরি ব্যবহার করা হবে কিনা — শুধু সেসব পরিবেশে যেখানে popup
- * নির্ভরযোগ্য নয়:
- *   • ইন-অ্যাপ webview (Facebook/Instagram/Messenger/Line/TikTok) — popup ব্লক হয়;
- *   • iOS (iPhone/iPad/iPod) — popup window/tab থেকে ফলাফল নির্ভরযোগ্যভাবে ফেরে না।
- *
- * সাধারণ মোবাইল ব্রাউজারে (যেমন Android Chrome) আগে popup চেষ্টা করা হয়,
- * কারণ redirect flow ক্রস-অরিজিন auth-handler iframe + তৃতীয়-পক্ষ storage-এর
- * উপর নির্ভর করে — ব্রাউজারে তৃতীয়-পক্ষ কুকি/স্টোরেজ ব্লক থাকলে ফলাফল হারিয়ে
- * গিয়ে getRedirectResult() null ফেরত দেয়। popup ব্লক হলে নিচের
- * REDIRECT_FALLBACK_CODES অনুযায়ী স্বয়ংক্রিয়ভাবে redirect fallback হয়।
- */
+
 export function shouldPreferRedirect(): boolean {
   try {
     const ua = navigator.userAgent || "";
-    if (/\b(FBAN|FBAV|Instagram|Messenger|Line\/|TikTok)\b/i.test(ua)) return true; // webview
-    if (/iPhone|iPad|iPod/i.test(ua)) return true; // iOS — popup result unreliable
+    if (/\b(FBAN|FBAV|Instagram|Messenger|Line\/|TikTok)\b/i.test(ua)) return true; 
+    if (/iPhone|iPad|iPod/i.test(ua)) return true; 
   } catch {
-    /* ignore */
+    
   }
   return false;
 }
 
-/** popup নিষ্ফলা হলে redirect করার উপযুক্ত কিনা — সেই error code গুলো। */
+
 const REDIRECT_FALLBACK_CODES = new Set([
   "auth/popup-blocked",
   "auth/cancelled-popup-request",
   "auth/operation-not-supported-in-this-environment",
   "auth/web-storage-unsupported",
-  "auth/network-request-failed", // মাঝে মাঝে popup channel আটকে গেলে এই code আসে
+  "auth/network-request-failed", 
 ]);
 
 function buildGoogleProvider(): GoogleAuthProvider {
@@ -360,14 +307,7 @@ function buildGoogleProvider(): GoogleAuthProvider {
   return provider;
 }
 
-/**
- * Google দিয়ে সাইন-ইন।
- *  - `intent`: "login" | "signup" — redirect fallback হলে sessionStorage-এ রাখা
- *    হয়, যাতে consumeGoogleRedirect() ফেরার পর ঠিক flow চালু রাখতে পারে।
- *  - রিটার্ন: UserCredential, অথবা `null` যদি redirect শুরু হয়ে যায়
- *    (পেজ এখন Google-এ চলে যাচ্ছে — পরবর্তী লোডে consumeGoogleRedirect() থামিয়ে দেবে)।
- *  - ব্যবহারকারী popup বন্ধ করলে error throw হয় (code: auth/popup-closed-by-user)।
- */
+
 export async function googleSignInWithFallback(
   auth: Auth,
   intent: "login" | "signup"
@@ -375,20 +315,20 @@ export async function googleSignInWithFallback(
   if (shouldPreferRedirect()) {
     setGoogleIntent(intent);
     await signInWithRedirect(auth, buildGoogleProvider());
-    return null; // সাধারণত এখানে আসে না — পেজ নেভিগেট করে যায়
+    return null; 
   }
   try {
     return await signInWithPopup(auth, buildGoogleProvider());
   } catch (err) {
     const code = authErrorCode(err);
     if (REDIRECT_FALLBACK_CODES.has(code)) {
-      // popup ব্যর্থ → redirect-এ fallback (মোবাইল/পপ-আপ-ব্লকার নিরাপদ)
+      
       try {
         setGoogleIntent(intent);
         await signInWithRedirect(auth, buildGoogleProvider());
         return null;
       } catch (redirectErr) {
-        // redirect-ও ব্যর্থ হলে আসল popup error-টা কার্যকর — সেটাই ফেরত দিই
+        
         console.warn("Google redirect fallback failed:", redirectErr);
         throw err;
       }
@@ -397,12 +337,7 @@ export async function googleSignInWithFallback(
   }
 }
 
-/**
- * Google redirect থেকে ফেরার পর ফলাফল পড়ে।
- *  - রিটার্ন: `{ profile, intent }` — redirect দিয়ে সফল login হলে,
- *    অথবা `null` — redirect হয়নি / সাফল্য ছাড়া ফিরেছে।
- *  - error throw করে যদি redirect ব্যর্থ হয় (UI-তে authErrorMessage দেখান)।
- */
+
 export async function consumeGoogleRedirect(
   auth: Auth
 ): Promise<{ profile: GoogleProfile; intent: "login" | "signup" } | null> {
@@ -413,7 +348,7 @@ export async function consumeGoogleRedirect(
     if (raw === "signup") intent = "signup";
     hadIntent = !!raw;
   } catch {
-    /* ignore */
+    
   }
   let result: UserCredential | null = null;
   try {
@@ -428,9 +363,7 @@ export async function consumeGoogleRedirect(
     throw err;
   }
   if (!result || !result.user) {
-    /* getRedirectResult() null দিতে পারে যদিও SDK ইতিমধ্যে sign-in করে ফেলেছে
-       (initialization-এই redirect process হয়ে user বসে গেলে, বা ফলাফল ইতিমধ্যে
-       consume হয়ে থাকলে)। তখন ভুল "বাতিল" না দেখিয়ে currentUser-ই ব্যবহার করি। */
+    
     const current = auth.currentUser;
     if (current && current.uid) {
       console.warn(
@@ -442,7 +375,7 @@ export async function consumeGoogleRedirect(
         intent,
       };
     }
-    if (hadIntent) setGoogleIntent(null); // ব্যর্থ redirect — অবশিষ্ট intent পরিষ্কার
+    if (hadIntent) setGoogleIntent(null); 
     console.warn(
       "[google-redirect] getRedirectResult returned null and no signed-in user." +
         " pendingIntent=" + (hadIntent ? intent : "none") +
@@ -458,23 +391,15 @@ export async function consumeGoogleRedirect(
   };
 }
 
-/**
- * Firebase-এ sign-in/sign-out state পরিবর্তনের ছোট wrapper।
- *
- * গুরুত্বপূর্ণ: এটি **নতুন** `onAuthStateChanged` listener নিবন্ধন করে না —
- * `src/lib/authState.ts`-এর single shared listener-এ subscriber যুক্ত করে।
- * তাই পুরো অ্যাপে duplicate auth listener থাকে না।
- */
+
 export function onAuthUserChanged(_auth: Auth, cb: (user: User | null) => void): () => void {
-  void _auth; // legacy signature compatibility
+  void _auth; 
   return subscribeAuthUser(cb);
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   ২.৫ Google + Email/Password — একই অ্যাকাউন্টে উভয় সাইন-ইন পদ্ধতি
-   ═══════════════════════════════════════════════════════════════════ */
 
-/** এই ইমেইলে Firebase Auth-এ কী কী সাইন-ইন পদ্ধতি আছে (empty/অ-পাওয়া হলে []). */
+
+
 export async function signInMethodsForEmail(auth: Auth, email: string): Promise<string[]> {
   try {
     return await fetchSignInMethodsForEmail(auth, String(email || "").trim().toLowerCase());
@@ -483,7 +408,7 @@ export async function signInMethodsForEmail(auth: Auth, email: string): Promise<
   }
 }
 
-/** Firebase Auth user-এ Email/Password (password) provider আছে কিনা। */
+
 export function userHasPasswordProvider(
   user: { providerData?: ReadonlyArray<{ providerId?: string } | null> } | null | undefined
 ): boolean {
@@ -496,11 +421,7 @@ export function userHasPasswordProvider(
   }
 }
 
-/**
- * Google sign-in-এ `auth/account-exists-with-different-credential` হলে erro-র
- * ভেতরে থাকা OAuth credential-টি বের করা (linkWithCredential-এর জন্য)।
- * রিটার্ন: `{ email, credential }` — না পেলে `null`।
- */
+
 export function googleCredentialFromError(
   err: unknown
 ): { email: string; credential: AuthCredential } | null {
@@ -515,13 +436,7 @@ export function googleCredentialFromError(
   }
 }
 
-/**
- * একই অ্যাকাউন্টে Email/Password সেট বা পরিবর্তন।
- *  - Password provider থাকলে: current password re-auth করে `updatePassword`।
- *  - Google-only account-এ: নতুন password `linkWithCredential`-এ যুক্ত হয়,
- *    ফলে একই UID-তে Email/Password লগইনও চালু হয় (duplicate তৈরি হয় না)।
- * রিটার্ন: true = নতুন password লিংক হয়েছে (Google-চালু), false = password বদলানো হয়েছে।
- */
+
 export async function setOrChangePassword(
   user: User,
   email: string,
@@ -537,21 +452,14 @@ export async function setOrChangePassword(
     await updatePassword(user, next);
     return false;
   }
-  // Google-only account — password যুক্ত হলে উভয় সাইন-ইন পদ্ধতি সক্রিয় হয়
+  
   await linkWithCredential(user, EmailAuthProvider.credential(address, next));
   return true;
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   ৩. Realtime Database user profile upsert
-   ═══════════════════════════════════════════════════════════════════ */
 
-/**
- * Login/signup সফল হলে `users/{uid}` প্রোফাইল তৈরি বা আপডেট করে।
- *  - merge আপডেট — তাই অ্যাডমিন-নির্ধারিত role/status বা আগের তথ্য নষ্ট হয় না।
- *  - নতুন রেকর্ডে role:"donor", status:"active" ডিফল্ট বসে।
- *  - এখানে লেখা হলে RTDB listener-এর কল্যাণে সব dashboard-এ সাথে সাথে দেখা যায়।
- */
+
+
 export async function ensureUserProfile(
   user: {
     uid: string;
@@ -578,11 +486,10 @@ export async function ensureUserProfile(
   extra: { provider?: string; existing?: Record<string, any> | null } = {}
 ): Promise<void> {
   if (!user || !user.uid) return;
-  /* আগে থেকেই প্রোফাইল পড়া থাকলে সেটাই ব্যবহার হয় — অপ্রয়োজনীয় দ্বিতীয়
-     RTDB read বাদ দিয়ে login/loading দ্রুত করা হয়। */
+  
   const existing =
     extra.existing !== undefined ? extra.existing || null : await getRow(NODES.users, user.uid);
-  /* ছবি: আগে থেকে RTDB-তে থাকলে সেটাই রাখি — অন্য user বা খালি Google ছবি দিয়ে মুছে ফেলি না */
+  
   const photoURL = String(existing?.photoURL || user.photo || "").trim();
   const base: Record<string, unknown> = {
     uid: user.uid,
@@ -611,7 +518,7 @@ export async function ensureUserProfile(
   if (district) base.district = district;
   if (username) base.username = username;
   if (address) base.address = address;
-  // donor-related fields — একই UID তে donor তথ্য একীভূত (duplicate profile নয়)
+  
   const bloodGroup = keep((user as any).bloodGroup, (existing as any)?.bloodGroup);
   const donorId = keep((user as any).donorId, (existing as any)?.donorId);
   const donorStatus = keep((user as any).donorStatus, (existing as any)?.donorStatus);
@@ -647,17 +554,15 @@ export async function ensureUserProfile(
     base.status = "active";
     base.createdAt = nowIso();
     if (!base.donorStatus && bloodGroup) base.donorStatus = "pending";
-    /* Account তৈরির সময় Donor UID তৈরি হয় না।
-       Donor UID শুধু Admin/Moderator Approve করে Donor List-এ যুক্ত করার সময় নির্ধারিত হয়। */
+    
     await setRow(NODES.users, user.uid, base);
     return;
   }
-  // existing থাকলে donorStatus যদি আগে না থাকে কিন্তু এখন bloodGroup আসছে, pending করে দাও
+  
   if (!existing.donorStatus && bloodGroup && !base.donorStatus) base.donorStatus = "pending";
-  /* ইতিমধ্যে থাকা donorId কখনো পরিবর্তন/তৈরি করা হয় না — approval-এর সময় Admin নিজে সেট করে। */
+  
   await updateRow(NODES.users, user.uid, base);
-  /* loginIndex — username/phone দিয়ে লগইনের claim-once সূচি। fail-open:
-     সূচি অনুপলব্ধ হলে লগইন/প্রোফাইল কোনোটিই আটকায় না। */
+  
   try {
     await claimLoginEntries(base.email, username, phone);
   } catch (e) {
@@ -665,9 +570,7 @@ export async function ensureUserProfile(
   }
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   ৪. Role — একটিই সিদ্ধান্তকেন্দ্র (RTDB)
-   ═══════════════════════════════════════════════════════════════════ */
+
 
 export type AppRole = "donor" | "moderator" | "admin";
 
@@ -675,11 +578,11 @@ export interface ResolvedRole {
   role: AppRole;
   name: string;
   permissions: string[] | Record<string, unknown>;
-  /** RTDB `admins` নোডের রেকর্ড (থাকলে) — প্যানেলের designation/username ইত্যাদি। */
+  
   staff: Record<string, any> | null;
 }
 
-/** RTDB-র role লেখা অ্যাপের তিনটি role-এ মেলানো: admin / moderator / donor। */
+
 function normaliseRole(raw: unknown): AppRole | null {
   const r = String(raw || "").toLowerCase();
   if (r === "admin") return "admin";
@@ -688,23 +591,7 @@ function normaliseRole(raw: unknown): AppRole | null {
   return null;
 }
 
-/**
- * একজন ব্যবহারকারীর কার্যকর role বের করা — **শুধু ডাটাবেস থেকে**।
- *
- *   ১. `admins/{uid}` — staff রেকর্ড (সবচেয়ে নির্ভরযোগ্য, uid দিয়ে)
- *   ২. `admins` node-এ email দিয়ে খোঁজা (uid এখনো ম্যাপ না হলে)
- *   ৩. `users/{uid}` — সাধারণ ব্যবহারকারী (role না থাকলে ডিফল্ট donor)
- *
- * `admins`-এ না থাকলে কেউ কখনো admin/moderator হতে পারে না — `users` নোডে
- * role লেখা থাকলেও তা গ্রাহ্য নয় (নিরাপত্তা)।
- *
- * দ্রুততার জন্য:
- *   • `admins/{uid}` ও `users/{uid}` একসাথে (parallel) পড়া হয়;
- *   • Security Rules-এর কারণে কোনো read ব্লক হলে (permission-denied) সেই node-এর
- *     email-fallback query আর চেষ্টা করা হয় না — নিশ্চিত ব্যর্থ হবে, তাই
- *     নিরর্থক network round-trip বাঁচিয়ে Google login-এর loading ছোট রাখা হয়;
- *   • `opts.knownProfile` দেওয়া থাকলে `users/{uid}` আর পড়া হয় না (duplicate read বাদ)।
- */
+
 export async function resolveUserRole(
   user: { uid?: string; email?: string; name?: string } | null | undefined,
   opts: { knownProfile?: Record<string, any> | null } = {}
@@ -714,7 +601,7 @@ export async function resolveUserRole(
   const uid = String(user.uid || "");
   const email = String(user.email || "").toLowerCase();
 
-  /* admins/{uid} ও users/{uid} — দুটো independent read একসাথে পাঠানো হয় */
+  
   const [adminsRead, profile] = await Promise.all([
     uid ? probeRow(NODES.admins, uid) : Promise.resolve({ row: (null as Row | null), denied: false }),
     opts.knownProfile !== undefined
@@ -725,8 +612,7 @@ export async function resolveUserRole(
   ]);
 
   let staff: Record<string, any> | null = adminsRead.row;
-  /* email দিয়ে staff খোঁজা তখনই অর্থবহ যখন admins node পড়ার অনুমতি আছে
-     (permission-denied হলে fallback query-ও denied — বাদ)। */
+  
   if (!staff && !adminsRead.denied && email) {
     try {
       staff = await findBy(NODES.admins, "email", email);
@@ -755,13 +641,13 @@ export async function resolveUserRole(
   }
   if (userData) {
     out.name = userData.name || out.name;
-    // users নোডে admin/moderator লেখা থাকলেও তা উপেক্ষা করা হয়
+    
     out.role = "donor";
   }
   return out;
 }
 
-/** role অনুযায়ী কোন পেজ/প্যানেল খুলবে — সব জায়গায় একই নিয়ম। */
+
 export function panelForRole(role: unknown): "doner" | "moderator" | "admin" {
   const r = normaliseRole(role) || "donor";
   if (r === "admin") return "admin";
@@ -769,16 +655,9 @@ export function panelForRole(role: unknown): "doner" | "moderator" | "admin" {
   return "doner";
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   ৫. পাসওয়ার্ড রিসেট — Firebase-এর built-in link (custom OTP নেই)
-   ═══════════════════════════════════════════════════════════════════ */
 
-/**
- * রিসেট লিংকে ক্লিক করলে ব্যবহারকারী **এই সাইটেরই** সুন্দর reset পেজে আসবে
- * (`/reset-password?oobCode=…`)। Firebase Console → Authentication → Templates →
- * Password reset-এ "Customize action URL" হিসেবেও এই ঠিকানাটিই বসাতে হবে,
- * তাহলে ইমেইল ও ওয়েবসাইট — দুটোরই branding মিলে যাবে।
- */
+
+
 export function resetActionSettings(): ActionCodeSettings | undefined {
   try {
     const origin = window.location.origin;
@@ -791,7 +670,7 @@ export function resetActionSettings(): ActionCodeSettings | undefined {
   }
 }
 
-/** ইমেইলে Firebase-এর password reset link পাঠায়। */
+
 export async function requestPasswordReset(auth: Auth, email: string): Promise<void> {
   const address = String(email || "").trim().toLowerCase();
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) {
@@ -801,7 +680,7 @@ export async function requestPasswordReset(auth: Auth, email: string): Promise<v
   try {
     await sendPasswordResetEmail(auth, address, settings);
   } catch (err) {
-    // continue URL অনুমোদিত না হলে (auth/unauthorized-continue-uri) সাধারণ লিংকেই পাঠাই
+    
     if (authErrorCode(err) === "auth/unauthorized-continue-uri") {
       await sendPasswordResetEmail(auth, address);
       return;
@@ -810,12 +689,12 @@ export async function requestPasswordReset(auth: Auth, email: string): Promise<v
   }
 }
 
-/** রিসেট লিংকের কোড যাচাই — বৈধ হলে সংশ্লিষ্ট ইমেইল ফেরত দেয়। */
+
 export async function verifyResetCode(auth: Auth, oobCode: string): Promise<string> {
   return verifyPasswordResetCode(auth, String(oobCode || ""));
 }
 
-/** নতুন পাসওয়ার্ড সেট করা (রিসেট লিংক থেকে)। */
+
 export async function completePasswordReset(
   auth: Auth,
   oobCode: string,
