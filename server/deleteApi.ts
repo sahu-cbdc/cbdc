@@ -230,17 +230,17 @@ async function deleteAccountEntity(
   for (const [id, row] of Object.entries(accountRows)) {
     if (accountOf(row, uid)) paths[`accounts/${id}`] = null;
   }
-  if (!Object.keys(paths).length) {
-    throw new ApiError(404, "এই UID-এর কোনো অ্যাকাউন্ট রেকর্ড পাওয়া যায়নি — কিছু মোছা হয়নি।");
-  }
+  /* (কোনো early-404 নয় — লগইন ডিলিটের পরেই idempotent no-op যাচাই হয়।) */
   /* ইমেইলের identityIndex দাবিও ছাড়া হয় — ইমেইলটি ভবিষ্যতে আবার
      নিবন্ধনযোগ্য থাকে (duplicate রোধের সূচি আটকে রাখে না)। */
   const deletedEmail = String(userRow?.email || adminRow?.email || "").trim().toLowerCase();
   if (deletedEmail) paths[emailIndexPath(deletedEmail)] = null;
 
   /* ১) আগে লগইন অ্যাকাউন্ট (Firebase Authentication) — ঠিক এই uid-টিই।
-        ব্যর্থ হলে কিছুই মোছা হয় না (রেকর্ড ছাড়া "অগভর্নড" লগইন রেখে দেওয়া
-        বিপজ্জনক — আবার লগইন করে নতুন প্রোফাইল তৈরি করতে পারে)। */
+        🔐 Atomicity (আংশিক ডিলিট নয়): লগইন অ্যাকাউন্ট মুছা **সম্ভব না** হলে
+        (secret নেই / ব্যর্থ) কিছুই মোছা হয় না — DB-তে ডাটা মুছে গিয়ে লগইন
+        থেকে যাওয়ার mismatch কোনোভাবেই হয় না। "missing" = সংশ্লিষ্ট কোনো
+        লগইনই নেই (সম্পূর্ণ delete — চলবে)। */
   const warnings: string[] = [];
   const authIo = await io.deleteAuthUser(uid).catch(() => "failed" as const);
   const authOutcome = toAuthStatus(authIo);
@@ -253,17 +253,38 @@ async function deleteAccountEntity(
     );
   }
   if (authIo === "unconfigured") {
-    warnings.push(
-      "সার্ভারে service-account secret (FIREBASE_SERVICE_ACCOUNT) কনফিগার করা নেই, তাই " +
-        "লগইন অ্যাকাউন্টটি মোছা যায়নি — রেকর্ডগুলো মুছে গেছে। ডিপ্লয়ে `npx wrangler secret put " +
-        "FIREBASE_SERVICE_ACCOUNT` দিন; ততক্ষণ Firebase Console → Authentication থেকে ম্যানুয়ালি মুছতে হবে।",
+    throw new ApiError(
+      503,
+      "সার্ভারে service-account secret (FIREBASE_SERVICE_ACCOUNT) কনফিগার করা নেই, তাই লগইন " +
+        "অ্যাকাউন্টটি মোছা সম্ভব নয়। নিরাপত্তার জন্য **কিছুই মোছা হয়নি** (আংশিক ডিলিট প্রতিরোধ)। " +
+        "ডিপ্লয়ে `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT` (বা dev-এ `.env`-এ) সেট করে আবার চেষ্টা করুন।",
     );
   }
   steps.push(
     authOutcome === "deleted"
       ? { id: "auth", label: "লগইন অ্যাকাউন্ট (Firebase Authentication)", ok: true }
-      : { id: "auth", label: "লগইন অ্যাকাউন্ট (Firebase Authentication)", ok: authOutcome !== "failed", skipped: authOutcome !== "failed", error: authOutcome === "missing" ? "আগেই ছিল না" : "সার্ভার কনফিগারেশন প্রয়োজন" },
+      : { id: "auth", label: "লগইন অ্যাকাউন্ট (Firebase Authentication)", ok: true, skipped: true, error: "আগেই ছিল না" },
   );
+
+  /* Idempotent: RTDB-তে আর কিছু নেই (আগেই মুছে গেছে) + লগইনও নেই/মুছে গেছে
+     → এটা ব্যর্থতা নয়, a no-op সফল delete। */
+  if (!Object.keys(paths).length) {
+    steps.push({ id: "rtdb", label: "Realtime Database রেকর্ড (users/admins/accounts)", ok: true, skipped: true });
+    return {
+      ok: true,
+      scope: "account",
+      donorId: "",
+      uid,
+      name: nameOf(userRow) || nameOf(adminRow) || String(input?.name ?? "").trim(),
+      rtdb: "ok",
+      auth: authOutcome,
+      authUid: uid,
+      server: "ok",
+      removed: 0,
+      warnings,
+      steps,
+    };
+  }
 
   /* ২) তারপর Realtime Database রেকর্ড — শুধু এই uid-এর অ্যাকাউন্ট paths। */
   const removed = await applyPaths(io, paths);
@@ -327,6 +348,9 @@ async function deleteDonorIdEntity(
     );
     const orphanUserMatch = !!orphanUser && String(orphanUser?.donorId ?? "").trim() === donorId;
     if (!orphanUserMatch && !orphanAccountMatch) {
+      /* নিরাপত্তা: ডোনার রেকর্ড ও কোনো মেলা অ্যাকাউন্টই নেই — ghost/অজানা
+         identity-কে 404 দিয়ে কিছুই মোছা হয় না (ভুয়া সাফল্য নয়)। প্রকৃত
+         duplicate-click প্রতিরোধ client-এ `deletingEntities` guard দিয়ে হয়। */
       throw new ApiError(404, "এই ডোনার আইডির কোনো রেকর্ড পাওয়া যায়নি — কিছু মোছা হয়নি।");
     }
     uid = clientUid;
@@ -394,7 +418,9 @@ async function deleteDonorIdEntity(
       const adminRow = (await io.get(`admins/${uid}`).catch(() => null)) as any;
       const accountRows = (await io.list("accounts").catch(() => null)) || {};
 
-      /* ১) আগে লগইন অ্যাকাউন্ট — ঠিক এই লিংকড uid-টিই। ব্যর্থ হলে কিছুই মোছা হয় না। */
+      /* ১) আগে লগইন অ্যাকাউন্ট — ঠিক এই লিংকড uid-টিই।
+            🔐 Atomicity: লগইন মুছা সম্ভব না হলে (secret নেই / ব্যর্থ) কিছুই মোছা
+            হয় না — DB-তে ডাটা মুছে গিয়ে লগইন থেকে যাওয়া mismatch হয় না। */
       const authIo = await io.deleteAuthUser(uid).catch(() => "failed" as const);
       authOutcome = toAuthStatus(authIo);
       if (authIo === "failed") {
@@ -405,16 +431,17 @@ async function deleteDonorIdEntity(
         );
       }
       if (authIo === "unconfigured") {
-        warnings.push(
+        throw new ApiError(
+          503,
           "সার্ভারে service-account secret (FIREBASE_SERVICE_ACCOUNT) কনফিগার করা নেই, তাই সংশ্লিষ্ট " +
-            "লগইন অ্যাকাউন্টটি মোছা যায়নি — ডোনার ও অ্যাকাউন্ট রেকর্ড মুছে গেছে। ডিপ্লয়ে `npx wrangler secret put " +
-            "FIREBASE_SERVICE_ACCOUNT` দিন; ততক্ষণ Firebase Console → Authentication থেকে ম্যানুয়ালি মুছতে হবে।",
+            "লগইন অ্যাকাউন্টটি মোছা সম্ভব নয়। নিরাপত্তার জন্য **কিছুই মোছা হয়নি** (আংশিক ডিলিট প্রতিরোধ)। " +
+            "ডিপ্লয়ে `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT` (বা dev-এ `.env`-এ) সেট করে আবার চেষ্টা করুন।",
         );
       }
       steps.push(
         authOutcome === "deleted"
           ? { id: "auth", label: "সংশ্লিষ্ট লগইন অ্যাকাউন্ট (Firebase Authentication)", ok: true }
-          : { id: "auth", label: "সংশ্লিষ্ট লগইন অ্যাকাউন্ট (Firebase Authentication)", ok: true, skipped: true, error: authOutcome === "missing" ? "আগেই ছিল না" : "সার্ভার কনফিগারেশন প্রয়োজন" },
+          : { id: "auth", label: "সংশ্লিষ্ট লগইন অ্যাকাউন্ট (Firebase Authentication)", ok: true, skipped: true, error: "আগেই ছিল না" },
       );
 
       /* ২) লিংকড অ্যাকাউন্ট রেকর্ড — শুধু এই uid-এরগুলোই; সাথে ইমেইলের

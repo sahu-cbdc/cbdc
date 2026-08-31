@@ -26,6 +26,7 @@ import {
 import { getRow, setRow, updateRow, watchRow, watchList, addRow, findBy, listOnce, nowIso, updatePaths, removeRow, incrementField, ensureFieldAtLeast, serverTime, nextDonorId, releaseDonorSerial } from "../lib/rtdb";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
+import { requestDirectApply } from "../lib/applyRequest";
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage } from "../lib/imgbb";
@@ -3793,7 +3794,22 @@ function initPage() {
            অনুমতি শুধু staff (admin/moderator)-এর; তাই staff হলে সরাসরি
            অনুমোদিত করা হয়, নইলে পুরোনো মতো pending queue-তেই যায়
            (কোনো feature বন্ধ হয় না, ভুল অনুমতির চেষ্টাও হয় না)। */
-        if(APPROVAL_SETTINGS.donorApproval===false && await isStaffUser(uid)){
+        if(APPROVAL_SETTINGS.donorApproval===false){
+          /* OFF → সার্ভার-side সরাসরি approve (item 9): সব ব্যবহারকারীর জন্য —
+             non-staff ব্রাউজার থেকে `donors` লিখতে পারে না, তাই সার্ভারের
+             privileged IO-র মাধ্যমে (server/applyApi.ts)। সফল হলে শেষ। */
+          const serverApply=await requestDirectApply("donor",{}).catch(()=>null);
+          if(serverApply&&serverApply.ok){
+            d.status="approved";d.is=true;d.donorId=serverApply.donorId||"";
+            await save();
+            await logAct("রক্তদাতা হিসেবে যুক্ত হন",d.bloodGroup+" · অনুমোদিত","donor");
+            reqTab="become";go("req");
+            toast("আপনি সরাসরি অনুমোদিত রক্তদাতা হয়েছেন","ok");
+            return;
+          }
+          /* সার্ভার secret কনফিগার না থাকলে → staff হলে আগের মতো সরাসরি local,
+             নইলে queue-তেই যায় (কোনো feature বন্ধ হয় না)। */
+          if(!(serverApply&&serverApply.approvalRequired)&&await isStaffUser(uid)){
           const district=a.district||districtOfArea(a.area);
           /* ── ডুপ্লিকেট প্রতিরোধ: এই অ্যাকাউন্টের (uid) ডোনার রেকর্ড আগেই থাকলে
              নতুন ডোনার আইডি তৈরি না করে সেটিকেই অনুমোদিত/আপডেট করা হয়। ── */
@@ -3824,6 +3840,7 @@ function initPage() {
           reqTab="become";go("req");
           toast("আপনি সরাসরি অনুমোদিত রক্তদাতা হয়েছেন","ok");
           return;
+          }
         }
         const qid="PD-"+uid.replace(/[^A-Za-z0-9]/g,"").slice(-40);
         const at=nowIso();
@@ -3994,11 +4011,21 @@ function initPage() {
         aSave.textContent="প্রমাণ আপলোড হচ্ছে…";
         try{ const up=await imgbbUploadImage(f); proof=up.url; }
         catch(e){ return er(e&&e.message?e.message:"ছবি আপলোড করা যায়নি"); }
-        /* User-submitted donation is always pending. It becomes verified/counted
-           only after an admin/moderator approves it in the moderation queue. No
-           client-side approval setting may auto-approve a user submission. */
-        RAW.donations.unshift({date,place,bags:Number($("#ad_bags").value)||1,
-          pat:$("#ad_pat").value.trim()||"",note:$("#ad_note").value.trim()||"",proof,ok:false});
+        const bags=Number($("#ad_bags").value)||1;
+        const pat=$("#ad_pat").value.trim()||"",note=$("#ad_note").value.trim()||"";
+        /* রক্তদান যাচাই OFF → সার্ভারে সরাসরি যাচাই (item 7): non-staff ব্রাউজার
+           থেকে `donations`/verifiedDonations লেখা যায় না, তাই server/applyApi.ts-এর
+           privileged IO-র মাধ্যমে। সফল হলে verified, নইলে আগের মতো pending queue। */
+        let verified=false;
+        if(APPROVAL_SETTINGS.donationApproval===false){
+          const sa=await requestDirectApply("donation",{date,place,bags,proof,patient:pat,note}).catch(()=>null);
+          if(sa&&sa.ok)verified=true;
+        }
+        RAW.donations.unshift({date,place,bags,pat,note,proof,ok:verified});
+        if(verified){
+          const vk=donationVerKey({date,place});
+          RAW.verifiedDonations[vk]={date,place,bags,livesSaved:1,at:new Date().toISOString(),proof};
+        }
         try{ await saveData(); }
         catch(saveErr){
           console.warn("donation save:",saveErr&&saveErr.message);
@@ -4007,7 +4034,7 @@ function initPage() {
         }
         await logAct("রক্তদান যোগ",date+" · "+place,"donor");
         renderSub("adddonation");
-        toast("যোগ হয়েছে — যাচাইয়ের অপেক্ষায়","ok");
+        toast(verified?"রক্তদান যাচাইকৃত হয়েছে — সরাসরি রেকর্ডে যুক্ত হয়েছে":"যোগ হয়েছে — যাচাইয়ের অপেক্ষায়",verified?"ok":"");
         /* সফল হলে success popup */
         sheet("রক্তদান যোগ হয়েছে",`
           <div style="text-align:center;padding:10px 0 4px">
@@ -4016,7 +4043,8 @@ function initPage() {
             <b style="display:block;margin-bottom:5px">রক্তদানটি সফলভাবে যোগ হয়েছে</b>
             <p class="mut" style="font-size:.82rem;margin:0 0 10px">${esc(dL(date))} · ${esc(place)}</p>
             <div class="note i" style="text-align:left">${ICON.info(16)}
-              <span>ক্লাবের স্বেচ্ছাসেবক যাচাই করার পর <b>✓ যাচাইকৃত</b> লেখা উঠবে।
+              <span>${verified?`রক্তদানটি সরাসরি <b>✓ যাচাইকৃত</b> হয়েছে এবং আপনার রেকর্ডে যুক্ত হয়েছে।`
+                :`ক্লাবের স্বেচ্ছাসেবক যাচাই করার পর <b>✓ যাচাইকৃত</b> লেখা উঠবে।`}
               নিচের <b>আগের রক্তদান</b> তালিকায় রেকর্ডটিতে ক্লিক করে বিস্তারিত দেখতে পারবেন।</span></div></div>`,
           `<button class="btn" data-close style="flex:1">বুঝেছি</button>`);
       }finally{
@@ -4583,11 +4611,24 @@ function initPage() {
           return fail("একটি অনুরোধ ইতিমধ্যে অপেক্ষমাণ আছে — অ্যাডমিনের সিদ্ধান্তের অপেক্ষা করুন");
         }
         const up=await imgbbUploadImage(f);
-        /* Approval OFF — Cloud Function ছাড়াই সরাসরি আপডেট।
-           `users/{uid}/bloodGroup` ও `donors/{id}`-এ লেখার অনুমতি শুধু
-           staff-এর (Security Rules); staff হলে সরাসরি বদলানো হয়, নইলে
-           আগের মতো approval queue-তে যায়। */
-        if(APPROVAL_SETTINGS.bloodGroupApproval===false && await isStaffUser(uid)){
+        /* Approval OFF → সরাসরি গ্রুপ বদল (item 8)। `users/{uid}/bloodGroup` ও
+           `donors/{id}`-এ লেখা rules-এ staff-only — তাই non-staff-এর জন্য
+           সার্ভারের privileged IO-র মাধ্যমে (server/applyApi.ts)। সফল হলে শেষ। */
+        if(APPROVAL_SETTINGS.bloodGroupApproval===false){
+          const serverApply=await requestDirectApply("bloodGroup",{to,reason,proof:up.url}).catch(()=>null);
+          if(serverApply&&serverApply.ok){
+            const from=d.bloodGroup,at=nowIso();
+            d.bloodGroup=to;
+            d.groupChange={from,to,reason,proof:up.url,status:"approved",at,decidedAt:at};
+            await save();
+            await logAct("রক্তের গ্রুপ পরিবর্তন",`${from} → ${to}`,"donor");
+            s.close();renderSub(SUB);
+            toast("রক্তের গ্রুপ আপডেট হয়েছে","ok");
+            return;
+          }
+          /* সার্ভার secret কনফিগার না থাকলে → staff হলে আগের মতো সরাসরি local,
+             নইলে queue-তেই যায়। */
+          if(!(serverApply&&serverApply.approvalRequired)&&await isStaffUser(uid)){
           const from=d.bloodGroup,at=nowIso(),paths={};
           paths[`users/${uid}/bloodGroup`]=to;
           paths[`users/${uid}/groupChange`]={from,to,reason,proof:up.url,status:"approved",at,decidedAt:at};
@@ -4599,6 +4640,7 @@ function initPage() {
           s.close();renderSub(SUB);
           toast("রক্তের গ্রুপ আপডেট হয়েছে","ok");
           return;
+          }
         }
         const at=nowIso();
         const id=genId("GC");

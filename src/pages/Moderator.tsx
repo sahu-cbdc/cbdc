@@ -3934,7 +3934,9 @@ function initPage() {
          :`<button class="btn gh w" data-close>বন্ধ</button>`);
     if(can("contact.reveal"))logAudit("যোগাযোগ দেখা হয়েছে",q.id,q.kind);
     if(may){
-      s.q("#rv_yes").onclick=async()=>{ await decide(id,true,s.q("#rv_note").value); s.close(); };
+      /* Double-click / multi-click রোধ — একই action-এর দ্বিতীয় request যায় না (item 2, 11). */
+      const setBusy=b=>{s.q("#rv_yes").disabled=b;s.q("#rv_no").disabled=b;};
+      s.q("#rv_yes").onclick=async()=>{if(s.q("#rv_yes").disabled)return;setBusy(true);try{await decide(id,true,s.q("#rv_note").value);}finally{s.close();}};
       s.q("#rv_no").onclick=()=>{s.close();rejectSheet([id])};
     }
   }
@@ -3993,9 +3995,22 @@ function initPage() {
     updatePaths:(paths:Record<string,any>)=>updatePaths(paths)
   };
   const makeApprovedRecord=(q:any,d:any)=>makeApprovedDonationRecord(q,d,ME.name||"মডারেটর",donationIo);
+  /* ── একই সিদ্ধান্তের ডুপ্লিকেট/race রোধ — items 1, 2, 11 ── */
+  const decidingKeys=new Set<string>();
+  function decideKey(id,q){
+    if(!q)return id;
+    if(q.kind==="donation")return "donation|"+String(q.ownerUid||q.uid||"")+"|"+String(q.date||"")+"|"+String(q.place||"");
+    if(q.kind==="donor")return "donor|"+String(q.ownerUid||q.uid||"");
+    if(q.kind==="group")return "group|"+String(q.ownerUid||q.uid||"");
+    return "queue|"+String(id||"");
+  }
   async function decide(id,ok,note,quiet){
-    const i=DB.queue.findIndex(x=>x.id===id);if(i<0)return;
+    const i=DB.queue.findIndex(x=>x.id===id);if(i<0)return false;
     const q=DB.queue[i];
+    const dkey=decideKey(id,q);
+    if(decidingKeys.has(dkey))return false;      /* একই event/আবেদন একবারই process */
+    decidingKeys.add(dkey);
+    try{
     const paths={};
     let approvedDonorId="", approvedDonor=null, approvedDonation=null, approvedRequest=null, approvedGroup=null;
     try{
@@ -4200,6 +4215,9 @@ function initPage() {
       RENDER.work();paintNav();paintTop();toast(ok?"অনুমোদন করা হয়েছে":"বাতিল করা হয়েছে",ok?"ok":"");
     }
     return true;
+    } finally {
+      decidingKeys.delete(dkey);
+    }
   }
 
   /* ══════════════════ SCREEN 3: PEOPLE ══════════════════ */

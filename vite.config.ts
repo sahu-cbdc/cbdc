@@ -1,12 +1,13 @@
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { handleAdminEntityDelete } from "./server/deleteApi";
 import { handleAdminDedupe } from "./server/dedupeApi";
+import { handleDonorApply } from "./server/applyApi";
 import { handleResolveLegacy } from "./server/resolveLegacy";
-import { makeHttpIo, makePrivilegedIo } from "./server/httpIo";
+import { makeApplyIo, makeHttpIo, makePrivilegedIo } from "./server/httpIo";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Admin Panel → "ওয়েবসাইট" সেটিংস ↔ Main Website-এর src/config/site.ts
@@ -155,7 +156,7 @@ function cbdcSiteConfig(): Plugin {
    • JSON body limited to 64 KB, POST only,
    • client's Firebase ID token in `Authorization: Bearer` is verified
      (Identity Toolkit) + admin role checked before any delete. */
-function cbdcDeleteApi(): Plugin {
+function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
   const send = (res: any, status: number, payload: unknown) => {
     res.statusCode = status;
     res.setHeader("Content-Type", "application/json");
@@ -173,7 +174,8 @@ function cbdcDeleteApi(): Plugin {
         const isDeleteApi = apiPath.endsWith("/api/admin/delete");
         const isDedupeApi = apiPath.endsWith("/api/admin/dedupe");
         const isResolveApi = apiPath.endsWith("/api/account/resolve-legacy");
-        if (!isDeleteApi && !isDedupeApi && !isResolveApi) return next();
+        const isApplyApi = apiPath.endsWith("/api/donor/apply");
+        if (!isDeleteApi && !isDedupeApi && !isResolveApi && !isApplyApi) return next();
         /* same-origin যাচাই — cross-site থেকে token-সহ delete বন্ধ */
         const host = String(req.headers.host || "").split(":")[0];
         const origin = String(req.headers.origin || req.headers.referer || "");
@@ -208,11 +210,11 @@ function cbdcDeleteApi(): Plugin {
               if (oversized) throw new Error("payload too large");
               const payload = JSON.parse(body || "{}");
               /* 🔐 Firebase Authentication (লগইন) ডিলিট ও legacy-merge-এর
-                 server-side secret — শুধু dev-এ process.env/.env থেকে;
+                 server-side secret — শুধু dev-এ `.env` (loadEnv) থেকে;
                  client bundle-এ কখনো যায় না। */
               const serverEnv = {
-                FIREBASE_SERVICE_ACCOUNT: process.env.FIREBASE_SERVICE_ACCOUNT || "",
-                FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID || "",
+                FIREBASE_SERVICE_ACCOUNT: devEnv.FIREBASE_SERVICE_ACCOUNT || "",
+                FIREBASE_PROJECT_ID: devEnv.FIREBASE_PROJECT_ID || "",
               };
               let result: unknown;
               if (isDedupeApi) {
@@ -224,6 +226,11 @@ function cbdcDeleteApi(): Plugin {
                 result = await handleResolveLegacy(
                   { idToken },
                   makePrivilegedIo(serverEnv, ""),
+                );
+              } else if (isApplyApi) {
+                result = await handleDonorApply(
+                  { ...payload, idToken },
+                  makeApplyIo(serverEnv, idToken),
                 );
               } else {
                 result = await handleAdminEntityDelete(
@@ -262,19 +269,30 @@ function cbdcDeleteApi(): Plugin {
      VITE_BASE=/cbdc/ — কোডে কোনো host-নির্দিষ্ট hardcoded path নেই। */
 const BASE = process.env.VITE_BASE || "/";
 
-export default defineConfig({
-  plugins: [react(), cbdcSiteConfig(), cbdcDeleteApi()],
-  base: BASE,
-  server: {
-    host: "0.0.0.0",
-    port: 5173,
-    strictPort: false,
-    // Preview environment proxies traffic under a generated e2b host.
-    allowedHosts: true,
-  },
-  preview: {
-    host: "0.0.0.0",
-    port: 4173,
-    allowedHosts: true,
-  },
+export default defineConfig(({ mode }) => {
+  /* `.env` (এবং `.env.local`/`.env.{mode}`) থেকে সব env-var লোড — ফলে dev-এ
+     `FIREBASE_SERVICE_ACCOUNT` / `FIREBASE_PROJECT_ID` `.env`-এ রাখলেই সার্ভার-
+     side (লগইন/ডাটা) ডিলিট কাজ করে। শুধু `process.env` পড়লে `.env` ফাইল
+     থেকে আসত না — root cause-এর একটি অংশ। */
+  const env = loadEnv(mode, process.cwd(), "");
+  const devServerEnv: Record<string, string> = {
+    FIREBASE_SERVICE_ACCOUNT: env.FIREBASE_SERVICE_ACCOUNT || process.env.FIREBASE_SERVICE_ACCOUNT || "",
+    FIREBASE_PROJECT_ID: env.FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || "",
+  };
+  return {
+    plugins: [react(), cbdcSiteConfig(), cbdcDeleteApi(devServerEnv)],
+    base: BASE,
+    server: {
+      host: "0.0.0.0",
+      port: 5173,
+      strictPort: false,
+      // Preview environment proxies traffic under a generated e2b host.
+      allowedHosts: true,
+    },
+    preview: {
+      host: "0.0.0.0",
+      port: 4173,
+      allowedHosts: true,
+    },
+  };
 });
