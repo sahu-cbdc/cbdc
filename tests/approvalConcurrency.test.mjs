@@ -155,3 +155,15 @@ test("Server apply handler has an in-flight lock (uid|action) — duplicate requ
   assert.match(apply, /new ApiError\(429/);
   assert.match(apply, /finally \{\s*inflightApply\.delete\(lockKey\);\s*\}/);
 });
+
+test("Action buttons show immediate loading state and failed delete can be retried", () => {
+  for (const f of ["src/pages/Admin.tsx", "src/pages/Moderator.tsx"]) {
+    const src = read(f);
+    /* approve button flips to a loading label the moment it is pressed */
+    assert.match(src, /if\(b\)s\.q\("#rv_yes"\)\.textContent="প্রসেস হচ্ছে…";/, f + ": review approve shows loading");
+  }
+  const admin = read("src/pages/Admin.tsx");
+  assert.match(admin, /s\.q\("#ad_del"\)\.textContent="মুছে ফেলা হচ্ছে…";/, "delete shows loading");
+  /* on failure the in-flight flag resets so a retry is possible (was stuck before) */
+  assert.match(admin, /"মোছা যায়নি","er"\);deleting=false;/, "failed delete releases the lock for retry");
+});

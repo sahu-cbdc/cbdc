@@ -3953,7 +3953,8 @@ function initPage() {
     if(can("contact.reveal"))logAudit("যোগাযোগ দেখা হয়েছে",q.id,q.kind);
     if(may){
       /* Double-click / multi-click রোধ — একই action-এর দ্বিতীয় request যায় না (item 2, 11). */
-      const setBusy=b=>{s.q("#rv_yes").disabled=b;s.q("#rv_no").disabled=b;};
+      const setBusy=b=>{s.q("#rv_yes").disabled=b;s.q("#rv_no").disabled=b;
+        if(b)s.q("#rv_yes").textContent="প্রসেস হচ্ছে…";};
       s.q("#rv_yes").onclick=async()=>{if(s.q("#rv_yes").disabled)return;setBusy(true);try{await decide(id,true,s.q("#rv_note").value);}finally{s.close();}};
       s.q("#rv_no").onclick=()=>{s.close();rejectSheet([id])};
     }

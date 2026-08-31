@@ -4313,7 +4313,8 @@ function initPage() {
     if(may){
       /* Double-click / multi-click রোধ: সিদ্ধান্ত নেওয়ার সময় button নিষ্ক্রিয় —
          একই action-এর জন্য দ্বিতীয় request যায় না (item 2, 11)। */
-      const setBusy=b=>{s.q("#rv_yes").disabled=b;s.q("#rv_no").disabled=b;};
+      const setBusy=b=>{s.q("#rv_yes").disabled=b;s.q("#rv_no").disabled=b;
+        if(b)s.q("#rv_yes").textContent="প্রসেস হচ্ছে…";};
       s.q("#rv_yes").onclick=async()=>{if(s.q("#rv_yes").disabled)return;setBusy(true);try{await decide(id,true,s.q("#rv_note").value);}finally{s.close();}};
       s.q("#rv_no").onclick=()=>{s.close();rejectSheet([id])};
     }
@@ -5029,6 +5030,7 @@ function initPage() {
       if(!await confirmS({title:"এই রক্তদানের সম্পূর্ণ রেকর্ড মুছে ফেলবেন? এই কাজটি পূর্বাবস্থায় ফেরানো যাবে না।",desc:`${r.donorId||r.id} · ${dts(r.date)} · ${r.place}`,
         ok:"Delete",cancel:"Cancel",danger:true}))return;
       deleting=true;s.q("#ad_del").disabled=true;s.q("#ad_edit").disabled=true;
+      s.q("#ad_del").textContent="মুছে ফেলা হচ্ছে…";
       try{
         /* idempotent: রেকর্ড আগেই মুছে গেলে/no-op — তালিকা থেকে সরে যায়, ভুল না */
         if(DB.donations.some(x=>String(x.id)===String(r.id))){
@@ -5040,7 +5042,7 @@ function initPage() {
           toast("রেকর্ড আগেই মুছে গেছে","ok");
         }
         s.close();renderSub("approved");paintNav();paintTop();
-      }catch(e){console.warn("delete approved donation:",e&&e.message);toast("মোছা যায়নি","er");s.q("#ad_del").disabled=false;s.q("#ad_edit").disabled=false;}
+      }catch(e){console.warn("delete approved donation:",e&&e.message);toast("মোছা যায়নি","er");deleting=false;s.q("#ad_del").disabled=false;s.q("#ad_edit").disabled=false;s.q("#ad_del").innerHTML=`${SI.trash(16)} মুছে ফেলুন`;}
     };
   }
   function editApprovedDonation(id){
