@@ -1,6 +1,6 @@
 import { appBase } from "../lib/router";
 
-const LOGO_FILE = "https://i.ibb.co.com/svdwHS3t/logo.png";
+const LOGO_FILE = "https://i.ibb.co.com/vvQH0zKr/logo.jpg";
 
 function isAbsolute(src: string): boolean {
   return /^(https?:)?\/\//i.test(src) || src.startsWith("data:");
