@@ -2433,10 +2433,12 @@ function initPage() {
   }
   async function pushSettings(){
     if(SETTINGS_PULLING)return;
-    await setRow(NODES.settings,"app",{
-      rules:DB.rules||{},
+    /* আংশিক (multi-path) আপডেট — settings/app-এর অজানা/অন্য key কখনো মুছে যায় না;
+       সব প্যানেল/ওয়েবসাইট এই একটাই নির্ভরযোগ্য উৎস (settings/app/rules) পড়ে (item 10) */
+    await updatePaths({
+      [`${NODES.settings}/app/rules`]:DB.rules||{},
       /* keep the old flat key readable by existing website builds */
-      autoApproveEmergency:DB.rules&&DB.rules.emergencyApproval===false
+      [`${NODES.settings}/app/autoApproveEmergency`]:DB.rules&&DB.rules.emergencyApproval===false
     });
   }
   /* settings live listener — এক প্যানেলে বদলালে অন্য প্যানেল ও ওয়েবসাইটেও সাথে সাথে
@@ -4212,17 +4214,32 @@ function initPage() {
       </button>
       <span class="go">${SI.right(17)}</span></div>`;
   }
+  /* bulk অনুমোদন/বাতিল — একবারই চলে: চলাকালীন বোতাম সাথে সাথে disabled/loading হয়,
+     দ্বিতীয় click/request নিঃশব্দে বাতিল হয় এবং প্রতিটি রেকর্ড ঠিক একবার process হয়
+     (items 2, 11)। */
+  let bulkBusy=false;
   async function bulkDo(ok){
+    if(bulkBusy)return;                              /* ইতিমধ্যে চলছে — দ্বিতীয় request নয় */
     if(!can("donor.approve"))return toast("আপনার অনুমতি নেই","er");
     if(!ok)return rejectSheet([...wSel],()=>{wSel.clear();RENDER.work()});
-    const n=wSel.size;
-    /* Serial Donor UID হিসাবের জন্য সব approve সম্পূর্ণ হওয়া পর্যন্ত অপেক্ষা */
-    const results=await Promise.all([...wSel].map(id=>decide(id,true,"",true)));
-    if(results.some(result=>result!==true))return toast("এক বা একাধিক পরিবর্তন RTDB-তে সংরক্ষণ করা যায়নি","er");
-    try{await persist();}
-    catch(e){return toast("পরিবর্তন RTDB-তে সংরক্ষণ করা যায়নি — সফলতা দেখানো হয়নি","er");}
-    wSel.clear();RENDER.work();paintNav();paintTop();
-    toast(bn(n)+"টি অনুমোদন করা হয়েছে","ok");
+    bulkBusy=true;
+    const okBtn=$("#skOk"),noBtn=$("#skNo");
+    if(okBtn){okBtn.disabled=true;okBtn.textContent="প্রসেস হচ্ছে…";}
+    if(noBtn)noBtn.disabled=true;
+    try{
+      const n=wSel.size;
+      /* Serial Donor UID হিসাবের জন্য সব approve সম্পূর্ণ হওয়া পর্যন্ত অপেক্ষা */
+      const results=await Promise.all([...wSel].map(id=>decide(id,true,"",true)));
+      if(results.some(result=>result!==true))return toast("এক বা একাধিক পরিবর্তন RTDB-তে সংরক্ষণ করা যায়নি","er");
+      try{await persist();}
+      catch(e){return toast("পরিবর্তন RTDB-তে সংরক্ষণ করা যায়নি — সফলতা দেখানো হয়নি","er");}
+      wSel.clear();RENDER.work();paintNav();paintTop();
+      toast(bn(n)+"টি অনুমোদন করা হয়েছে","ok");
+    }finally{
+      bulkBusy=false;
+      if(okBtn&&okBtn.isConnected){okBtn.disabled=false;okBtn.textContent="অনুমোদন";}
+      if(noBtn&&noBtn.isConnected)noBtn.disabled=false;
+    }
   }
   function reviewWarning(q){
     const w=[];
@@ -5040,15 +5057,19 @@ function initPage() {
       </div>`,
       `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="ad_ok">${SI.check(15)} সংরক্ষণ</button>`);
     s.q("#ad_ok").onclick=async()=>{
+      const btn=s.q("#ad_ok");
+      if(btn.disabled)return;                  /* ডুপ্লিকেট click/request বাতিল (item 11) */
       const date=s.q("#ad_date").value, place=s.q("#ad_place").value.trim().slice(0,120);
       const bags=Math.max(1,Math.floor(Number(s.q("#ad_bags").value)||1));
       if(!date)return toast("তারিখ দিন","er");
       if(!place)return toast("হাসপাতাল / স্থান লিখুন","er");
       const f=s.q("#ad_file").files&&s.q("#ad_file").files[0];
+      if(f&&f.size>4*1024*1024)return toast("ছবি ৪ MB-এর কম হতে হবে","er");
+      btn.disabled=true;btn.textContent="সংরক্ষণ হচ্ছে…";
+      const unlock=()=>{if(btn.isConnected){btn.disabled=false;btn.innerHTML=`${SI.check(15)} সংরক্ষণ`;}};
       let proof=r.proof||"";
       if(f){
-        if(f.size>4*1024*1024)return toast("ছবি ৪ MB-এর কম হতে হবে","er");
-        try{proof=(await imgbbUploadImage(f)).url}catch(e){return toast(e&&e.message?e.message:"ছবি আপলোড হয়নি","er")}
+        try{proof=(await imgbbUploadImage(f)).url}catch(e){unlock();return toast(e&&e.message?e.message:"ছবি আপলোড হয়নি","er")}
       }
       const oldRecord={id:r.id,date:r.date,place:r.place};
       const updated={...r,date,place,bags,proof,patient:s.q("#ad_pat").value.trim().slice(0,120),
@@ -5058,7 +5079,7 @@ function initPage() {
         await persist();
         logAudit("Approved Donation সম্পাদনা",r.id+" — "+date+" · "+place,"donation");
         s.close();renderSub("approved");toast("সংরক্ষণ হয়েছে — পরিসংখ্যান হালনাগাদ হয়েছে","ok");
-      }catch(e){console.warn("edit approved donation:",e&&e.message);toast("সংরক্ষণ হয়নি","er")}
+      }catch(e){console.warn("edit approved donation:",e&&e.message);unlock();toast("সংরক্ষণ হয়নি","er")}
     };
   }
 
@@ -5909,18 +5930,22 @@ function initPage() {
         <label>ব্যাগ</label><input id="ad_b" type="number" value="1" min="1" max="3"></div>`,
         `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="ad_ok">যোগ করুন</button>`);
       s.q("#ad_ok").onclick=async()=>{
+        const btn=s.q("#ad_ok");
+        if(btn.disabled)return;                /* ডুপ্লিকেট click/request বাতিল (item 1, 11) */
         const dt=s.q("#ad_d").value,pl=s.q("#ad_p").value.trim()||"অজানা স্থান";
         if(!dt)return toast("তারিখ দিন","er");
+        btn.disabled=true;btn.textContent="সংরক্ষণ হচ্ছে…";
         const bags=Math.max(1,Math.floor(Number(s.q("#ad_b").value)||1));
+        const at=nowIso();
         const record={id:safeDonationId(d.ownerUid||"",dt,pl),
           donorId:d.id,ownerUid:Object(d).ownerUid||"",name:d.name,group:d.group,area:d.area,
           photo:d.photo,phone:d.phone,place:pl,date:dt,bags,proof:"",patient:"",note:"",
-          livesSaved:1,approvedAt:nowIso(),approvedBy:ME.name||"অ্যাডমিন",updatedAt:nowIso(),source:"admin"};
+          livesSaved:1,submittedAt:at,approvedAt:at,approvedBy:ME.name||"অ্যাডমিন",updatedAt:at,source:"admin"};
         logAudit("রক্তদান যোগ",d.id+" — "+dL(dt)+" · "+bn(bags)+" ব্যাগ","donation");
         try{
           await saveApprovedDonation(record,{id:record.id,date:"",place:""});
           await persist();
-        }catch(e){restoreLastPersistedDB();return toast("রক্তদান সংরক্ষণ করা যায়নি","er");}
+        }catch(e){restoreLastPersistedDB();btn.disabled=false;btn.textContent="যোগ করুন";return toast("রক্তদান সংরক্ষণ করা যায়নি","er");}
         s.close();renderSub("donor");toast("রক্তদান যোগ হয়েছে — পরিসংখ্যান হালনাগাদ হয়েছে","ok")};
       return;
     }

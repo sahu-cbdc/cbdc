@@ -3841,6 +3841,15 @@ function initPage() {
           toast("আপনি সরাসরি অনুমোদিত রক্তদাতা হয়েছেন","ok");
           return;
           }
+          /* OFF অথচ সরাসরি process সম্ভব হয়নি (সার্ভার error/config সমস্যা) —
+             সেটিং অমান্য করে আবেদন approval queue-তে পাঠানো হয় না; স্পষ্ট error
+             দেখানো হয় (item 9, 10)। server নিজে ON বললে (approvalRequired)
+             কেবল তখনই নিচের queue পথ সঠিক। */
+          if(!(serverApply&&serverApply.approvalRequired)){
+            throw Object.assign(new Error("অনুমোদন সেটিং অনুযায়ী আবেদনটি সরাসরি অনুমোদিত হওয়ার কথা, কিন্তু সার্ভার সেটি প্রক্রিয়া করতে পারেনি"
+              +((serverApply&&serverApply.error)?" — "+serverApply.error:"")
+              +"। আবেদনটি approval queue-তে পাঠানো হয়নি — একটু পরে আবার চেষ্টা করুন বা অ্যাডমিনকে জানান।"),{settingsOff:true});
+          }
         }
         const qid="PD-"+uid.replace(/[^A-Za-z0-9]/g,"").slice(-40);
         const at=nowIso();
@@ -3868,7 +3877,7 @@ function initPage() {
       }catch(err){
         d.is=false;d.status="none";d.bloodGroup=accountBloodGroup();d.donorId="";
         btn.disabled=false;btn.textContent="রক্তদাতা হিসেবে আবেদন জমা দিন";
-        toast("আবেদন জমা দেওয়া যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।","er");
+        toast(err&&err.settingsOff&&err.message?err.message:"আবেদন জমা দেওয়া যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।","er");
         console.warn("donor application submit:",err&&err.message);
         return;
       }
@@ -4020,6 +4029,15 @@ function initPage() {
         if(APPROVAL_SETTINGS.donationApproval===false){
           const sa=await requestDirectApply("donation",{date,place,bags,proof,patient:pat,note}).catch(()=>null);
           if(sa&&sa.ok)verified=true;
+          /* OFF অথচ সরাসরি যাচাই সম্ভব হয়নি (সার্ভার error/config সমস্যা) —
+             সেটিং অমান্য করে রেকর্ড pending/queue-তে পাঠানো হয় না; স্পষ্ট error
+             দেখানো হয় (item 7, 10)। server নিজে ON বললে (approvalRequired)
+             কেবল তখনই নিচের pending queue পথ সঠিক। */
+          else if(!(sa&&sa.approvalRequired)){
+            return er("অনুমোদন সেটিং অনুযায়ী রক্তদানটি সরাসরি যাচাইকৃত হওয়ার কথা, কিন্তু সার্ভার সেটি প্রক্রিয়া করতে পারেনি"
+              +((sa&&sa.error)?" — "+sa.error:"")
+              +"। রেকর্ডটি যাচাই queue-তে পাঠানো হয়নি — একটু পরে আবার চেষ্টা করুন বা অ্যাডমিনকে জানান।");
+          }
         }
         RAW.donations.unshift({date,place,bags,pat,note,proof,ok:verified});
         if(verified){
@@ -4640,6 +4658,15 @@ function initPage() {
           s.close();renderSub(SUB);
           toast("রক্তের গ্রুপ আপডেট হয়েছে","ok");
           return;
+          }
+          /* OFF অথচ সরাসরি process সম্ভব হয়নি (সার্ভার error/config সমস্যা) —
+             সেটিং অমান্য করে অনুরোধ approval queue-তে পাঠানো হয় না; স্পষ্ট error
+             দেখানো হয় (item 8, 10)। server নিজে ON বললে (approvalRequired)
+             কেবল তখনই নিচের queue পথ সঠিক। */
+          if(!(serverApply&&serverApply.approvalRequired)){
+            return fail("অনুমোদন সেটিং অনুযায়ী গ্রুপ পরিবর্তন সরাসরি কার্যকর হওয়ার কথা, কিন্তু সার্ভার সেটি প্রক্রিয়া করতে পারেনি"
+              +((serverApply&&serverApply.error)?" — "+serverApply.error:"")
+              +"। অনুরোধটি approval queue-তে পাঠানো হয়নি — একটু পরে আবার চেষ্টা করুন বা অ্যাডমিনকে জানান।");
           }
         }
         const at=nowIso();

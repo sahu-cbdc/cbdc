@@ -95,3 +95,63 @@ test("Approval-settings single source stays consistent (settings/app.rules)", ()
   assert.match(apply, /ruleOn\(settings, "bloodGroupApproval"\)/);
   assert.match(apply, /ruleOn\(settings, "donationApproval"\)/);
 });
+
+test("Bulk approve/cancel runs once: busy lock + immediate button disable (Admin & Moderator)", () => {
+  for (const f of ["src/pages/Admin.tsx", "src/pages/Moderator.tsx"]) {
+    const src = read(f);
+    assert.match(src, /let bulkBusy=false;/, f + ": bulkBusy flag");
+    assert.match(src, /if\(bulkBusy\)return;/, f + ": second bulk request rejected");
+    assert.match(src, /okBtn\.disabled=true;okBtn\.textContent="প্রসেস হচ্ছে…";/, f + ": buttons disabled/loading immediately");
+    assert.match(src, /finally\{\s*bulkBusy=false;/, f + ": lock always released");
+  }
+});
+
+test("Approved-donation edit/manual-add buttons lock against double click", () => {
+  const admin = read("src/pages/Admin.tsx");
+  /* editApprovedDonation + donorAction addDon: both #ad_ok handlers guard on disabled */
+  const locks = admin.match(/const btn=s\.q\("#ad_ok"\);\s*\n?\s*if\(btn\.disabled\)return;/g) || [];
+  assert.ok(locks.length >= 2, "Admin edit + manual-add both guarded (found " + locks.length + ")");
+  const moder = read("src/pages/Moderator.tsx");
+  assert.match(moder, /const btn=s\.q\("#ad_ok"\);\s*\n?\s*if\(btn\.disabled\)return;/, "Moderator manual-add guarded");
+});
+
+test("Moderator manual donation-add uses the shared donation log (no bag-increment corruption)", () => {
+  const moder = read("src/pages/Moderator.tsx");
+  assert.match(moder, /writeApprovedDonation\(record,null,donationIo\)/, "authoritative donations record written");
+  assert.match(moder, /id:safeDonationId\(d\.ownerUid\|\|"",dt,pl\)/, "deterministic event id (same event → same id)");
+  assert.doesNotMatch(moder, /d\.donations=\(Number\(d\.donations\)\|\|0\)\+bags/, "old bags-increment removed — stats recomputed from records");
+  assert.match(moder, /d\.donations=stats\.lives;d\.totalDonations=stats\.lives;d\.totalBags=stats\.bags;/, "stats come from recompute");
+});
+
+test("Doner panel honours OFF strictly — a failed direct apply never falls back to the queue", () => {
+  const doner = read("src/pages/Doner.tsx");
+  /* donor application: server failure (non approvalRequired) throws a flagged error */
+  assert.match(doner, /Object\.assign\(new Error\("অনুমোদন সেটিং অনুযায়ী আবেদনটি সরাসরি অনুমোদিত হওয়ার কথা[\s\S]*?\{settingsOff:true\}\)/);
+  assert.match(doner, /err&&err\.settingsOff&&err\.message\?err\.message:/);
+  /* blood-group change: fail() with clear message instead of silent queue */
+  assert.match(doner, /return fail\("অনুমোদন সেটিং অনুযায়ী গ্রুপ পরিবর্তন সরাসরি কার্যকর হওয়ার কথা/);
+  /* donation verification: er() with clear message instead of silent pending */
+  assert.match(doner, /return er\("অনুমোদন সেটিং অনুযায়ী রক্তদানটি সরাসরি যাচাইকৃত হওয়ার কথা/);
+  /* the queue path stays legal only when the server itself says approvalRequired */
+  const strictChecks = doner.match(/if\(!\(serverApply&&serverApply\.approvalRequired\)\)\{/g) || [];
+  assert.ok(strictChecks.length >= 2, "strict approvalRequired checks present (found " + strictChecks.length + ")");
+  assert.match(doner, /else if\(!\(sa&&sa\.approvalRequired\)\)\{/);
+});
+
+test("Settings save is a partial multi-path update — settings/app never wiped", () => {
+  for (const f of ["src/pages/Admin.tsx", "src/pages/Moderator.tsx"]) {
+    const src = read(f);
+    assert.match(src, /\$\{NODES\.settings\}\/app\/rules/, f + ": rules written under settings/app/rules");
+    assert.match(src, /\$\{NODES\.settings\}\/app\/autoApproveEmergency/, f + ": legacy flag kept in sync");
+    assert.doesNotMatch(src, /setRow\(NODES\.settings,"app"/, f + ": no full-node replace");
+  }
+});
+
+test("Server apply handler has an in-flight lock (uid|action) — duplicate request gets 429", () => {
+  const apply = read("server/applyApi.ts");
+  assert.match(apply, /const inflightApply = new Set<string>\(\);/);
+  assert.match(apply, /const lockKey = uid \+ "\|" \+ action;/);
+  assert.match(apply, /if \(inflightApply\.has\(lockKey\)\)/);
+  assert.match(apply, /new ApiError\(429/);
+  assert.match(apply, /finally \{\s*inflightApply\.delete\(lockKey\);\s*\}/);
+});

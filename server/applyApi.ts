@@ -101,6 +101,31 @@ export async function handleDonorApply(
     throw new ApiError(400, "অজানা action — শুধু donor, bloodGroup বা donation।");
   }
 
+  /* ── সার্ভার-সাইড race/duplicate রোধ (items 1, 11) ──
+     একই ব্যবহারকারীর একই action-এর দ্বিতীয় সমান্তরাল request প্রথমটি শেষ হওয়ার
+     আগে এলে সেটি প্রসেসই হয় না — 429। দ্রুত double-submit-এ কখনো দুটি লেখা হয়
+     না; ক্রমিক পুনরাবৃত্তি এমনিতেই idempotent (deterministic id/path)। */
+  const lockKey = uid + "|" + action;
+  if (inflightApply.has(lockKey)) {
+    throw new ApiError(429, "এই অনুরোধটি ইতিমধ্যে প্রক্রিয়াধীন — একটু পরে আবার চেষ্টা করুন।");
+  }
+  inflightApply.add(lockKey);
+  try {
+    return await processApply(uid, action, input, io);
+  } finally {
+    inflightApply.delete(lockKey);
+  }
+}
+
+/** চলমান request-এর তালা — module-স্তরের, uid|action ভিত্তিক। */
+const inflightApply = new Set<string>();
+
+async function processApply(
+  uid: string,
+  action: ApplyAction,
+  input: Record<string, unknown> | null | undefined,
+  io: ApplyIo,
+): Promise<ApplyResult> {
   const settings = (await io.getRow(SETTINGS_NODE, SETTINGS_ID).catch(() => null)) || {};
 
   /* ── donor application ── */

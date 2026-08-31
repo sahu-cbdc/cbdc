@@ -21,6 +21,7 @@ import {
   safeDonationId,
   donorStatsFromRecords,
   makeApprovedDonationRecord,
+  writeApprovedDonation,
 } from "../lib/donationLog";
 import SITE from "../config/site";
 import { noticeVisibleTo, noticeReadKey, markNoticeRead, markAllNoticesRead, watchNoticeReads } from "../lib/notice";
@@ -2405,9 +2406,11 @@ function initPage() {
   async function pushSettings(){
     if(ME.role!=="admin")throw new Error("Only an authorized Admin may change approval settings.");
     if(SETTINGS_PULLING)return;
-    await setRow(NODES.settings,"app",{
-      rules:DB.rules||{},
-      autoApproveEmergency:DB.rules&&DB.rules.emergencyApproval===false
+    /* আংশিক (multi-path) আপডেট — settings/app-এর অজানা/অন্য key কখনো মুছে যায় না;
+       সব প্যানেল/ওয়েবসাইট এই একটাই নির্ভরযোগ্য উৎস (settings/app/rules) পড়ে (item 10) */
+    await updatePaths({
+      [`${NODES.settings}/app/rules`]:DB.rules||{},
+      [`${NODES.settings}/app/autoApproveEmergency`]:DB.rules&&DB.rules.emergencyApproval===false
     });
   }
   /* settings live listener — এক প্যানেলে বদলালে অন্য প্যানেল ও ওয়েবসাইটেও সাথে সাথে
@@ -3855,17 +3858,32 @@ function initPage() {
       </button>
       <span class="go">${SI.right(17)}</span></div>`;
   }
+  /* bulk অনুমোদন/বাতিল — একবারই চলে: চলাকালীন বোতাম সাথে সাথে disabled/loading হয়,
+     দ্বিতীয় click/request নিঃশব্দে বাতিল হয় এবং প্রতিটি রেকর্ড ঠিক একবার process হয়
+     (items 2, 11)। */
+  let bulkBusy=false;
   async function bulkDo(ok){
+    if(bulkBusy)return;                              /* ইতিমধ্যে চলছে — দ্বিতীয় request নয় */
     if(!can("donor.approve"))return toast("আপনার অনুমতি নেই","er");
     if(!ok)return rejectSheet([...wSel],()=>{wSel.clear();RENDER.work()});
-    const n=wSel.size;
-    /* Serial Donor UID হিসাবের জন্য সব approve সম্পূর্ণ হওয়া পর্যন্ত অপেক্ষা */
-    const results=await Promise.all([...wSel].map(id=>decide(id,true,"",true)));
-    if(results.some(result=>result!==true))return toast("এক বা একাধিক পরিবর্তন RTDB-তে সংরক্ষণ করা যায়নি","er");
-    try{await persist();}
-    catch(e){return toast("পরিবর্তন RTDB-তে সংরক্ষণ করা যায়নি — সফলতা দেখানো হয়নি","er");}
-    wSel.clear();RENDER.work();paintNav();paintTop();
-    toast(bn(n)+"টি অনুমোদন করা হয়েছে","ok");
+    bulkBusy=true;
+    const okBtn=$("#skOk"),noBtn=$("#skNo");
+    if(okBtn){okBtn.disabled=true;okBtn.textContent="প্রসেস হচ্ছে…";}
+    if(noBtn)noBtn.disabled=true;
+    try{
+      const n=wSel.size;
+      /* Serial Donor UID হিসাবের জন্য সব approve সম্পূর্ণ হওয়া পর্যন্ত অপেক্ষা */
+      const results=await Promise.all([...wSel].map(id=>decide(id,true,"",true)));
+      if(results.some(result=>result!==true))return toast("এক বা একাধিক পরিবর্তন RTDB-তে সংরক্ষণ করা যায়নি","er");
+      try{await persist();}
+      catch(e){return toast("পরিবর্তন RTDB-তে সংরক্ষণ করা যায়নি — সফলতা দেখানো হয়নি","er");}
+      wSel.clear();RENDER.work();paintNav();paintTop();
+      toast(bn(n)+"টি অনুমোদন করা হয়েছে","ok");
+    }finally{
+      bulkBusy=false;
+      if(okBtn&&okBtn.isConnected){okBtn.disabled=false;okBtn.textContent="অনুমোদন";}
+      if(noBtn&&noBtn.isConnected)noBtn.disabled=false;
+    }
   }
   function reviewWarning(q){
     const w=[];
@@ -4816,14 +4834,36 @@ function initPage() {
         <label>ব্যাগ</label><input id="ad_b" type="number" value="1" min="1" max="3"></div>`,
         `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="ad_ok">যোগ করুন</button>`);
       s.q("#ad_ok").onclick=async()=>{
+        const btn=s.q("#ad_ok");
+        if(btn.disabled)return;                /* ডুপ্লিকেট click/request বাতিল (item 1, 11) */
         const dt=s.q("#ad_d").value,pl=s.q("#ad_p").value.trim()||"অজানা স্থান";
         if(!dt)return toast("তারিখ দিন","er");
+        btn.disabled=true;btn.textContent="সংরক্ষণ হচ্ছে…";
         const bags=Math.max(1,Math.floor(Number(s.q("#ad_b").value)||1));
-        d.log=d.log||[];d.log.push({date:dt,place:pl,bags,ok:true});
-        d.donations=(Number(d.donations)||0)+bags;d.totalDonations=d.donations;
-        if(!d.last||dt>d.last)d.last=dt;
-        logAudit("রক্তদান যোগ",d.id+" — "+dL(dt)+" · "+bn(bags)+" ব্যাগ","donation");await persist();
-        s.close();renderSub("donor");toast("রক্তদান যোগ হয়েছে","ok")};
+        /* Admin panel-এর মতোই shared donation log ব্যবহার — donations node-এ
+           deterministic id-র authoritative record (একই event দ্বিতীয়বার যোগ হলে
+           একই id → duplicate নয়), আর পরিসংখ্যান increment নয়, পূর্ণ তালিকা
+           থেকে পুনরায় হিসাব হয় (1 event = 1 জীবন; ব্যাগ আলাদা)। আগে এখানে
+           donations += bags করা হতো — duplicate/ভুল পরিসংখ্যানের উৎস (item 1, 10)। */
+        const at=nowIso();
+        const record={id:safeDonationId(d.ownerUid||"",dt,pl),
+          donorId:d.id,ownerUid:Object(d).ownerUid||"",name:d.name,group:d.group,area:d.area||"",
+          photo:d.photo||"",phone:d.phone||"",place:pl,date:dt,bags,proof:"",patient:"",note:"",
+          livesSaved:1,submittedAt:at,approvedAt:at,approvedBy:ME.name||"মডারেটর",updatedAt:at,source:"moderator"};
+        try{
+          const {paths,stats}=await writeApprovedDonation(record,null,donationIo);
+          await updatePaths(paths);
+          d.log=Array.isArray(d.log)?d.log:[];
+          if(!d.log.some(x=>x&&String(x.date||"")===dt&&String(x.place||"")===pl))
+            d.log.push({date:dt,place:pl,bags,ok:true});
+          d.donations=stats.lives;d.totalDonations=stats.lives;d.totalBags=stats.bags;
+          if(stats.last)d.last=stats.last;
+          logAudit("রক্তদান যোগ",d.id+" — "+dL(dt)+" · "+bn(bags)+" ব্যাগ","donation");
+          await persist();
+        }catch(e){console.warn("moderator add donation:",e&&e.message);
+          btn.disabled=false;btn.textContent="যোগ করুন";
+          return toast("রক্তদান সংরক্ষণ করা যায়নি","er");}
+        s.close();renderSub("donor");toast("রক্তদান যোগ হয়েছে — পরিসংখ্যান হালনাগাদ হয়েছে","ok")};
       return;
     }
     if(a==="more"){

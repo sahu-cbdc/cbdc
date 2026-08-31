@@ -182,3 +182,76 @@ test("apply: invalid action / unauthenticated / bad input rejected", async () =>
   await assert.rejects(() => handleDonorApply({ idToken: "t", action: "donation", date: "bad", place: "x", bags: 1 }, io),
     (e) => e instanceof ApiError && e.status === 400);
 });
+
+/* ── সার্ভার-সাইড race/duplicate রোধ (items 1, 11) ── */
+
+function makeSlowIo(seed, delayMs = 25) {
+  const io = makeIo(seed);
+  const realUpdate = io.updatePaths;
+  io.updatePaths = async (paths) => {
+    await new Promise((r) => setTimeout(r, delayMs));
+    return realUpdate(paths);
+  };
+  return io;
+}
+
+test("apply: concurrent duplicate donation OFF → second request 429, single record", async () => {
+  const io = makeSlowIo({
+    "settings/app": { rules: { ...OFF } },
+    "users/user-1": { ...seedUser(), data: { donations: [], verifiedDonations: {} } },
+    "donors/CBDC-2026-0001": { id: "CBDC-2026-0001", donorId: "CBDC-2026-0001", ownerUid: "user-1", name: "রহিম", group: "O+", donations: 0, totalDonations: 0, totalBags: 0 },
+  });
+  const payload = { idToken: "t", action: "donation", date: "2026-08-30", place: "চমেক ব্লাড ব্যাংক", bags: 2, proof: "https://imgbb/a.jpg" };
+  const results = await Promise.allSettled([
+    handleDonorApply({ ...payload }, io),
+    handleDonorApply({ ...payload }, io),
+  ]);
+  const ok = results.filter((r) => r.status === "fulfilled");
+  const bad = results.filter((r) => r.status === "rejected");
+  assert.equal(ok.length, 1, "exactly one request processed");
+  assert.equal(bad.length, 1, "duplicate request rejected");
+  assert.ok(bad[0].reason instanceof ApiError && bad[0].reason.status === 429, "duplicate gets 429");
+  assert.equal(Object.keys(io.data.donations).length, 1, "single donation record");
+  assert.equal(io.data.donors["CBDC-2026-0001"].donations, 1, "stats counted once");
+  assert.equal(io.data.donors["CBDC-2026-0001"].totalBags, 2);
+});
+
+test("apply: sequential duplicate donation OFF → idempotent (same id, stats once)", async () => {
+  const io = makeIo({
+    "settings/app": { rules: { ...OFF } },
+    "users/user-1": { ...seedUser(), data: { donations: [], verifiedDonations: {} } },
+    "donors/CBDC-2026-0001": { id: "CBDC-2026-0001", donorId: "CBDC-2026-0001", ownerUid: "user-1", name: "রহিম", group: "O+", donations: 0, totalDonations: 0, totalBags: 0 },
+  });
+  const payload = { idToken: "t", action: "donation", date: "2026-08-30", place: "চমেক ব্লাড ব্যাংক", bags: 2 };
+  const r1 = await handleDonorApply({ ...payload }, io);
+  const r2 = await handleDonorApply({ ...payload }, io);
+  assert.equal(r1.ok, true);
+  assert.equal(r2.ok, true);
+  assert.equal(Object.keys(io.data.donations).length, 1, "same event never duplicates");
+  assert.equal(io.data.donors["CBDC-2026-0001"].donations, 1, "1 event = 1 জীবন, once");
+  assert.equal(io.data.donors["CBDC-2026-0001"].totalBags, 2, "bags never double-counted");
+});
+
+test("apply: concurrent donor OFF double-submit → one donor, duplicate 429", async () => {
+  const io = makeSlowIo({ "settings/app": { rules: { ...OFF } }, "users/user-1": seedUser() });
+  const results = await Promise.allSettled([
+    handleDonorApply({ idToken: "t", action: "donor" }, io),
+    handleDonorApply({ idToken: "t", action: "donor" }, io),
+  ]);
+  const ok = results.filter((r) => r.status === "fulfilled");
+  const bad = results.filter((r) => r.status === "rejected");
+  assert.equal(ok.length, 1);
+  assert.equal(bad.length, 1);
+  assert.ok(bad[0].reason instanceof ApiError && bad[0].reason.status === 429);
+  assert.equal(Object.keys(io.data.donors).length, 1, "no duplicate donor record");
+});
+
+test("apply: settings read per request → toggle effective on the very next request", async () => {
+  const io = makeIo({ "settings/app": { rules: { ...ON } }, "users/user-1": seedUser() });
+  const r1 = await handleDonorApply({ idToken: "t", action: "donor" }, io);
+  assert.equal(r1.approvalRequired, true, "ON → queue");
+  io.data.settings.app.rules.donorApproval = false;   /* admin toggles OFF */
+  const r2 = await handleDonorApply({ idToken: "t", action: "donor" }, io);
+  assert.equal(r2.ok, true, "OFF takes effect immediately, no restart needed");
+  assert.equal(r2.approvalRequired, false);
+});
