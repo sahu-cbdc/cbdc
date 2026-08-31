@@ -98,7 +98,7 @@ test("Moderator access save: no full-store persist() that could reject and freez
 test("Moderator access save: duplicate-request guard + loading state + honest failure toast", () => {
   assert.match(moderator, /let acSaving=false;/);
   assert.match(moderator, /if\(acSaving\)return;/);
-  assert.match(moderator, /ok\.disabled=true;ok\.textContent=tp\("সংরক্ষণ হচ্ছে…","Saving…"\);/);
+  assert.match(moderator, /ok\.disabled=true;ok\.textContent=tp\("সংরক্ষণ হচ্ছে…"\);/);
   assert.match(moderator, /ok\.disabled=false;ok\.innerHTML=okHtml;/);
   assert.match(moderator, /শুধু অ্যাডমিন করতে পারেন/);
   assert.match(moderator, /finally\{acSaving=false;\}/);
