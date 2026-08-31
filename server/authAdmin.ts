@@ -92,6 +92,7 @@ function pkcs8FromPem(pem: string): Uint8Array {
 }
 
 /* ── access token (প্রতি service account-এ ১ ঘণ্টা ক্যাশ) ──────────── */
+/* ── access token (প্রতি service account-এ ১ ঘণ্টা ক্যাশ) ──────────── */
 
 type CachedToken = { token: string; expiresAt: number };
 const tokenCache = new Map<string, CachedToken>();
@@ -103,7 +104,8 @@ export async function fetchGoogleAccessToken(
   return fetchAccessToken(sa, fetchImpl);
 }
 
-async function fetchAccessToken(
+/** একবার OAuth access token আনুন (কোনো retry ছাড়া) — JWT-bearer grant। */
+async function fetchAccessTokenOnce(
   sa: ServiceAccount,
   fetchImpl: typeof fetch,
 ): Promise<string> {
@@ -158,6 +160,38 @@ async function fetchAccessToken(
   return token;
 }
 
+/** transient (নেটওয়ার্ক/৫xx) ব্যর্থতায় একবার রিট্রাই — OAuth token অনুরোধ। */
+async function fetchAccessToken(
+  sa: ServiceAccount,
+  fetchImpl: typeof fetch,
+): Promise<string> {
+  try {
+    return await fetchAccessTokenOnce(sa, fetchImpl);
+  } catch (first) {
+    const cached = tokenCache.get(sa.client_email);
+    if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
+    /* শুধু OAuth token-সংক্রান্ত (নেটওয়ার্ক/৫xx) ব্যর্থতায়ই retry —
+       signing/validation error হলে ব্যর্থতাই থেকে যায়। */
+    const isTransient = String((first as Error)?.message || "").includes("OAuth2 token");
+    if (!isTransient) throw first;
+    return fetchAccessTokenOnce(sa, fetchImpl);
+  }
+}
+
+/** Identity Toolkit delete-এর HTTP status/body → auth ফলাফল। */
+export function authDeleteStatus(status: number, bodyText: string): "deleted" | "missing" | "failed" {
+  if (status === 200) return "deleted";
+  /* আগেই মুছে ফেলা/নেই — এটি ব্যর্থতা নয়। Identity Toolkit-এর বিভিন্ন
+     NOT_FOUND কোড সামলানো হয় (HTTP 404 / 400-বডিতে কোড)। */
+  if (
+    status === 404 ||
+    /USER_NOT_FOUND|EMAIL_NOT_FOUND|PHONE_NUMBER_NOT_FOUND|NOT_FOUND/i.test(bodyText || "")
+  ) {
+    return "missing";
+  }
+  return "failed";
+}
+
 /**
  * ঠিক একটি Firebase Authentication অ্যাকাউন্ট মুছে ফেলা (admin Identity Toolkit)।
  * রিটার্ন: "deleted" | "missing" (আগেই নেই) | "failed" | "unconfigured"।
@@ -178,12 +212,12 @@ export async function deleteAuthUserWithServiceAccount(
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ localId: uid }),
     });
-    if (res.ok) return "deleted";
     const text = await res.text().catch(() => "");
-    /* আগেই মুছে ফেলা/নেই — এটি ব্যর্থতা নয় */
-    if (res.status === 404 || /USER_NOT_FOUND|NOT_FOUND/i.test(text)) return "missing";
-    console.warn(`[auth-delete] uid=${uid} HTTP ${res.status}: ${text.slice(0, 200)}`);
-    return "failed";
+    const outcome = authDeleteStatus(res.status, text);
+    if (outcome === "failed") {
+      console.warn(`[auth-delete] uid=${uid} HTTP ${res.status}: ${text.slice(0, 200)}`);
+    }
+    return outcome;
   } catch (e) {
     console.warn("[auth-delete]", (e as Error)?.message);
     return "failed";
@@ -192,8 +226,8 @@ export async function deleteAuthUserWithServiceAccount(
 
 /**
  * env থেকে একটি `deleteAuthUser(uid)` ফাংশন তৈরি — `DeleteIo`-র জন্য।
- * secret না থাকলে সবসময় "unconfigured" ফেরত দেয় (RTDB ডিলিট থেমে যায় না;
- * পরিষ্কার warning-এর সাথে আংশিক সাফল্য জানানো হয়)।
+ * secret না থাকলে সবসময় "unconfigured" ফেরত দেয় — deleteApi অ্যাটমিক
+ * নিয়মে (লগইন ছাড়া কোনো partial delete নয়) কিছুই মোছা হয় না।
  */
 export function createAuthDeleter(
   env: Record<string, unknown>,

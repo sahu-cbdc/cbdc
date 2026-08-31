@@ -21,6 +21,7 @@
 
 import { ApiError, type DeleteIo } from "./deleteApi.ts";
 import type { ResolveLegacyIo } from "./resolveLegacy.ts";
+import type { ApplyIo } from "./applyApi.ts";
 import { createAuthDeleter, parseServiceAccount, fetchGoogleAccessToken, type ServiceAccount } from "./authAdmin.ts";
 
 const IDENTITY_TOOLKIT = "https://identitytoolkit.googleapis.com/v1/accounts:lookup";
@@ -191,3 +192,37 @@ const UNCONFIGURED_MSG =
   "সার্ভারে service-account secret (FIREBASE_SERVICE_ACCOUNT) কনফিগার করা নেই — " +
   "পুরোনো রেকর্ড স্বয়ংক্রিয়ভাবে মেলানো সম্ভব নয়। অ্যাডমিন প্যানেলের " +
   "'ডুপ্লিকেট যাচাই ও পরিষ্কার' ব্যবহার করুন।";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Apply I/O (Approval-settings direct processing) — privileged service-account
+   ═══════════════════════════════════════════════════════════════════════════
+   OFF-সেটিংসের সরাসরি processing-এ সাধারণ (non-staff) ব্যবহারকারীর নিজের
+   ডেটাতে admin-level লেখা দরকার (donors, verifiedDonations, bloodGroup …)।
+   ব্রাউজার rules-এর কাছে সেগুলো লিখতে পারে না, তাই data access সব service-account
+   access token দিয়ে হয় (ক্লায়েন্টে secret কখনো যায় না)। caller যাচাই public
+   API key দিয়ে — শুধু নিজেরই process হতে পারে (নীচে applyApi.ts-এ uid বেঁধে)। */
+export function makeApplyIo(env: HttpEnv, idToken: string, fetchImpl: typeof fetch = fetch): ApplyIo {
+  const priv = makePrivilegedIo(env, undefined, fetchImpl) as ResolveLegacyIo & { configured: boolean };
+  return {
+    verifyToken: (token: string) => priv.verifyCaller(token),
+    getRow: async (node, id) => {
+      if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
+      const v = (await priv.get(`${node}/${id}`)) as any;
+      if (!v || typeof v !== "object") return null;
+      return { ...v, id };
+    },
+    listOnce: async (node) => {
+      if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
+      const v = (await priv.list(node)) as Record<string, any> | null;
+      if (!v || typeof v !== "object") return [];
+      return Object.entries(v).map(([id, row]) =>
+        row && typeof row === "object" ? { ...row, id } : { id, value: row },
+      );
+    },
+    updatePaths: async (paths) => {
+      if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
+      const ok = await priv.apply(paths);
+      if (!ok) throw new ApiError(502, "Realtime Database-এ সংরক্ষণ করা যায়নি — আবার চেষ্টা করুন।");
+    },
+  };
+}

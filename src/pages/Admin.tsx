@@ -4282,7 +4282,10 @@ function initPage() {
          :`<button class="btn gh w" data-close>বন্ধ</button>`);
     if(can("contact.reveal"))logAudit("যোগাযোগ দেখা হয়েছে",q.id,q.kind);
     if(may){
-      s.q("#rv_yes").onclick=async()=>{ await decide(id,true,s.q("#rv_note").value); s.close(); };
+      /* Double-click / multi-click রোধ: সিদ্ধান্ত নেওয়ার সময় button নিষ্ক্রিয় —
+         একই action-এর জন্য দ্বিতীয় request যায় না (item 2, 11)। */
+      const setBusy=b=>{s.q("#rv_yes").disabled=b;s.q("#rv_no").disabled=b;};
+      s.q("#rv_yes").onclick=async()=>{if(s.q("#rv_yes").disabled)return;setBusy(true);try{await decide(id,true,s.q("#rv_note").value);}finally{s.close();}};
       s.q("#rv_no").onclick=()=>{s.close();rejectSheet([id])};
     }
   }
@@ -4335,9 +4338,27 @@ function initPage() {
     if(note)paths[`users/${ownerUid}/groupChange/note`]=String(note).slice(0,200);
     return paths;
   }
+  /* ── একই সিদ্ধান্তের ডুপ্লিকেট/race রোধ ──
+     Double-click, একই queue-item একাধিকবার, বা একই event (donation: donor|date|place,
+     donor: ownerUid, group: ownerUid) একাধিকবার process হলে duplicate data তৈরি হয় না।
+     JS single-thread — set-এ যোগটি await-এর আগেই sync হয়, তাই দ্বিতীয় request
+     সাথে সাথেই বাতিল হয়। (items 1, 2, 11) */
+  const decidingKeys=new Set<string>();
+  function decideKey(id,q){
+    if(!q)return id;
+    if(q.kind==="donation")return "donation|"+String(q.ownerUid||q.uid||"")+"|"+String(q.date||"")+"|"+String(q.place||"");
+    if(q.kind==="donor")return "donor|"+String(q.ownerUid||q.uid||"");
+    if(q.kind==="group")return "group|"+String(q.ownerUid||q.uid||"");
+    return "queue|"+String(id||"");
+  }
   async function decide(id,ok,note,quiet){
-    const i=DB.queue.findIndex(x=>x.id===id);if(i<0)return;
+    const i=DB.queue.findIndex(x=>x.id===id);if(i<0)return false;
     const q=DB.queue[i];
+    /* একই event/আবেদন আগেই প্রসেস চলছে বা শেষ — দ্বিতীয় request বাতিল (idempotent)। */
+    const dkey=decideKey(id,q);
+    if(decidingKeys.has(dkey))return false;
+    decidingKeys.add(dkey);
+    try{
     const paths={};
     let approvedDonorId="", approvedDonor=null, approvedDonation=null, approvedRequest=null, approvedGroup=null;
     try{
@@ -4543,6 +4564,9 @@ function initPage() {
       RENDER.work();paintNav();paintTop();toast(ok?"অনুমোদন করা হয়েছে":"বাতিল করা হয়েছে",ok?"ok":"");
     }
     return true;
+    } finally {
+      decidingKeys.delete(dkey);
+    }
   }
 
   /* ══════════════════ SCREEN 3: PEOPLE ══════════════════ */
@@ -4970,16 +4994,24 @@ function initPage() {
       `<button class="btn gh amb" id="ad_del">${SI.trash(16)} মুছে ফেলুন</button>
        <button class="btn" id="ad_edit">${SI.edit(16)} সম্পাদনা</button>`);
     s.q("#ad_edit").onclick=()=>{s.close();editApprovedDonation(id)};
+    let deleting=false;
     s.q("#ad_del").onclick=async()=>{
+      if(deleting)return;                       /* ডুপ্লিকেট click/request বাতিল (item 3, 11) */
       if(!await confirmS({title:"এই রক্তদানের সম্পূর্ণ রেকর্ড মুছে ফেলবেন? এই কাজটি পূর্বাবস্থায় ফেরানো যাবে না।",desc:`${r.donorId||r.id} · ${dts(r.date)} · ${r.place}`,
         ok:"Delete",cancel:"Cancel",danger:true}))return;
+      deleting=true;s.q("#ad_del").disabled=true;s.q("#ad_edit").disabled=true;
       try{
-        const stats=await deleteApprovedDonation(r);
-        await persist();
-        logAudit("Approved Donation মুছা",r.id+" — "+r.donorId,"donation");
+        /* idempotent: রেকর্ড আগেই মুছে গেলে/no-op — তালিকা থেকে সরে যায়, ভুল না */
+        if(DB.donations.some(x=>String(x.id)===String(r.id))){
+          const stats=await deleteApprovedDonation(r);
+          await persist();
+          logAudit("Approved Donation মুছা",r.id+" — "+r.donorId,"donation");
+          toast("রেকর্ড মুছে গেছে — পরিসংখ্যান হালনাগাদ হয়েছে","ok");
+        } else {
+          toast("রেকর্ড আগেই মুছে গেছে","ok");
+        }
         s.close();renderSub("approved");paintNav();paintTop();
-        toast("রেকর্ড মুছে গেছে — পরিসংখ্যান হালনাগাদ হয়েছে","ok");
-      }catch(e){console.warn("delete approved donation:",e&&e.message);toast("মোছা যায়নি","er")}
+      }catch(e){console.warn("delete approved donation:",e&&e.message);toast("মোছা যায়নি","er");s.q("#ad_del").disabled=false;s.q("#ad_edit").disabled=false;}
     };
   }
   function editApprovedDonation(id){
@@ -5392,24 +5424,40 @@ function initPage() {
          Website — দুই জায়গার তালিকা/পরিসংখ্যান একসাথে realtime-এ আপডেট
          করে — কোনো page reload/full reload/loading লাগে না। */
 
+  /** একই entity-র একসাথে একাধিক delete request আটকাতে (duplicate click / bulk-এ
+      এক entity দ্বিগুণ) — সম্পূর্ণ হয়ে গেলেই key ছাড়া হয় (idempotent)। */
+  const deletingEntities=new Set<string>();
+
   /** একজন ডোনারের একটি entity (অ্যাকাউন্ট বা ডোনার আইডি) — সার্ভার দিয়ে। */
   async function deleteOneEntity(d,scope){
+    const donorId=String(d&&d.id||"").trim();
+    const key=`${scope}|${donorId}`;
+    if(deletingEntities.has(key))return {ok:false,skipped:true};   /* ইতিমধ্যে চলছে — দ্বিতীয় request নয় */
+    deletingEntities.add(key);
+    try{
     const result=await serverDeleteEntity({
       scope,
-      donorId:String(d&&d.id||"").trim(),
+      donorId,
       uid:String((d&&(d.ownerUid||d.uid))||"").trim(),
       name:String((d&&d.name)||"").trim()});
     if(result.ok){
       await logAudit(scope==="account"?"অ্যাকাউন্ট মুছে ফেলা":"ডোনার আইডি মুছে ফেলা",
-        `${result.name||result.donorId||result.uid} · ${result.donorId||"—"}${result.uid?" · "+result.uid:""}`,"donor");
+        `${result.name||result.donorId||result.uid} · ${result.donorId||"—"}${result.uid?` · ${result.uid}`:""}`,"donor");
       /* লগইন অ্যাকাউন্ট কোনো কারণে মোছা না হলে (secret কনফিগার নেই ইত্যাদি)
          সার্ভারের স্পষ্ট warning-টি লুকানো হয় না — অ্যাডমিন জানতে পারবেন। */
       (result.warnings||[]).forEach(w=>toast(w,""));
+      /* রিফ্রেশ ছাড়াই সাথে সাথে UI-তে না দেখাতে local source থেকেও সরাই —
+         live listener-ই একই সাথে সব প্যানেল আপডেট করে। */
+      if(scope==="donor"){
+        donorIdRows=donorIdRows.filter(x=>String(x&&(x.id||x.donorId)||"").trim()!==donorId);
+        DB.donors=DB.donors.filter(x=>String(x&&x.id||"").trim()!==donorId);
+      }
       return result;
     }
     /* কিছু মোছেনি/অনুমতি নেই — স্পষ্ট কারণ দেখানো হয় (কোনো সাফল্য নয়) */
     toast(`${result.name||result.donorId||result.uid||"ডোনার"}: ${deletionMessage(result)}`,"er");
     return result;
+    }finally{deletingEntities.delete(key);}
   }
 
   async function bulkDeleteEntities(scope,ids){

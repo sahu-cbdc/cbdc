@@ -20,8 +20,9 @@
 
 import { handleAdminEntityDelete, type ServerDeleteResult } from "./deleteApi.ts";
 import { handleAdminDedupe } from "./dedupeApi.ts";
+import { handleDonorApply } from "./applyApi.ts";
 import { handleResolveLegacy } from "./resolveLegacy.ts";
-import { makeHttpIo, makePrivilegedIo } from "./httpIo.ts";
+import { makeApplyIo, makeHttpIo, makePrivilegedIo } from "./httpIo.ts";
 
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -41,8 +42,9 @@ export default {
     const isDelete = path.endsWith("/api/admin/delete");
     const isDedupe = path.endsWith("/api/admin/dedupe");
     const isResolve = path.endsWith("/api/account/resolve-legacy");
+    const isApply = path.endsWith("/api/donor/apply");
 
-    if (!isDelete && !isDedupe && !isResolve) {
+    if (!isDelete && !isDedupe && !isResolve && !isApply) {
       /* static assets (Vite build) — SPA fallback সহ */
       return env.ASSETS && typeof env.ASSETS.fetch === "function"
         ? env.ASSETS.fetch(request)
@@ -75,6 +77,12 @@ export default {
           { apply: body.apply === true, idToken },
           makeHttpIo(env, idToken),
         );
+        return jsonResponse(result);
+      }
+      if (isApply) {
+        /* Approval-settings OFF → সরাসরি process (donor/bloodGroup/donation) —
+           privileged (service-account) IO দিয়ে; শুধু নিজের UID-ই process হয়। */
+        const result = await handleDonorApply({ ...body, idToken }, makeApplyIo(env, idToken));
         return jsonResponse(result);
       }
       /* legacy-merge — সাধারণ (লগইন করা) ব্যবহারকারীর নিজের পুরোনো রেকর্ড */
