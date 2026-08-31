@@ -66,6 +66,26 @@ test("Donor management & Donor ID screens have a working search box", () => {
   assert.match(admin, /d\.name,d\.id,d\.donorId,d\.phone,d\.area,d\.group,username/);
 });
 
+test("Donor ID management shows ALL donor IDs (unfiltered, not just approved)", () => {
+  /* unfiltered RTDB watch — store-এর donors শুধু approved রাখে, তাই ডোনার আইডি
+     স্ক্রিনের জন্য আলাদা সরাসরি (public-read) listener */
+  assert.match(admin, /let stopDonorIdWatch=\(\)=>\{\}, donorIdRows=\[\], donorIdRowsReady=false;/);
+  assert.match(admin, /function watchDonorIds\(\)\{/);
+  assert.match(admin, /stopDonorIdWatch=watchList\(NODES\.donors,rows=>\{/);
+  /* শুধু ডোনার আইডি স্ক্রিনে ব্যবহৃত; store/অন্য স্ক্রিন স্পর্শ করে না */
+  assert.doesNotMatch(admin.slice(admin.indexOf("function watchDonorIds"), admin.indexOf("function watchAccounts")), /status/);
+  /* list rendering uses the raw rows */
+  assert.match(admin, /const base=all&&donorIdRowsReady\?donorIdRows:DB\.donors;/);
+  /* screen waits for the raw list before showing anything (no false empty) */
+  assert.match(admin, /if\(!dataReady\("donors"\)\|\|!donorIdRowsReady\)\{el\.innerHTML=skelRows\(4\);return\}/);
+  /* delete + profile + boot wiring use the same raw list */
+  assert.match(admin, /\(isAccount\?DB\.donors:\(donorIdRowsReady\?donorIdRows:DB\.donors\)\)/);
+  assert.match(admin, /\|\|donorIdRows\.find\(x=>x\.id===\(ARG\|\|dvId\)\)/);
+  assert.match(admin, /watchDonorIds\(\);watchReports\(\);/);
+  /* people-screen count reflects the full list */
+  assert.match(admin, /bn\(donorIdRowsReady\?donorIdRows\.length:DB\.donors\.length\)/);
+});
+
 test("Donor management keeps select-all, delete-selected and duplicate check", () => {
   const manage = admin.slice(admin.indexOf("function donorManageHtml"), admin.indexOf("/* ══════════ ডুপ্লিকেট যাচাই"));
   assert.match(manage, /id="tall"/);

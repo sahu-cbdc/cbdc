@@ -2950,6 +2950,25 @@ function initPage() {
     if(!accountsChanged&&!teamChanged)return;
     try{paintNav();if(!document.querySelector(".sheet")&&["team","access"].includes(SUB))go(CUR,SUB,false,ARG)}catch(e){}
   }
+  /* ── ডোনার আইডি ব্যবস্থাপনার জন্য সম্পূর্ণ (unfiltered) ডোনার তালিকা ──
+     Shared store-এর `donors` তালিকা শুধু অনুমোদিত (status==="approved") ডোনার
+     রাখে — পাবলিক ওয়েবসাইটের জন্য সঠিক, কিন্তু "ডোনার আইডি ব্যবস্থাপনায়"
+     RTDB-তে থাকা **সব** ডোনার আইডি দেখাতে হবে (অনুমোদিত / স্থগিত / অপেক্ষমাণ /
+     বাতিল — সব)। `donors` node public-read, তাই এখানে সরাসরি unfiltered
+     listener বসানো হয়; শুধু ডোনার আইডি স্ক্রিনে ব্যবহৃত হয়। */
+  let stopDonorIdWatch=()=>{}, donorIdRows=[], donorIdRowsReady=false;
+  function watchDonorIds(){
+    stopDonorIdWatch();
+    stopDonorIdWatch=watchList(NODES.donors,rows=>{
+      donorIdRows=rows;
+      donorIdRowsReady=true;
+      /* এই স্ক্রিন খোলা থাকলে সাথে সাথে তালিকা হালনাগাদ হয় (রিলোড নয়) */
+      try{
+        if(SUB==="donorid")renderSub("donorid");
+        if(CUR==="people"&&!SUB)paintTop();
+      }catch(e){ console.warn("donorid refresh:",e&&e.message); }
+    });
+  }
   function watchAccounts(){
     stopAccountWatch();
     const u=watchList(NODES.users,rows=>{markDataReady("users");
@@ -4456,7 +4475,7 @@ function initPage() {
         <button class="g" data-sub="donors"><b>${bn(DB.donors.length)}</b><span>রক্তদাতা</span></button>
         <button class="r" data-sub="donors"><b>${bn(ready)}</b><span>প্রস্তুত</span></button>
         <button class="a" data-sub="users"><b>${bn(DB.reports.filter(r=>r.status!=="resolved").length)}</b><span>অভিযোগ</span></button>
-        <button class="b" data-sub="donorid"><b>${bn(DB.donors.length)}</b><span>ডোনার আইডি</span></button>
+        <button class="b" data-sub="donorid"><b>${bn(donorIdRowsReady?donorIdRows.length:DB.donors.length)}</b><span>ডোনার আইডি</span></button>
       </div>`
     +sect("",[
         row("donor.view","donors","drop","রক্তদাতা তালিকা","খুঁজুন, সম্পাদনা করুন, স্থগিত করুন",bn(DB.donors.length)),
@@ -4464,7 +4483,7 @@ function initPage() {
         row("user.view","users","users","ব্যবহারকারী ও অভিযোগ","অ্যাকাউন্ট ও রিপোর্ট",DB.reports.filter(r=>r.status!=="resolved").length?bn(DB.reports.filter(r=>r.status!=="resolved").length):""),
         row("user.view","inbox","mail","বার্তা","ওয়েবসাইটের যোগাযোগ ফর্ম",unread()?`<span class="tag r">${bn(unread())} নতুন</span>`:""),
         row("team.view","team","users","ডোনার ব্যবস্থাপনা","শুধু Website/Firebase অ্যাকাউন্ট-ওয়ালা ডোনার",bn(accountDonors().length)),
-        row("team.view","donorid","card","ডোনার আইডি ব্যবস্থাপনা","সব ডোনার আইডি — অ্যাকাউন্ট না থাকলেও",bn(DB.donors.length))])
+        row("team.view","donorid","card","ডোনার আইডি ব্যবস্থাপনা","RTDB-তে যত ডোনার আইডি আছে সব — অ্যাকাউন্ট না থাকলেও",bn(donorIdRowsReady?donorIdRows.length:DB.donors.length))])
     +`<div class="sec-t">শীর্ষ রক্তদাতা</div>
       <div class="card pad0">${DB.donors.slice().sort((a,b)=>b.donations-a.donations).slice(0,5)
         .map((d,i)=>`<button class="prow" data-dn="${d.id}">
@@ -5031,7 +5050,11 @@ function initPage() {
   /** তালিকার row — username/photo অ্যাকাউন্ট থেকে (থাকলে), না থাকলে শুধু donor। */
   function donorManageRows(all){
     const byUid=new Map(accountUsers.map(u=>[String(u.uid||u.id),u]));
-    return (all?DB.donors:accountDonors()).map(d=>{
+    /* all=true (ডোনার আইডি স্ক্রিন) → RTDB-র সব ডোনার রেকর্ড (unfiltered —
+       অনুমোদিত/স্থগিত/অপেক্ষমাণ/বাতিল সব আইডি দেখানো হয়);
+       all=false (ডোনার ব্যবস্থাপনা) → শুধু অ্যাকাউন্ট-ওয়ালা ডোনার। */
+    const base=all&&donorIdRowsReady?donorIdRows:DB.donors;
+    return base.map(d=>{
       const prof=d.ownerUid?byUid.get(String(d.ownerUid)):null;
       return {d,username:String((prof&&prof.username)||""),photo:String(d.photo||(prof&&prof.photo)||"")};
     });
@@ -5185,10 +5208,11 @@ function initPage() {
      একই ব্যক্তির (সার্ভারে যাচাইকৃত) লগইন অ্যাকাউন্ট (Firebase Authentication)
      যুক্ত থাকলে সেটিও মোছে। আলাদা/অমিল অ্যাকাউন্ট কখনোই স্পর্শ হয় না। */
   SUBP.donorid=el=>{
-    if(!dataReady("donors")){el.innerHTML=skelRows(4);return}
+    /* unfiltered তালিকা (donorIdRows) আসা পর্যন্ত স্কেলিটন — ভুল "কোনো আইডি নেই" নয় */
+    if(!dataReady("donors")||!donorIdRowsReady){el.innerHTML=skelRows(4);return}
     const rows=filterDonorManage(donorManageRows(true),dmQ);
     el.innerHTML=donorManageHtml(rows,donorIdSel,
-      dmQ?"কোনো ডোনার আইডি মেলেনি":"কোনো ডোনার আইডি নেই","সব ডোনার আইডি এখানে দেখা যাবেন — অ্যাকাউন্ট ছাড়াও");
+      dmQ?"কোনো ডোনার আইডি মেলেনি":"কোনো ডোনার আইডি নেই","RTDB-তে যত ডোনার আইডি আছে সব এখানে দেখা যাবে — অ্যাকাউন্ট না থাকলেও");
     wireDonorManage(el,rows,donorIdSel,"donor");
   };
 
@@ -5235,7 +5259,9 @@ function initPage() {
   async function bulkDeleteEntities(scope,ids){
     const isAccount=scope==="account";
     const entity=isAccount?"অ্যাকাউন্ট":"ডোনার আইডি";
-    const list=DB.donors.filter(d=>ids.includes(String(d.id)));
+    /* ডোনার আইডি scope → unfiltered তালিকা থেকে (সব আইডি যাতে মুছনো যায়) */
+    const list=(isAccount?DB.donors:(donorIdRowsReady?donorIdRows:DB.donors))
+      .filter(d=>ids.includes(String(d.id)));
     if(!list.length)return toast("কোনো ডোনার নির্বাচিত হয়নি","er");
     const names=list.slice(0,3).map(d=>d.name).join(", ")+(list.length>3?" সহ "+bn(list.length)+" জন":"");
     if(!await confirmS({title:list.length>1?`নির্বাচিত ${entity}গুলো মুছবেন?`:`${entity} মুছবেন?`,
@@ -5287,7 +5313,10 @@ function initPage() {
   function openDonor(id){dvId=id;dvTab="over";go(CUR,"donor",true,id)}
   
   SUBP.donor=el=>{
-    const d=DB.donors.find(x=>x.id===(ARG||dvId));
+    /* ডোনার আইডি স্ক্রিন থেকে অ-অনুমোদিত ডোনারও প্রোফাইলে খোলা যায় —
+       unfiltered তালিকা (donorIdRows) fallback হিসেবে */
+    const d=DB.donors.find(x=>x.id===(ARG||dvId))
+      ||donorIdRows.find(x=>x.id===(ARG||dvId));
     if(!d)return el.innerHTML=`<div class="card">${emptyBox("search","রক্তদাতা পাওয়া যায়নি")}</div>`;
     dvId=d.id;
     const rest=d.last?Math.max(0,DB.rules.interval-dayDiff(d.last)):0;
@@ -6815,7 +6844,7 @@ function initPage() {
           try{ await saveMe(); }catch(e){ console.warn("me save:",e&&e.message); }
           /* live sync — নিজের অ্যাকাউন্ট (users/{uid}), টিম (admins),
              অডিট লগ ও বার্তা: সব RTDB থেকে, সব প্যানেলে একই তথ্য */
-          watchMe(user.uid);watchTeam();watchAudit();watchMessages();watchAccounts();watchReports();
+          watchMe(user.uid);watchTeam();watchAudit();watchMessages();watchAccounts();watchDonorIds();watchReports();
           setTimeout(backfillApprovedDonations,1200);
         });
       }catch(e){ console.warn("panel auth:", e&&e.message); proceed(); }
