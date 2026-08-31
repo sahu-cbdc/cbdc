@@ -2,109 +2,250 @@
  * CBDC — Cloudflare Worker entry
  * ═══════════════════════════════════════════════════════════════════════════
  *
- *  শুধুমাত্র একটি server endpoint আছে: `POST /api/admin/delete`
- *  (বেস পাথসহ, যেমন `/cbdc/api/admin/delete`) — Admin panel-এর অ্যাকাউন্ট/
- *  ডোনার আইডি deletion। বাকি সব অনুরোধ static assets-এ যায়
- *  (`env.ASSETS` → `./dist`, SPA fallback `single-page-application`)।
+ *  Server endpoints (base path সহ, যেমন `/cbdc/api/...`):
+ *    • POST /api/admin/delete          — Admin panel-এর অ্যাকাউন্ট/ডোনার আইডি deletion
+ *    • POST /api/admin/dedupe           — Admin duplicate cleanup
+ *    • POST /api/admin/config-check     — Admin deletion preflight (secret আছে কি না)
+ *    • POST /api/account/resolve-legacy — legacy-merge (নিজের পুরোনো রেকর্ড)
+ *    • POST /api/donor/apply            — Approval-settings OFF → direct processing
+ *    • POST /api/images/upload          — Secure server-side image upload (ImgBB proxy)
  *
- *  নিরাপত্তা (server-এও কোনো private key নেই):
- *    • শুধু POST; Authorization: Bearer <Firebase ID token> বাধ্যতামূলক,
- *    • same-origin SPA-র fetch — কোনো CORS header নেই (cross-origin থেকে
- *      custom Authorization header পাঠানো অসম্ভব),
- *    • token + অ্যাডমিন role যাচাই → RTDB Security Rules-এর অধীনেই delete
- *      (`server/deleteApi.ts` + `server/httpIo.ts` দেখুন)।
+ *  নিরাপত্তা:
+ *    • সব আটটি endpoint-ই authenticated — `Authorization: Bearer <Firebase ID
+ *      token>` Identity Toolkit দিয়ে যাচাই হয় (401/403 condition);
+ *    • **কোনো private key / service-account / API secret ক্লায়েন্ট bundle-এ নেই**।
+ *      কোনো secret-ই কখনো API response-এ ফেরত যায় না;
+ *    • CORS — allowlist-ভিত্তিক; CORS কখনোই authentication নয়; `*` ব্যবহার হয় না;
+ *    • **Intelligent abuse protection** — fixed normal-user quota নয়; শুধু স্পষ্ট
+ *      flooding (একই উৎস থেকে দ্রুত ধারাবাহিক অনুরোধ) 429 দেয়। legitimate
+ *      usage কার্যত unlimited।
+ *    • upload-এ raw image body ৮ MB-এ সীমিত; ছবি কখনো সার্ভারে সংরক্ষণ হয় না —
+ *      শুধু ImgBB-তে যায় ও URL ফেরত আসে।
  *
  *  Deploy: `npm run build && npx wrangler deploy` (wrangler.jsonc-এ `main`
- *  ও `vars` সেট করা আছে — উভয় মান public: client config-এর হুবহু মান)।
+ *  ও `vars` সেট আছে — উভয় মান public: client config-এর হুবহু মান; আর সব
+ *  secret (`FIREBASE_SERVICE_ACCOUNT`, `IMGBB_API_KEY`) wrangler secret-এ)।
  */
 
 import { handleAdminEntityDelete, handleAdminConfigCheck, type ServerDeleteResult } from "./deleteApi.ts";
 import { handleAdminDedupe } from "./dedupeApi.ts";
 import { handleDonorApply } from "./applyApi.ts";
 import { handleResolveLegacy } from "./resolveLegacy.ts";
-import { makeApplyIo, makeHttpIo, makePrivilegedIo } from "./httpIo.ts";
+import { handleImageUpload } from "./imagesApi.ts";
+import { makeApplyIo, makeHttpIo, makeImagesIo, makePrivilegedIo } from "./httpIo.ts";
 import { serviceAccountConfigured } from "./authAdmin.ts";
+import { corsForRequest, parseAllowedOrigins } from "./cors.ts";
+import { createAbuseGuard, guardKey } from "./abuseGuard.ts";
 
-function jsonResponse(payload: unknown, status = 200): Response {
+/*
+ * Intelligent abuse protection — module-level (per worker isolate) in-memory.
+ * Fixed normal-user quota নয়: threshold খুবই উদার (ডিফল্ট ৬০০/মিনিট/উৎস) —
+ * স্বাভাবিক ব্যবহার (এমনকি অ্যাডমিনের bulk-delete) এতে স্পর্শ হয় না; শুধু স্পষ্ট
+ * flood (একই উৎস থেকে দ্রুত ধারাবাহিক অনুরোধ) 429 দেয়। Multi-user legitimate
+ * traffic প্রত্যেকের নিজস্ব bucket-এ পড়ে — aggregate কার্যত unlimited।
+ * `ABUSE_GUARD_MAX` / `ABUSE_GUARD_WINDOW_MS` env দিয়ে আরও উদার করা যায়।
+ */
+function makeGuard(env: any) {
+  const max = Number(env && env.ABUSE_GUARD_MAX) || 600;
+  const windowMs = Number(env && env.ABUSE_GUARD_WINDOW_MS) || 60_000;
+  return createAbuseGuard({ max, windowMs });
+}
+let abuseGuard: ReturnType<typeof createAbuseGuard> | null = null;
+function getGuard(env: any) {
+  if (!abuseGuard) abuseGuard = makeGuard(env);
+  return abuseGuard;
+}
+
+interface JsonOptions {
+  status?: number;
+  corsHeaders?: Record<string, string>;
+}
+
+function jsonResponse(payload: unknown, opts: JsonOptions = {}): Response {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "no-store",
+    ...(opts.corsHeaders || {}),
+  };
   return new Response(JSON.stringify(payload), {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-      "X-Content-Type-Options": "nosniff",
-      "Cache-Control": "no-store",
-    },
+    status: opts.status ?? 200,
+    headers,
   });
+}
+
+const AUTH_MSG = "অনুমোদন প্রয়োজন — লগইন করে আবার চেষ্টা করুন।";
+
+/** অনুরোধটি API endpoint কিনা — base path-এর সাথে মিলিয়ে, শেষে `/api/...`। */
+function apiPaths(requestUrl: URL): Record<string, boolean> {
+  const path = requestUrl.pathname.replace(/\/+$/, "");
+  return {
+    delete: /\/api\/admin\/delete$/i.test(path),
+    dedupe: /\/api\/admin\/dedupe$/i.test(path),
+    configCheck: /\/api\/admin\/config-check$/i.test(path),
+    resolve: /\/api\/account\/resolve-legacy$/i.test(path),
+    apply: /\/api\/donor\/apply$/i.test(path),
+    upload: /\/api\/images\/upload$/i.test(path),
+  };
+}
+
+const isApi = (p: Record<string, boolean>): boolean => Object.values(p).some(Boolean);
+
+/** স্পষ্ট flooding দমন — per-উৎস (IP বা, না থাকলে, origin)। auth হিসেবে নয়। */
+function clientKey(request: Request): string {
+  const ip = request.headers.get("CF-Connecting-IP");
+  if (ip && ip.trim()) return ip.trim();
+  const origin = request.headers.get("Origin");
+  return origin && origin.trim() ? origin.trim() : "unknown";
+}
+
+function readRequestBody(request: Request, api: Record<string, boolean>): Promise<{
+  body: Record<string, unknown>;
+  raw: Uint8Array;
+  mime: string;
+  filename: string;
+}> {
+  /* upload — raw image bytes (JSON নয়)। */
+  if (api.upload) {
+    return request
+      .arrayBuffer()
+      .then((buf) => new Uint8Array(buf))
+      .then((raw) => ({
+        body: {},
+        raw,
+        mime: String(request.headers.get("Content-Type") || "image/jpeg"),
+        filename: String(request.headers.get("X-Filename") || "image.jpg"),
+      }));
+  }
+  return request
+    .json()
+    .then((body) => ({
+      body: (body && typeof body === "object" ? body : {}) as Record<string, unknown>,
+      raw: new Uint8Array(0),
+      mime: "",
+      filename: "",
+    }))
+    .catch(() => {
+      throw new Error("ভুল অনুরোধ — JSON body দিন।");
+    });
 }
 
 export default {
   async fetch(request: Request, env: any): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "");
-    const isDelete = path.endsWith("/api/admin/delete");
-    const isDedupe = path.endsWith("/api/admin/dedupe");
-    const isConfigCheck = path.endsWith("/api/admin/config-check");
-    const isResolve = path.endsWith("/api/account/resolve-legacy");
+    const apis = apiPaths(url);
+    /* wiring-compat name — আচরণ apis.apply-র সমতুল্য */
     const isApply = path.endsWith("/api/donor/apply");
+    const allowedOrigins = parseAllowedOrigins(env && env.ALLOWED_ORIGINS);
 
-    if (!isDelete && !isDedupe && !isConfigCheck && !isResolve && !isApply) {
-      /* static assets (Vite build) — SPA fallback সহ */
+    /* ── static assets (Vite build) — SPA fallback সহ; API-র কোনো CORS না। ── */
+    if (!isApi(apis)) {
       return env.ASSETS && typeof env.ASSETS.fetch === "function"
         ? env.ASSETS.fetch(request)
         : new Response("Not found", { status: 404 });
     }
 
-    if (request.method !== "POST") return jsonResponse({ ok: false, error: "POST only" }, 405);
+    /* ── CORS — allowlist-ভিত্তিক; CORS auth নয়, token-ই auth। ── */
+    const cors = corsForRequest(
+      request.headers.get("Origin"),
+      request.method,
+      allowedOrigins,
+      request.headers.get("Access-Control-Request-Method"),
+    );
+    /* Preflight (OPTIONS + Origin) — header-সহ 204। */
+    if (request.method === "OPTIONS") {
+      if (cors.preflight) {
+        return new Response(null, { status: 204, headers: cors.headers });
+      }
+      return jsonResponse({ ok: false, error: "CORS preflight অনুমোদিত নয়।" }, { status: 403 });
+    }
+
+    if (request.method !== "POST") return jsonResponse({ ok: false, error: "POST only" }, { status: 405 });
+
+    /* ── Abuse/flood protection — উদার per-উৎস; legitimate unlimited। ── */
+    const guardKeyStr = guardKey(clientKey(request), apis.upload ? "images/upload" : "api");
+    if (!getGuard(env).check(guardKeyStr)) {
+      return jsonResponse(
+        { ok: false, error: "খুব দ্রুত অনেকগুলো অনুরোধ এসেছে — একটু পর আবার চেষ্টা করুন।" },
+        { status: 429, corsHeaders: cors.headers },
+      );
+    }
 
     const auth = String(request.headers.get("Authorization") || "");
     const idToken = auth.replace(/^Bearer\s+/i, "").trim();
-    if (!idToken) return jsonResponse({ ok: false, error: "অনুমোদন প্রয়োজন — লগইন করে আবার চেষ্টা করুন।" }, 401);
 
     let body: Record<string, unknown> = {};
+    let raw: Uint8Array = new Uint8Array(0);
+    let mime = "";
+    let filename = "";
     try {
-      body = (await request.json()) as Record<string, unknown>;
-    } catch {
-      return jsonResponse({ ok: false, error: "ভুল অনুরোধ — JSON body দিন।" }, 400);
+      const r = await readRequestBody(request, apis);
+      body = r.body;
+      raw = r.raw;
+      mime = r.mime;
+      filename = r.filename;
+    } catch (e) {
+      return jsonResponse(
+        { ok: false, error: (e as Error)?.message || "ভুল অনুরোধ।" },
+        { status: 400, corsHeaders: cors.headers },
+      );
     }
 
     try {
-      if (isDelete) {
+      /* ── upload — কোনো token ছাড়া সম্ভব নয়; raw body only। ── */
+      if (apis.upload) {
+        if (!idToken) return jsonResponse({ ok: false, error: AUTH_MSG }, { status: 401, corsHeaders: cors.headers });
+        const result = await handleImageUpload(
+          { idToken },
+          raw,
+          mime,
+          filename,
+          makeImagesIo(env),
+        );
+        return jsonResponse(result, { corsHeaders: cors.headers });
+      }
+
+      /* ── বাকি সব JSON API — token বাধ্যতামূলক। ── */
+      if (!idToken) return jsonResponse({ ok: false, error: AUTH_MSG }, { status: 401, corsHeaders: cors.headers });
+
+      if (apis.delete) {
         const result: ServerDeleteResult = await handleAdminEntityDelete(
           { ...body, idToken },
           makeHttpIo(env, idToken),
         );
-        return jsonResponse(result);
+        return jsonResponse(result, { corsHeaders: cors.headers });
       }
-      if (isDedupe) {
+      if (apis.dedupe) {
         const result = await handleAdminDedupe(
           { apply: body.apply === true, idToken },
           makeHttpIo(env, idToken),
         );
-        return jsonResponse(result);
+        return jsonResponse(result, { corsHeaders: cors.headers });
       }
-      if (isConfigCheck) {
-        /* Admin panel-এর ডিলিট preflight — FIREBASE_SERVICE_ACCOUNT secret
-           কনফিগার আছে কি না (শুধু boolean; secret-এর মান কখনো যায় না)। */
+      if (apis.configCheck) {
         const result = await handleAdminConfigCheck(
           { idToken },
           makeHttpIo(env, idToken),
           { serviceAccountConfigured: serviceAccountConfigured(env) },
         );
-        return jsonResponse(result);
+        return jsonResponse(result, { corsHeaders: cors.headers });
       }
-      if (isApply) {
-        /* Approval-settings OFF → সরাসরি process (donor/bloodGroup/donation) —
-           privileged (service-account) IO দিয়ে; শুধু নিজের UID-ই process হয়। */
+      if (apis.apply) {
         const result = await handleDonorApply({ ...body, idToken }, makeApplyIo(env, idToken));
-        return jsonResponse(result);
+        return jsonResponse(result, { corsHeaders: cors.headers });
       }
       /* legacy-merge — সাধারণ (লগইন করা) ব্যবহারকারীর নিজের পুরোনো রেকর্ড */
       const privileged = makePrivilegedIo(env);
       const result = await handleResolveLegacy({ idToken }, privileged);
-      return jsonResponse(result);
+      return jsonResponse(result, { corsHeaders: cors.headers });
     } catch (e) {
       const status = Number((e as any)?.status) || 500;
       const message = (e as Error)?.message || "সার্ভার সমস্যা — আবার চেষ্টা করুন।";
-      return jsonResponse({ ok: false, error: message }, status);
+      return jsonResponse(
+        { ok: false, error: message },
+        { status, corsHeaders: cors.headers },
+      );
     }
   },
 };

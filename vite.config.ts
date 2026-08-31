@@ -7,7 +7,8 @@ import { handleAdminEntityDelete, handleAdminConfigCheck } from "./server/delete
 import { handleAdminDedupe } from "./server/dedupeApi";
 import { handleDonorApply } from "./server/applyApi";
 import { handleResolveLegacy } from "./server/resolveLegacy";
-import { makeApplyIo, makeHttpIo, makePrivilegedIo } from "./server/httpIo";
+import { handleImageUpload } from "./server/imagesApi";
+import { makeApplyIo, makeHttpIo, makeImagesIo, makePrivilegedIo } from "./server/httpIo";
 import { serviceAccountConfigured } from "./server/authAdmin";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -177,7 +178,8 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
         const isConfigCheckApi = apiPath.endsWith("/api/admin/config-check");
         const isResolveApi = apiPath.endsWith("/api/account/resolve-legacy");
         const isApplyApi = apiPath.endsWith("/api/donor/apply");
-        if (!isDeleteApi && !isDedupeApi && !isConfigCheckApi && !isResolveApi && !isApplyApi) return next();
+        const isUploadApi = apiPath.endsWith("/api/images/upload");
+        if (!isDeleteApi && !isDedupeApi && !isConfigCheckApi && !isResolveApi && !isApplyApi && !isUploadApi) return next();
         /* same-origin যাচাই — cross-site থেকে token-সহ delete বন্ধ */
         const host = String(req.headers.host || "").split(":")[0];
         const origin = String(req.headers.origin || req.headers.referer || "");
@@ -200,26 +202,41 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
           send(res, 401, { ok: false, error: "অনুমোদন প্রয়োজন — লগইন করে আবার চেষ্টা করুন।" });
           return;
         }
-        let body = "";
+        /* upload — raw binary body (JSON নয়); বাকি — buffered JSON। */
+        const chunks: Buffer[] = [];
+        let bodySize = 0;
         let oversized = false;
         req.on("data", (chunk: Buffer) => {
-          body += chunk;
-          if (body.length > 64 * 1024) oversized = true;
+          chunks.push(chunk);
+          bodySize += chunk.length;
+          const limit = isUploadApi ? 8 * 1024 * 1024 : 64 * 1024;
+          if (bodySize > limit) oversized = true;
         });
         req.on("end", () => {
           void (async () => {
             try {
-              if (oversized) throw new Error("payload too large");
-              const payload = JSON.parse(body || "{}");
-              /* 🔐 Firebase Authentication (লগইন) ডিলিট ও legacy-merge-এর
-                 server-side secret — শুধু dev-এ `.env` (loadEnv) থেকে;
-                 client bundle-এ কখনো যায় না। */
+              if (oversized) throw new Error(isUploadApi ? "ছবির আকার ৮ MB-র বেশি — ছোট ছবি দিন।" : "payload too large");
+              const raw = Buffer.concat(chunks);
+              const payload = isUploadApi ? {} : (JSON.parse(raw.toString("utf8") || "{}") as Record<string, unknown>);
+              /* 🔐 Firebase Authentication (লগইন) ডিলিট, legacy-merge ও ImgBB
+                 upload-এর server-side secret — শুধু dev-এ `.env` (loadEnv)
+                 থেকে; client bundle-এ কখনো যায় না। */
               const serverEnv = {
                 FIREBASE_SERVICE_ACCOUNT: devEnv.FIREBASE_SERVICE_ACCOUNT || "",
                 FIREBASE_PROJECT_ID: devEnv.FIREBASE_PROJECT_ID || "",
+                /* ImgBB API key — server-ই ব্যবহার করে; client-এ কখনো যায় না। */
+                IMGBB_API_KEY: devEnv.IMGBB_API_KEY || "",
               };
               let result: unknown;
-              if (isConfigCheckApi) {
+              if (isUploadApi) {
+                result = await handleImageUpload(
+                  { idToken },
+                  new Uint8Array(raw),
+                  String(req.headers["content-type"] || "image/jpeg"),
+                  String(req.headers["x-filename"] || "image.jpg"),
+                  makeImagesIo(serverEnv),
+                );
+              } else if (isConfigCheckApi) {
                 /* ডিলিট preflight — secret কনফিগার আছে কি না (মান নয়, শুধু boolean) */
                 result = await handleAdminConfigCheck(
                   { idToken },
@@ -287,6 +304,7 @@ export default defineConfig(({ mode }) => {
   const devServerEnv: Record<string, string> = {
     FIREBASE_SERVICE_ACCOUNT: env.FIREBASE_SERVICE_ACCOUNT || process.env.FIREBASE_SERVICE_ACCOUNT || "",
     FIREBASE_PROJECT_ID: env.FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || "",
+    IMGBB_API_KEY: env.IMGBB_API_KEY || process.env.IMGBB_API_KEY || "",
   };
   return {
     plugins: [react(), cbdcSiteConfig(), cbdcDeleteApi(devServerEnv)],

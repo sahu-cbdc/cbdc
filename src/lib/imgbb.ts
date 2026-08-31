@@ -1,67 +1,47 @@
 /**
- * CBDC — ImgBB image hosting helper
+ * CBDC — ImgBB image hosting helper (secure, server-side)
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * ছবি Firebase Storage-এ নয়, **ImgBB API**-তে সংরক্ষণ করা হয়:
- *   1. ImgBB API key দিয়ে ছবি upload করা হয়,
- *   2. ImgBB থেকে পাওয়া image URL (link) সংগ্রহ করা হয়,
- *   3. সেই link + metadata শুধু ডাটাবেসে (Realtime Database) সেভ হয়,
- *   4. UI-তে ওই link দিয়ে সরাসরি ছবি দেখানো হয়।
+ *  ছবি Firebase Storage-এ নয়, **ImgBB API**-তে সংরক্ষণ করা হয়:
+ *   ১. ব্রাউজার শুধু ইনপুট image-কে compress/resize করে,
+ *   ২. তারপর **secure server endpoint**-এ (`POST <base>api/images/upload`)
+ *      authenticated অনুরোধ পাঠায়,
+ *   ৩. সার্ভার (Cloudflare Worker / dev middleware) তার **server-side ImgBB
+ *      key** দিয়ে ImgBB-তে আপলোড করে,
+ *   ৪. পাওয়া URL + metadata ক্লায়েন্ট পায় এবং সেটি ডাটাবেসে সেভ হয়।
  *
- * API key-এর উৎস (priority ক্রমে):
- *   - localStorage cache (`cbdc.imgbb.key`)
- *   - Realtime Database `settings/imgbb` node (Admin Settings থেকে save হয়)
- *   - build-time env `VITE_IMGBB_API_KEY` (fallback)
+ *  ⚠️ **নিরাপত্তা**: ImgBB API key আর **কখনোই** browser-এ আসে না —
+ *    • build-time env-var ও localStorage cache-ভিত্তিক client-key পড়া সরানো হয়েছে;
+ *    • Realtime Database `settings/imgbb` node admin-only read (rules) — তাই
+ *      non-admin ব্যবহারকারী key পড়তে পারে না;
+ *    • key-এর একমাত্র প্রাপ্তিস্থান server-side (`env.IMGBB_API_KEY` অথবা
+ *      privileged RTDB read)। Client-supplied `opts.key` **ইচ্ছাকৃতভাবে উপেক্ষা** করা হয়।
  */
 
+import { getAuthInstance } from "./firebase";
+import { appBase } from "./router";
 import { getRow, setRow } from "./rtdb";
 
-const UPLOAD_URL = "https://api.imgbb.com/1/upload";
-const KEY_CACHE = "cbdc.imgbb.key";
+const ENDPOINT = "api/images/upload";
+const TIMEOUT_MS = 25000;
 
-/** Build-time ImgBB API key (VITE_IMGBB_API_KEY). */
-function getEnvImgbbKey(): string {
+/** ImgBB API key পড়া — শুধু RTDB `settings/imgbb` (admin), localStorage/env নয়।
+ *  মূলত Admin panel-এর সংযোগ-অবস্থা দেখানোর জন্য; upload-এ ব্যবহৃত হয় না। */
+export async function getImgbbKey(): Promise<string> {
   try {
-    const env = (import.meta as any).env;
-    return String(env?.VITE_IMGBB_API_KEY || "").trim();
+    const row = await getRow("settings", "imgbb");
+    return String(row?.key || "").trim();
   } catch {
+    /* rules non-admin / নেটওয়ার্ক — key জানা যায় না; upload server-এ যায় */
     return "";
   }
 }
 
-/** ImgBB API key পড়া (cache → RTDB settings → env)। */
-export async function getImgbbKey(): Promise<string> {
-  try {
-    const c = localStorage.getItem(KEY_CACHE);
-    if (c) return c;
-  } catch {
-    /* ignore */
-  }
-  try {
-    const row = await getRow("settings", "imgbb");
-    const k = String(row?.key || "").trim();
-    if (k) {
-      try {
-        localStorage.setItem(KEY_CACHE, k);
-      } catch {
-        /* ignore */
-      }
-      return k;
-    }
-  } catch {
-    /* ignore */
-  }
-  return getEnvImgbbKey();
-}
-
-/** ImgBB API key সংরক্ষণ (Admin Settings থেকে; RTDB `settings/imgbb`)। */
+/** ImgBB API key সংরক্ষণ (Admin Settings থেকে; RTDB `settings/imgbb`)।
+ *  localStorage-এ আর key রাখা হয় না — একটি private secret-কে browser storage-এ
+ *  না রেখে কেবল server-এর কাছে রেখে দেওয়া হয়। */
 export async function saveImgbbKey(key: string): Promise<void> {
   const k = String(key || "").trim();
-  try {
-    if (k) localStorage.setItem(KEY_CACHE, k);
-    else localStorage.removeItem(KEY_CACHE);
-  } catch {
-    /* ignore */
-  }
   try {
     await setRow("settings", "imgbb", { key: k, updatedAt: new Date().toISOString() });
   } catch (e) {
@@ -133,35 +113,67 @@ function compressImage(file: File, maxDim = 1600, quality = 0.85): Promise<Blob>
 }
 
 /**
- * একটি image file ImgBB-তে upload করে hosted URL গুলো ফেরত দেয়।
- * এই URL গুলোই ডাটাবেসে (Realtime Database) সংরক্ষণ করা হয় — image file নয়।
+ * একটি image file secure server endpoint-এর মাধ্যমে ImgBB-তে upload করে hosted
+ * URL গুলো ফেরত দেয়। এই URL গুলোই ডাটাবেসে (Realtime Database) সংরক্ষণ করা হয়।
+ *
+ * `opts.key` (client-supplied) ইচ্ছাকৃতভাবে উপেক্ষা করা হয় — ক্লায়েন্ট-পাঠানো
+ * key কখনো বিশ্বাস করা হয় না; server-ই secret key ব্যবহার করে।
  */
 export async function uploadImage(
   file: File,
-  opts: { key?: string } = {}
+  opts: { key?: string } = {},
 ): Promise<ImgbbResult> {
-  const key = opts.key || (await getImgbbKey());
-  if (!key) {
-    throw new Error("ImgBB API কী নেই। অ্যাডমিন সেটিংসে কী দিন।");
-  }
+  /* `opts.key` ইচ্ছাকৃতভাবে অগ্রাহ্য — server-ই key রাখে। */
+  void opts;
 
   const image = await compressImage(file);
-  const fd = new FormData();
-  fd.append("key", key);
-  fd.append("image", image, file.name || "image.jpg");
-
-  const resp = await fetch(UPLOAD_URL, { method: "POST", body: fd });
-  const json = await resp.json().catch(() => ({}));
-  if (!resp.ok || !json?.success) {
-    throw new Error(String(json?.error?.message || "ImgBB আপলোড ব্যর্থ হয়েছে"));
+  const auth = getAuthInstance();
+  const user = (auth?.currentUser ?? null) as any;
+  if (!user || typeof user.getIdToken !== "function") {
+    throw new Error("লগইন করা নেই — ছবি আপলোড করা যায় না।");
+  }
+  let token = "";
+  try {
+    token = await user.getIdToken();
+  } catch (e) {
+    throw new Error(`লগইন সেশন নবায়ন করা যায়নি — ${(e as Error)?.message || "আবার লগইন করুন।"}`);
   }
 
-  const d = json.data || {};
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  let resp: Response | null = null;
+  try {
+    resp = await fetch(`${appBase()}${ENDPOINT}`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": image.type || "image/jpeg",
+        "X-Filename": file.name || "image.jpg",
+      },
+      body: image,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+
+  let data: any = null;
+  try {
+    data = await resp.json();
+  } catch {
+    data = null;
+  }
+  if (!resp || !resp.ok || !data || data.ok === false) {
+    const message = String((data && data.error) || `সার্ভার আপলোড ব্যর্থ (HTTP ${resp ? resp.status : "—"})`);
+    throw new Error(message.includes("abort") ? "আপলোডের সময়সীমা পেরিয়ে গেছে — আবার চেষ্টা করুন।" : message);
+  }
+  const url = String(data.url || "");
+  if (!url) throw new Error("সার্ভার থেকে ছবির লিংক পাওয়া যায়নি।");
   return {
-    url: String(d.url || ""),
-    thumbUrl: String((d.thumb && d.thumb.url) || d.display_url || d.url || ""),
-    deleteUrl: String(d.delete_url || ""),
-    width: Number(d.width) || 0,
-    height: Number(d.height) || 0,
+    url,
+    thumbUrl: String(data.thumbUrl || data.url || url),
+    deleteUrl: String(data.deleteUrl || ""),
+    width: Number(data.width) || 0,
+    height: Number(data.height) || 0,
   };
 }

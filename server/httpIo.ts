@@ -22,6 +22,7 @@
 import { ApiError, type DeleteIo } from "./deleteApi.ts";
 import type { ResolveLegacyIo } from "./resolveLegacy.ts";
 import type { ApplyIo } from "./applyApi.ts";
+import type { ImagesIo } from "./imagesApi.ts";
 import { createAuthDeleter, parseServiceAccount, fetchGoogleAccessToken, type ServiceAccount } from "./authAdmin.ts";
 
 const IDENTITY_TOOLKIT = "https://identitytoolkit.googleapis.com/v1/accounts:lookup";
@@ -41,6 +42,11 @@ type HttpEnv = {
       dev: `.env` → `FIREBASE_SERVICE_ACCOUNT=...`। ক্লায়েন্টে কখনো যায় না। */
   FIREBASE_SERVICE_ACCOUNT?: string;
   FIREBASE_PROJECT_ID?: string;
+  /** 🔐 শুধুই সার্ভারের secret — ImgBB API key। আগে `VITE_IMGBB_API_KEY`
+      হিসেবে client bundle-এ যেত (leak); এখন শুধু server-এ — Worker:
+      `npx wrangler secret put IMGBB_API_KEY`; dev: `.env` → `IMGBB_API_KEY`।
+      না থাকলে `settings/imgbb` (privileged RTDB read) থেকে পড়া হয়। */
+  IMGBB_API_KEY?: string;
 };
 
 async function verifyIdentityLookup(
@@ -192,6 +198,42 @@ const UNCONFIGURED_MSG =
   "সার্ভারে service-account secret (FIREBASE_SERVICE_ACCOUNT) কনফিগার করা নেই — " +
   "পুরোনো রেকর্ড স্বয়ংক্রিয়ভাবে মেলানো সম্ভব নয়। অ্যাডমিন প্যানেলের " +
   "'ডুপ্লিকেট যাচাই ও পরিষ্কার' ব্যবহার করুন।";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Image upload I/O — server-only ImgBB key (ক্লায়েন্টে কখনো যায় না)
+   ═══════════════════════════════════════════════════════════════════════════
+   • caller (ID token) যাচাই public web API key দিয়ে — ImagesIo.verifyToken।
+   • ImgBB key `IMGBB_API_KEY` env-তে থাকলে সেটাই; না থাকলে `settings/imgbb`
+     privileged (service-account) RTDB read দিয়ে — তাই rules-এর admin-only
+     বাধাও server bypass করে, কিন্তু key শুধুই server-এ থাকে। */
+export function makeImagesIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): ImagesIo {
+  const apiKey = String(env.FIREBASE_API_KEY || DEFAULT_FIREBASE_API_KEY).trim();
+  const priv = makePrivilegedIo(env, undefined, fetchImpl);
+  return {
+    verifyToken: (token: string) => verifyIdentityLookup(token, apiKey, fetchImpl),
+    getImgbbKey: async () => {
+      const envKey = String((env as Record<string, unknown>).IMGBB_API_KEY ?? "").trim();
+      if (envKey) return envKey;
+      if (!priv.configured) {
+        /* service-account নেই → settings/imgbb পড়া যায় না; env key-ই একমাত্র উৎস */
+        throw new ApiError(503, UNCONFIGURED_MSG);
+      }
+      const row = (await priv.get("settings/imgbb").catch(() => null)) as any;
+      const k = String(row?.key ?? "").trim();
+      if (!k) throw new ApiError(503, "সার্ভারে ImgBB API key কনফিগার করা নেই।");
+      return k;
+    },
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Apply I/O (Approval-settings direct processing) — privileged service-account
+   ═══════════════════════════════════════════════════════════════════════════
+   OFF-সেটিংসের সরাসরি processing-এ সাধারণ (non-staff) ব্যবহারকারীর নিজের
+   ডেটাতে admin-level লেখা দরকার (donors, verifiedDonations, bloodGroup …)।
+   ব্রাউজার rules-এর কাছে সেগুলো লিখতে পারে না, তাই data access সব service-account
+   access token দিয়ে হয় (ক্লায়েন্টে secret কখনো যায় না)। caller যাচাই public
+   API key দিয়ে — শুধু নিজেরই process হতে পারে (নীচে applyApi.ts-এ uid বেঁধে)। */
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Apply I/O (Approval-settings direct processing) — privileged service-account
