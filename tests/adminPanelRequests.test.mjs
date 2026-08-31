@@ -106,10 +106,16 @@ test("Donor management = only donors on the donor list (no account-only rows)", 
   assert.match(rm, /await updatePaths\(paths\)/);
   assert.match(rm, /releaseDonorSerial\(id\)/);
   assert.doesNotMatch(rm, /serverDeleteEntity|deleteAuthUser/);
-  /* আপডেট সরাসরি donors/{id}-এ (lossy store full-replace নয়) */
+  /* আপডেট সরাসরি donors/{id}-এ (lossy store full-replace নয়); `group`/`last`
+     পুরোনো key → canonical `bloodGroup`/`lastDonationDate`-তে লেখা হয় যেন
+     পাবলিক/অন্য প্যানেল stale না দেখায় (item 10) */
   const edit = admin.slice(admin.indexOf("function editDonorField"), admin.indexOf("function donorAction"));
-  assert.match(edit, /updateRow\(NODES\.donors,String\(d\.id\|\|""\),\{\[key\]:v\}\)/);
+  assert.match(edit, /const RTDB_DONOR_KEY:Record<string,string>=\{group:"bloodGroup",last:"lastDonationDate"\}/);
+  assert.match(edit, /updateRow\(NODES\.donors,String\(d\.id\|\|""\),\{\[rKey\]:v\}\)/);
   assert.doesNotMatch(edit, /await persist\(\)/);
+  /* linked অ্যাকাউন্ট (users/{ownerUid}) একই তথ্যে হালনাগাদ — কোনো প্যানেল stale থাকে না */
+  assert.match(edit, /await syncLinkedDonorAccount\(d,key,v\)/);
+  assert.match(admin, /const LINKED_ACCOUNT_KEY:Record<string,string>=\{\s*name:"name",gender:"gender",dob:"dob",phone:"phone",group:"bloodGroup",area:"area",last:"lastDonation"\s*\}/);
   /* verify/suspend টগলও সরাসরি ডোনার রেকর্ডে */
   assert.match(admin, /updateRow\(NODES\.donors,String\(d\.id\|\|""\),\{verified:nv\}\)/);
   assert.match(admin, /updateRow\(NODES\.donors,String\(d\.id\|\|""\),\{suspended:nv\}\)/);

@@ -2871,14 +2871,47 @@ function initPage() {
   /* live sync — অন্য ডিভাইস/প্যানেলে নিজের অ্যাকাউন্ট বদলালে সাথে সাথে এখানেও */
   let stopMeWatch=()=>{};
   const ME_SUBS=["account","security","privacy","mynotif","prefs","devices","myactivity","myperm","manage","team"];
+  /* শেষ দেখা users/{uid}/role — শুধু ভূমিকা বদলালেই re-check হয় (বারবার
+     অপ্রয়োজনীয় resolveUserRole/navigation নেই)। */
+  let meSeenRole="";
   function watchMe(uid){
     stopMeWatch();
-    stopMeWatch=watchRow(NODES.users,uid,(row)=>{
+    stopMeWatch=watchRow(NODES.users,uid,async (row)=>{
       if(String(uid)!==String(ME.uid))return;
       const before=JSON.stringify([ME.name,ME.photo,ME.prefs,ME.sessions.length,ME.activity.length,
         ME.isDonor,ME.donorId,ME.bloodGroup,ME.lastDonation,ME.health,ME.whatsapp,ME.available]);
       applyMeRow(row);
       applyPrefs();
+      /* নিজের ভূমিকা/অনুমতি অন্য অ্যাডমিন বদলালে — রিলোড ছাড়াই সাথে সাথে
+         (item 10): permission বদলালে মেনু/অনুমতি repaint; role বদলালে
+         resolveUserRole (admins/{uid} authoritative) দিয়ে সঠিক প্যানেলে
+         পাঠানো হয় — কোনো তথ্য হারায় না (users/{uid} থেকেই হাইড্রেট হয়)। */
+      try{
+        const rawRole=String((row&&row.role)||"").toLowerCase();
+        if(rawRole!==meSeenRole){
+          meSeenRole=rawRole;
+          const resolved=await resolveUserRole({uid:ME.uid,email:ME.email,name:ME.name},{knownProfile:row||null});
+          const target=panelForRole(resolved.role);
+          if(target!==PANEL.id){
+            toast("আপনার ভূমিকা পরিবর্তন হয়েছে — নিজের প্যানেলে পাঠানো হচ্ছে","ok");
+            setTimeout(()=>navigateToPage(target),700);
+            return;
+          }
+        }
+        /* permissions/role live — admins/{uid} listener (watchTeam) থেকে নিজের
+           entry-তে বদল এলে nav ছাড়াই হালনাগাদ হয় */
+        const staffRow=accountAdmins.find(x=>String(x.uid||x.id)===String(ME.uid));
+        if(staffRow){
+          const np=Array.isArray(staffRow.permissions)?staffRow.permissions.slice():null;
+          const nr=String(staffRow.role||"").toLowerCase()==="admin"?"admin":"mod";
+          const permsChanged=np&&JSON.stringify(np)!==JSON.stringify(ME.permissions||[]);
+          if(permsChanged||nr!==ME.role){
+            if(np)ME.permissions=np;
+            if(nr!==ME.role)ME.role=nr;
+            paintNav();paintTop();
+          }
+        }
+      }catch(e){console.warn("me role live:",e&&e.message)}
       const after=JSON.stringify([ME.name,ME.photo,ME.prefs,ME.sessions.length,ME.activity.length,
         ME.isDonor,ME.donorId,ME.bloodGroup,ME.lastDonation,ME.health,ME.whatsapp,ME.available]);
       if(after===before)return;
@@ -3125,6 +3158,19 @@ function initPage() {
       donations:d?Number(d.donations)||0:Number(data.donations)||0,
       totalBags:d?Number(d.totalBags)||0:Number(data.totalBags)||0};
     if(d)Object.assign(d,patch);else DB.donors.unshift(patch);
+  }
+  /* linked ডোনার রেকর্ডে বদল আনলে অ্যাকাউন্ট (users/{ownerUid})ও একই উৎসে
+     হালনাগাদ হয় — Donor Panel/Profile/Main Website সব জায়গায় একই তথ্য থাকে,
+     কোনো প্যানেল stale দেখায় না (item 10)। শুধু অ-খালি মান লেখা হয়। */
+  const LINKED_ACCOUNT_KEY:Record<string,string>={
+    name:"name",gender:"gender",dob:"dob",phone:"phone",group:"bloodGroup",area:"area",last:"lastDonation"
+  };
+  async function syncLinkedDonorAccount(d,key,v){
+    const owner=String((d&&(d.ownerUid||d.uid))||"").trim();
+    const uk=LINKED_ACCOUNT_KEY[key];
+    if(!owner||!uk||String(v||"").trim()==="")return;
+    try{await updateRow(NODES.users,owner,{[uk]:String(v).trim()});}
+    catch(e){console.warn("linked account sync:",e&&e.message)}
   }
   async function syncAdminDonorPublicRecord(changed={}){
     const publicKeys=["name","gender","dob","area","phone","photo","photoURL","bloodGroup","lastDonation","whatsapp"];
@@ -4732,6 +4778,20 @@ function initPage() {
           suspended:false,joined:iso(now()),donations:0,totalBags:0});logAudit("নতুন ডোনার যোগ",n,"donor")}
       try{await persist();}
       catch(e){toast("রক্তদাতা সংরক্ষণ করা যায়নি — কোনো সফলতা দেখানো হয়নি","er");return;}
+      /* linked অ্যাকাউন্ট (users/{ownerUid}) একই তথ্যে হালনাগাদ — অ্যাকাউন্ট,
+         Donor Panel ও পাবলিক প্রোফাইল যেন একই মান দেখে (item 10)। */
+      if(id){
+        const owner=String((d&&(d.ownerUid||d.uid))||"").trim();
+        if(owner){
+          const up:Record<string,string>={};
+          (Object.entries({name:o.name,gender:o.gender,dob:o.dob,area:o.area,phone:o.phone,
+            bloodGroup:o.group,lastDonation:o.last}) as [string,string][]).forEach(([k,vv])=>{
+            const t=String(vv||"").trim();if(t)up[k]=t;});
+          if(Object.keys(up).length){
+            try{await updateRow(NODES.users,owner,up);}catch(e){console.warn("donor form account sync:",e&&e.message)}
+          }
+        }
+      }
       s.close();renderSub("donors");toast("সংরক্ষণ হয়েছে","ok")};
   }
   
@@ -5722,9 +5782,15 @@ function initPage() {
       d[key]=v;logAudit("ডোনার তথ্য সম্পাদনা — "+F.t,d.id,"donor");
       /* সরাসরি ডোনার রেকর্ডে (donors/{id}) আংশিক আপডেট — shared store-এর
          lossy full-replace পথে না গিয়ে (সেটি status/অন্যান্য ফিল্ড মুছে
-         দিতে পারত)। RTDB live listener-ই সব স্ক্রিন/ওয়েবসাইট হালনাগাদ করে। */
-      try{await updateRow(NODES.donors,String(d.id||""),{[key]:v});}
+         দিতে পারত)। RTDB live listener-ই সব স্ক্রিন/ওয়েবসাইট হালনাগাদ করে।
+         `group`/`last` পুরোনো key — পাবলিক ও সব প্যানেল পড়ে bloodGroup/
+         lastDonationDate, তাই সঠিক key-তেই লেখা হয় (stale fix, item 10)। */
+      const RTDB_DONOR_KEY:Record<string,string>={group:"bloodGroup",last:"lastDonationDate"};
+      const rKey=RTDB_DONOR_KEY[key]||key;
+      try{await updateRow(NODES.donors,String(d.id||""),{[rKey]:v});}
       catch(e){d[key]=prev;console.warn("donor field save:",e&&e.message);return toast("ডোনার তথ্য সংরক্ষণ করা যায়নি","er");}
+      /* linked অ্যাকাউন্ট একই তথ্যে হালনাগাদ — Donor Panel/Profile reload ছাড়াই নতুন মান দেখে */
+      await syncLinkedDonorAccount(d,key,v);
       s.close();renderSub("donor");toast("সংরক্ষণ হয়েছে","ok")};
   }
   function donorAction(a,d){

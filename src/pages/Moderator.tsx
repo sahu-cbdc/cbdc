@@ -2778,13 +2778,46 @@ function initPage() {
   /* live sync — অন্য ডিভাইস/প্যানেলে নিজের অ্যাকাউন্ট বদলালে সাথে সাথে এখানেও */
   let stopMeWatch=()=>{};
   const ME_SUBS=["account","security","privacy","mynotif","prefs","devices","myactivity","myperm","manage","team"];
+  /* শেষ দেখা users/{uid}/role — শুধু ভূমিকা বদলালেই re-check হয় (বারবার
+     অপ্রয়োজনীয় resolveUserRole/navigation নেই)। */
+  let meSeenRole="";
   function watchMe(uid){
     stopMeWatch();
-    stopMeWatch=watchRow(NODES.users,uid,(row)=>{
+    stopMeWatch=watchRow(NODES.users,uid,async (row)=>{
       if(String(uid)!==String(ME.uid))return;
       const before=JSON.stringify([ME.name,ME.photo,ME.prefs,ME.sessions.length,ME.activity.length]);
       applyMeRow(row);
       applyPrefs();
+      /* নিজের ভূমিকা/অনুমতি অন্য অ্যাডমিন বদলালে — রিলোড ছাড়াই সাথে সাথে
+         (item 10): permission বদলালে মেনু/অনুমতি repaint; role বদলালে
+         resolveUserRole (admins/{uid} authoritative) দিয়ে সঠিক প্যানেলে
+         পাঠানো হয় — কোনো তথ্য হারায় না (users/{uid} থেকেই হাইড্রেট হয়)। */
+      try{
+        const rawRole=String((row&&row.role)||"").toLowerCase();
+        if(rawRole!==meSeenRole){
+          meSeenRole=rawRole;
+          const resolved=await resolveUserRole({uid:ME.uid,email:ME.email,name:ME.name},{knownProfile:row||null});
+          const target=panelForRole(resolved.role);
+          if(target!==PANEL.id){
+            toast("আপনার ভূমিকা পরিবর্তন হয়েছে — নিজের প্যানেলে পাঠানো হচ্ছে","ok");
+            setTimeout(()=>navigateToPage(target),700);
+            return;
+          }
+        }
+        /* permissions/role live — admins/{uid} listener (watchTeam) থেকে নিজের
+           entry-তে বদল এলে nav ছাড়াই হালনাগাদ হয় */
+        const staffRow=(moderatorAdminRows||[]).find(x=>String(x.uid||x.id)===String(ME.uid));
+        if(staffRow){
+          const np=Array.isArray(staffRow.permissions)?staffRow.permissions.slice():null;
+          const nr=String(staffRow.role||"").toLowerCase()==="admin"?"admin":"mod";
+          const permsChanged=np&&JSON.stringify(np)!==JSON.stringify(ME.permissions||[]);
+          if(permsChanged||nr!==ME.role){
+            if(np)ME.permissions=np;
+            if(nr!==ME.role)ME.role=nr;
+            paintNav();paintTop();
+          }
+        }
+      }catch(e){console.warn("me role live:",e&&e.message)}
       const after=JSON.stringify([ME.name,ME.photo,ME.prefs,ME.sessions.length,ME.activity.length]);
       if(after===before)return;
       try{paintTop();paintNav();
@@ -2815,9 +2848,12 @@ function initPage() {
 
   /* ── Team & ভূমিকা — RTDB `admins` node থেকে live ── */
   let stopTeamWatch=()=>{};
+  /* কাঁচা admins rows — নিজের role/permission live হালনাগাদের জন্য (item 10) */
+  let moderatorAdminRows:any[]=[];
   function watchTeam(){
     stopTeamWatch();
     stopTeamWatch=watchList(NODES.admins,(rows)=>{
+      moderatorAdminRows=rows;
       const t=rows.filter(r=>String(r.status||"")!=="disabled").map(r=>{
         const raw=String(r.role||"").toLowerCase();
         return {uid:r.uid||r.id,name:r.name||r.email||"—",
@@ -3233,6 +3269,19 @@ function initPage() {
       donations:d?Number(d.donations)||0:Number(data.donations)||0,
       totalBags:d?Number(d.totalBags)||0:Number(data.totalBags)||0};
     if(d)Object.assign(d,patch);else DB.donors.unshift(patch);
+  }
+  /* linked ডোনার রেকর্ডে বদল আনলে অ্যাকাউন্ট (users/{ownerUid})ও একই উৎসে
+     হালনাগাদ হয় — Donor Panel/Profile/Main Website সব জায়গায় একই তথ্য থাকে,
+     কোনো প্যানেল stale দেখায় না (item 10)। শুধু অ-খালি মান লেখা হয়। */
+  const LINKED_ACCOUNT_KEY:Record<string,string>={
+    name:"name",gender:"gender",dob:"dob",phone:"phone",group:"bloodGroup",area:"area",last:"lastDonation"
+  };
+  async function syncLinkedModeratorAccount(d,key,v){
+    const owner=String((d&&(d.ownerUid||d.uid))||"").trim();
+    const uk=LINKED_ACCOUNT_KEY[key];
+    if(!owner||!uk||String(v||"").trim()==="")return;
+    try{await updateRow(NODES.users,owner,{[uk]:String(v).trim()});}
+    catch(e){console.warn("moderator linked account sync:",e&&e.message)}
   }
   async function syncModeratorDonorPublicRecord(changed={}){
     const publicKeys=["name","gender","dob","area","phone","photo","photoURL","bloodGroup","lastDonation","whatsapp"];
@@ -4378,8 +4427,23 @@ function initPage() {
         try{ newId=await nextDonorId(); }
         catch(e){ console.warn("donor id:",e&&e.message); toast("Donor UID তৈরি করা যায়নি — সংরক্ষণ হয়নি। আবার চেষ্টা করুন।","er"); return; }
         DB.donors.unshift({id:newId,...o,available:true,verified:true,
-          suspended:false,joined:iso(now()),donations:0});logAudit("নতুন ডোনার যোগ",n,"donor")}
-      await persist();s.close();renderSub("donors");toast("সংরক্ষণ হয়েছে","ok")};
+          suspended:false,joined:iso(now()),donations:0,totalBags:0});logAudit("নতুন ডোনার যোগ",n,"donor")}
+      await persist();
+      /* linked অ্যাকাউন্ট (users/{ownerUid}) একই তথ্যে হালনাগাদ — অ্যাকাউন্ট,
+         Donor Panel ও পাবলিক প্রোফাইল যেন একই মান দেখে (item 10)। */
+      if(id){
+        const owner=String((d&&(d.ownerUid||d.uid))||"").trim();
+        if(owner){
+          const up:Record<string,string>={};
+          (Object.entries({name:o.name,gender:o.gender,dob:o.dob,area:o.area,phone:o.phone,
+            bloodGroup:o.group,lastDonation:o.last}) as [string,string][]).forEach(([k,vv])=>{
+            const t=String(vv||"").trim();if(t)up[k]=t;});
+          if(Object.keys(up).length){
+            try{await updateRow(NODES.users,owner,up);}catch(e){console.warn("moderator donor form account sync:",e&&e.message)}
+          }
+        }
+      }
+      s.close();renderSub("donors");toast("সংরক্ষণ হয়েছে","ok")};
   }
   
   /* ---------- live requests ---------- */
@@ -4721,6 +4785,8 @@ function initPage() {
           return toast(`জন্ম তারিখ অনুযায়ী বয়স ${bn(DB.rules.minAge)}–${bn(DB.rules.maxAge)} বছরের মধ্যে হতে হবে`,"er");
       }
       d[key]=v;logAudit("ডোনার তথ্য সম্পাদনা — "+F.t,d.id,"donor");await persist();
+      /* linked অ্যাকাউন্ট একই তথ্যে হালনাগাদ — Donor Panel/Profile reload ছাড়াই নতুন মান দেখে (item 10) */
+      await syncLinkedModeratorAccount(d,key,v);
       s.close();renderSub("donor");toast("সংরক্ষণ হয়েছে","ok")};
   }
   function donorAction(a,d){
