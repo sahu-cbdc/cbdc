@@ -1500,7 +1500,11 @@ function initPage() {
   const EN_MON={"জানুয়ারি":"January","ফেব্রুয়ারি":"February","মার্চ":"March","এপ্রিল":"April","মে":"May",
     "জুন":"June","জুলাই":"July","আগস্ট":"August","সেপ্টেম্বর":"September","অক্টোবর":"October",
     "নভেম্বর":"November","ডিসেম্বর":"December"};
-  const isEN=()=>ME&&ME.prefs&&ME.prefs.lang==="en";
+  /* English প্যানেল-অনুবাদ এখনো চালু নয় (Coming Soon) — তাই এটি কখনো true হয় না;
+     কোনো English dictionary/অনুবাদ ব্যবহারই হয় না। অনুবাদ-অবকাঠামো (tp/i18n)
+     ভবিষ্যতে English চালু করার জন্য রাখা আছে — তখন আগের চেকটি ফেরালেই হবে:
+     ME&&ME.prefs&&ME.prefs.lang==="en" */
+  const isEN=()=>false;
   const BN_RE=/[\u0980-\u09FF]/;
   /* longest-first key list, built once */
   const DICT_KEYS=Object.keys(DICT_EN).sort((a,b)=>b.length-a.length);
@@ -2761,6 +2765,9 @@ function initPage() {
         const p=(row.data&&row.data.panel)||{};
         ["security","privacy","notif","prefs"].forEach(k=>{
           if(p[k]&&typeof p[k]==="object")Object.assign(ME[k],p[k])});
+        /* RTDB-তে অন্য ডিভাইস থেকে সংরক্ষিত পুরোনো "en" preference ফিরলেও
+           বাংলা-ই থাকে — English এখনো চালু নয় (Coming Soon)। */
+        ME.prefs.lang="bn";
         /* Donor state panel preference থেকে অনুমান করা হয় না। users/{uid}-এর
            approved status-ই authoritative — পুরোনো local toggle কোনো
            অসম্পূর্ণ/ভুয়া donor state দেখাতে পারে না। */
@@ -2908,6 +2915,9 @@ function initPage() {
   
   /* replaces the plain object created in the data block */
   ME=Object.assign(loadMe(),{role:ME.role||PANEL.role});
+  /* প্যানেলে English UI এখনো চালু নয় (Coming Soon) — পুরোনো cached "en"
+     preference থাকলেও প্যানেল সবসময় বাংলায় থাকে। */
+  ME.prefs.lang="bn";
   if(!ROLES[ME.role])ME.role=PANEL.role;
   lastPersistedME=CBDCShared.clone(ME);
   function watchModeratorNoticeReads(){
@@ -3123,7 +3133,7 @@ function initPage() {
       <div class="sec-t">ভাষা</div>
       <div class="card"><div class="strip seg" id="plg">
         <button data-lg="bn" class="${ME.prefs.lang==="bn"?"on":""}" data-noi18n>বাংলা</button>
-        <button data-lg="en" class="${ME.prefs.lang==="en"?"on":""}" data-noi18n>English</button></div>
+        <button data-lg="en" data-noi18n>English</button></div>
         <p class="hint2" style="margin-top:9px" data-noi18n>${tp(
           "ভাষা বদলালে পুরো প্যানেল সেই ভাষায় দেখা যাবে।",
           "Changing the language switches the entire panel.")}</p></div>
@@ -3144,10 +3154,18 @@ function initPage() {
     bindMe(el,"prefs");
     el.querySelectorAll("[data-dn]").forEach(b=>b.onclick=async()=>{
       ME.prefs.dense=b.dataset.dn==="1";await saveMe();applyPrefs();paintTop();paintNav();renderSub("prefs")});
+    /* ভাষা — English এখনো চালু নয় (Coming Soon); বাংলা-ই একমাত্র ভাষা।
+       English-এ click করলে শুধু বার্তা দেখায় — state/সংরক্ষণ/রেন্ডার কিছুই বদলায় না। */
     el.querySelectorAll("[data-lg]").forEach(b=>b.onclick=async()=>{
+      if(b.dataset.lg==="en"){
+        b.classList.remove("on");
+        el.querySelectorAll("[data-lg]").forEach(x=>{if(x.dataset.lg==="bn")x.classList.add("on")});
+        toast("English ভাষা খুব শীঘ্রই আসছে — বর্তমানে শুধু বাংলা ভাষা উপলব্ধ।");
+        return;
+      }
       if(ME.prefs.lang===b.dataset.lg)return;
-      ME.prefs.lang=b.dataset.lg;await saveMe();applyLang();
-      toast(isEN()?"Language changed to English":"ভাষা বাংলা করা হয়েছে","ok")});
+      ME.prefs.lang="bn";await saveMe();applyLang();
+      toast("ভাষা বাংলা করা হয়েছে","ok")});
   };
   
   SUBP.myperm=el=>{
