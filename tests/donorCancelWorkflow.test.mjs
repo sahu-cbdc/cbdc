@@ -151,9 +151,11 @@ for (const [name, src] of [["Admin", admin], ["Moderator", moderator]]) {
 test("Approved donation verify/delete workflow is unchanged", () => {
   for (const [name, src] of [["Admin", admin], ["Moderator", moderator]]) {
     const decide = fnSource(src, "async function decide(");
-    /* donation approvals still write the approved record + donor stats */
+    /* donation approvals still write the approved record + donor stats
+       (stats now recomputed from the full RTDB list — never increment-based) */
     assert.match(decide, /paths\[`donations\/\$\{record\.id\}`\]=record/);
-    assert.match(decide, /paths\[`donors\/\$\{d\.id\}\/totalDonations`\]=count/);
+    assert.match(decide, /paths\[`donors\/\$\{d\.id\}\/totalDonations`\]=stats\.lives/);
+    assert.match(decide, /donorStatsFromRecords\(donorRecords\)/);
     assert.match(decide, /verifiedDonations\//);
     /* proof validation for donation verifications remains */
     assert.match(fnSource(src, "function reviewWarning("), /q\.kind==="donation"&&!\q\.proof/);

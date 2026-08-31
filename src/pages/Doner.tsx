@@ -5446,6 +5446,9 @@ function initPage() {
      দিয়ে সঙ্গে সঙ্গে এই স্ক্রিনে চলে আসে — দুই দিকেই লাইভ। */
   let RTDB_UID="";
   let RTDB_PULLING=false;
+  /* শেষ দেখা users/{uid}/role — Admin/Moderator role বদলালে সাথে সাথে সঠিক
+     প্যানেলে যাওয়ার জন্য; একই মানে বারবার navigation এড়াতে (item 10)। */
+  let donerSeenRole="";
   /* আবেদন প্রত্যাহার চলাকালীন hydrate যেন পুরোনো/দেরিতে আসা members/queue
      snapshot থেকে pending state আবার না ফিরিয়ে আনে — সেই guard। */
   let DONOR_WITHDRAW_UID="";
@@ -5995,6 +5998,14 @@ function initPage() {
       if(row.lastDonationDate)STORE.donor.lastDonation=row.lastDonationDate;
       else if(row.lastDonation)STORE.donor.lastDonation=row.lastDonation;
       else if(row.last)STORE.donor.lastDonation=row.last;
+      /* Admin/Moderator ডোনার রেকর্ডে সরাসরি বদলালে (গ্রুপ/WhatsApp/স্বাস্থ্য/
+         প্রাপ্যতা) Donor Panel-ও reload ছাড়াই একই তথ্য দেখে — অনুমোদিত
+         ডোনারের জন্য users/{uid}-ই account-এর উৎস, তাই এখানে শুধু donor-নির্দিষ্ট
+         ক্ষেত্র sync হয় (item 10)। */
+      if(row.bloodGroup||row.group)STORE.donor.bloodGroup=String(row.bloodGroup||row.group||"");
+      if(row.whatsapp!==undefined&&row.whatsapp!==null)STORE.donor.whatsapp=String(row.whatsapp||"");
+      if(row.health!==undefined&&row.health!==null)STORE.donor.health=String(row.health||"");
+      if(row.available!==undefined)STORE.donor.available=!!row.available;
       persistLocalAccount();
       if(!PUBLIC_MODE){try{paintTop();go(CUR,SUB,false);}catch(e){console.warn("donor rec refresh",e)}}
     });
@@ -6016,6 +6027,19 @@ function initPage() {
       /* A late callback from a previous account must never overwrite the
          current user's application state. */
       if(String(uid)!==String(firebaseCurrentUid()))return;
+      /* ভূমিকা live — অন্য প্যানেল (Admin/Moderator) থেকে role বদলালে
+         (users/{uid}/role) ডোনার প্যানেল খোলা থাকলেও সাথে সাথে সঠিক প্যানেলে
+         চলে যায় (item 10)। একই মানে আবার navigation হয় না — ফলে অসম্পূর্ণ
+         promotion-এ (admins/{uid} নেই) bounce loop হয় না; ওই প্যানেলের নিজের
+         gate-ই চূড়ান্ত অনুমতি যাচাই করে। */
+      const rowRole = String((row && row.role) || "").toLowerCase();
+      if ((rowRole === "admin" || rowRole === "moderator" || rowRole === "mod") && rowRole !== donerSeenRole) {
+        donerSeenRole = rowRole;
+        try{ toast("আপনার ভূমিকা হালনাগাদ হয়েছে — প্যানেল খোলা হচ্ছে","ok"); }catch(e){}
+        setTimeout(()=>navigateToPage(rowRole === "admin" ? "admin" : "moderator"), 500);
+        return;
+      }
+      if (rowRole === "donor" || rowRole === "user" || rowRole === "") donerSeenRole = rowRole;
       RTDB_PULLING=true;
       applyRtdbRow(uid, row, authUser);
       setMyApplicationsFromUser(uid,row);
@@ -6052,9 +6076,17 @@ function initPage() {
       initSharedFirebase();
       const {subscribeAuthUser} = await import("../lib/authState");
       let authUid = STORE.account.uid || "";
+      /* একই uid-এ বারবার event (Firebase token refresh / duplicate initial
+         snapshot) এলে আবার boot হয় না — অন্যথায় প্রতি event-এ সম্পূর্ণ
+         re-render + নতুন করে RTDB watcher (duplicate listener) জমত,
+         ফলে অপ্রয়োজনীয় লোডিং ও অস্থিরতা দেখা দিত। (authUid localStorage
+         থেকে আসে বলে এখানে আলাদা page-load flag ব্যবহার করা হয়।) */
+      let bootedUid="";
       subscribeAuthUser(async (user)=>{
         if(PUBLIC_MODE)return;
         AUTH_SESSION_READY=true;
+        if(user && bootedUid===user.uid)return;
+        bootedUid=user.uid||"";
         if(!user){
           authUid="";
           stopMyApplicationRequests();
@@ -6087,8 +6119,15 @@ function initPage() {
         authUid = user.uid;
         /* Role gate — Admin/Moderator কখনোই Doner Dashboard ব্যবহার করে না;
            তাদের নিজ নিজ প্যানেলে পাঠিয়ে দেওয়া হয় (role আসে RTDB থেকে)। */
+        /* দ্রুত প্রবেশ — users/{uid} একবারই পড়া হয়: resolveUserRole-কে
+           knownProfile হিসেবে দেওয়া হয় (দ্বিতীয় read নেই) এবং applyRtdbRow-তে
+           একই মান বসে। ফলে লগইনের পর অপ্রয়োজনীয় লোডিং/round-trip নেই। */
+        let row = null;
+        try{ row = await loadUserProfile(user.uid); }catch(e){}
+        /* role gate-এর পর users/{uid}/role-এ বদল শুধু বদল হলেই ধরা হয় */
+        donerSeenRole = String((row && row.role) || "").toLowerCase();
         try{
-          const r = await resolveUserRole({uid:user.uid, email:user.email||"", name:user.displayName||""});
+          const r = await resolveUserRole({uid:user.uid, email:user.email||"", name:user.displayName||""},{knownProfile:row});
           const page = panelForRole(r.role);
           if(page!=="doner"){ navigateToPage(page); return; }
         }catch(e){ console.warn("doner role gate:", e && e.message); }
@@ -6098,8 +6137,6 @@ function initPage() {
         STORE.account.emailVerified = user.emailVerified !== false;
         /* displayName/photo Auth থেকে ব্ল্যাঙ্কেট কপি করি না — RTDB এই uid-এর তথ্যই সত্য */
 
-        let row = null;
-        try{ row = await loadUserProfile(user.uid); }catch(e){}
         applyRtdbRow(user.uid, row, user);
         setMyApplicationsFromUser(user.uid,row);
         // users/{uid} এ donor না থাকলেও existing donor record (donors/members/queue) UID দিয়ে detect

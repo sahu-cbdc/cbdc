@@ -18,10 +18,10 @@
  *  ও `vars` সেট করা আছে — উভয় মান public: client config-এর হুবহু মান)।
  */
 
-import { handleAdminEntityDelete, type ServerDeleteResult } from "./deleteApi";
-import { handleAdminDedupe } from "./dedupeApi";
-import { handleResolveLegacy } from "./resolveLegacy";
-import { makeHttpIo, makePrivilegedIo } from "./httpIo";
+import { handleAdminEntityDelete, type ServerDeleteResult } from "./deleteApi.ts";
+import { handleAdminDedupe } from "./dedupeApi.ts";
+import { handleResolveLegacy } from "./resolveLegacy.ts";
+import { makeHttpIo, makePrivilegedIo } from "./httpIo.ts";
 
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {

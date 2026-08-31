@@ -316,8 +316,11 @@ test("Login resolves username/phone via loginIndex first (works pre-auth)", () =
   const fn = fnSource(home, "async function resolveEmailByIdentifier(");
   assert.match(fn, /lookupLoginKey\("username",q\)/);
   assert.match(fn, /lookupLoginKey\("phone",dq\)/);
-  /* users query fallback অক্ষত */
-  assert.match(fn, /findBy\(NODES\.users, "username", q\)/);
+  /* users-node query fallback নেই — লগইনের আগে (unauthenticated) `users` read
+     rules-এ সবসময় permission-denied, তাই সেসব query কখনো সফল হতো না; শুধু
+     দুইটি অপ্রয়োজনীয় denied round-trip-এ login ধীর করত (দ্রুত লগইন)। */
+  assert.doesNotMatch(fn, /findBy\(NODES\.users, "username", q\)/);
+  assert.doesNotMatch(fn, /findBy\(NODES\.users, "phone", digits\(q\)\)/);
 });
 
 test("Signup blocks a username already claimed in loginIndex", () => {

@@ -10,7 +10,7 @@ import { useEffect } from "react";
 import "../lib/store";
 import { initFirebase as initSharedFirebase, NODES, getAuthInstance } from "../lib/firebase";
 import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
-import { authErrorMessage, resolveUserRole, panelForRole, setOrChangePassword } from "../lib/authx";
+import { authErrorMessage, authErrorCode, resolveUserRole, panelForRole, setOrChangePassword, requestPasswordReset } from "../lib/authx";
 import { getRow, setRow, updateRow, removeRow, listOnce, watchList, watchRow, findBy, nowIso, nextDonorId, updatePaths, serverTime, getPath, setPath, removePath, watchPath, releaseDonorSerial } from "../lib/rtdb";
 import { ageText, ageFromDob, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
@@ -23,8 +23,9 @@ import {
   donorStatsFromRecords,
   makeApprovedDonationRecord,
   writeApprovedDonation,
-  deleteApprovedDonation,
-  backfillApprovedDonations,
+  deleteApprovedDonation as deleteDonationRecord,
+  backfillApprovedDonations as backfillDonationLog,
+  reconcileApprovedDonations as reconcileDonationLog,
   proofUrlOf,
 } from "../lib/donationLog";
 import { serverDeleteEntity, deletionMessage, bulkDeletionMessage, describeDeletionFailure, isAuthUid, runDedupeScan, type DeletionStep, type DeleteScope } from "../lib/accountDelete";
@@ -2283,6 +2284,18 @@ function initPage() {
   const iso=d=>new Date(d).toISOString().slice(0,10);
   const dL=v=>v?new Date(v+"T00:00:00").toLocaleDateString("bn-BD",{year:"numeric",month:"long",day:"numeric"}):"—";
   const dS=v=>v?new Date(v+"T00:00:00").toLocaleDateString("bn-BD",{day:"numeric",month:"short"}):"—";
+  /* Approved Donation-এর তারিখ: YYYY-MM-DD → তারিখ, ISO datetime → তারিখ+সময়।
+     পুরোনো/অজানা/ভুল মান কখনো "Invalid Date" দেখায় না — সবসময় "—"। */
+  const dts=v=>{
+    if(v===undefined||v===null||v==="")return "—";
+    const s=String(v).trim();
+    if(!s)return "—";
+    const d=/^\d{4}-\d{2}-\d{2}$/.test(s)?new Date(s+"T00:00:00"):new Date(s);
+    if(Number.isNaN(d.getTime()))return "—";
+    const date=d.toLocaleDateString("bn-BD",{year:"numeric",month:"long",day:"numeric"});
+    const t=/^\d{4}-\d{2}-\d{2}T/.test(s)?d.toLocaleTimeString("bn-BD",{hour:"2-digit",minute:"2-digit"}):"";
+    return t?date+" · "+t:date;
+  };
   const dayDiff=a=>Math.floor((new Date().setHours(0,0,0,0)-new Date(a+"T00:00:00").setHours(0,0,0,0))/864e5);
   const addD=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return iso(x)};
   const phoneOK=v=>/^01[3-9]\d{8}$/.test(String(v||"").replace(/\s/g,""));
@@ -2858,14 +2871,47 @@ function initPage() {
   /* live sync — অন্য ডিভাইস/প্যানেলে নিজের অ্যাকাউন্ট বদলালে সাথে সাথে এখানেও */
   let stopMeWatch=()=>{};
   const ME_SUBS=["account","security","privacy","mynotif","prefs","devices","myactivity","myperm","manage","team"];
+  /* শেষ দেখা users/{uid}/role — শুধু ভূমিকা বদলালেই re-check হয় (বারবার
+     অপ্রয়োজনীয় resolveUserRole/navigation নেই)। */
+  let meSeenRole="";
   function watchMe(uid){
     stopMeWatch();
-    stopMeWatch=watchRow(NODES.users,uid,(row)=>{
+    stopMeWatch=watchRow(NODES.users,uid,async (row)=>{
       if(String(uid)!==String(ME.uid))return;
       const before=JSON.stringify([ME.name,ME.photo,ME.prefs,ME.sessions.length,ME.activity.length,
         ME.isDonor,ME.donorId,ME.bloodGroup,ME.lastDonation,ME.health,ME.whatsapp,ME.available]);
       applyMeRow(row);
       applyPrefs();
+      /* নিজের ভূমিকা/অনুমতি অন্য অ্যাডমিন বদলালে — রিলোড ছাড়াই সাথে সাথে
+         (item 10): permission বদলালে মেনু/অনুমতি repaint; role বদলালে
+         resolveUserRole (admins/{uid} authoritative) দিয়ে সঠিক প্যানেলে
+         পাঠানো হয় — কোনো তথ্য হারায় না (users/{uid} থেকেই হাইড্রেট হয়)। */
+      try{
+        const rawRole=String((row&&row.role)||"").toLowerCase();
+        if(rawRole!==meSeenRole){
+          meSeenRole=rawRole;
+          const resolved=await resolveUserRole({uid:ME.uid,email:ME.email,name:ME.name},{knownProfile:row||null});
+          const target=panelForRole(resolved.role);
+          if(target!==PANEL.id){
+            toast("আপনার ভূমিকা পরিবর্তন হয়েছে — নিজের প্যানেলে পাঠানো হচ্ছে","ok");
+            setTimeout(()=>navigateToPage(target),700);
+            return;
+          }
+        }
+        /* permissions/role live — admins/{uid} listener (watchTeam) থেকে নিজের
+           entry-তে বদল এলে nav ছাড়াই হালনাগাদ হয় */
+        const staffRow=accountAdmins.find(x=>String(x.uid||x.id)===String(ME.uid));
+        if(staffRow){
+          const np=Array.isArray(staffRow.permissions)?staffRow.permissions.slice():null;
+          const nr=String(staffRow.role||"").toLowerCase()==="admin"?"admin":"mod";
+          const permsChanged=np&&JSON.stringify(np)!==JSON.stringify(ME.permissions||[]);
+          if(permsChanged||nr!==ME.role){
+            if(np)ME.permissions=np;
+            if(nr!==ME.role)ME.role=nr;
+            paintNav();paintTop();
+          }
+        }
+      }catch(e){console.warn("me role live:",e&&e.message)}
       const after=JSON.stringify([ME.name,ME.photo,ME.prefs,ME.sessions.length,ME.activity.length,
         ME.isDonor,ME.donorId,ME.bloodGroup,ME.lastDonation,ME.health,ME.whatsapp,ME.available]);
       if(after===before)return;
@@ -2898,11 +2944,34 @@ function initPage() {
   /* ── Team & ভূমিকা — RTDB `admins` node থেকে live ── */
   let stopTeamWatch=()=>{};
   let stopAccountWatch=()=>{}, accountUsers=[], accountAdmins=[];
+  /* ডোনার রেকর্ড (donors/{id}) — ownerUid/uid দিয়ে অ্যাকাউন্ট-সংশ্লিষ্ট ডোনার
+     খোঁজা। users/{uid} sparse/অনুপস্থিত থাকলেও (পুরোনো অ্যাকাউন্ট, শুধু ডোনার
+     হিসেবে যুক্ত) Access & Role/Team-এ নাম-ফোন-ছবি-এলাকা ফাঁকা না দেখিয়ে
+     ডোনার রেকর্ডের বিদ্যমান তথ্য দেখানো যায় (আইটেম ৭)। */
+  function accountDonorRow(uid){
+    if(!uid)return null;
+    const u=String(uid);
+    return (DB.donors||[]).find(d=>String(d.ownerUid||"")===u)
+      ||(DB.donors||[]).find(d=>String(d.uid||"")===u)||null;
+  }
   function refreshAccounts(){
     const by=new Map();
     (DB.accounts||[]).forEach(a=>by.set(String(a.uid||a.id),{...a}));
     accountUsers.forEach(u=>{const uid=String(u.uid||u.id);if(!uid)return;by.set(uid,{...by.get(uid),...u,uid,role:by.get(uid)?.role||u.role||"user"});});
     accountAdmins.forEach(a=>{const uid=String(a.uid||a.id);if(!uid)return;by.set(uid,{...by.get(uid),...a,uid,role:a.role||by.get(uid)?.role||"mod",permissions:a.permissions||by.get(uid)?.permissions||[]});});
+    /* donors/{id} fallback — শুধু ফাঁকা ফিল্ড পূরণ হয় (আগের মান কখনো
+       overwrite হয় না): promoted donor-এর users/{uid} sparse হলে Access &
+       Role/Team-এ ফাঁকা নাম/ফোন/ছবি না দেখিয়ে ডোনার রেকর্ডের তথ্য বসে। */
+    Array.from(by.keys()).forEach(uid=>{
+      const cur=by.get(uid);if(!cur)return;
+      const d=accountDonorRow(uid);if(!d)return;
+      const fill={...cur};
+      const fillIf=(k,v)=>{if(!String(fill[k]||"").trim()&&String(v||"").trim())fill[k]=v;};
+      fillIf("name",d.name);fillIf("phone",d.phone||d.mobile);fillIf("email",d.email);
+      fillIf("photo",d.photo||d.photoURL);fillIf("area",d.area);
+      fillIf("donorId",d.id||d.donorId);fillIf("gender",d.gender);fillIf("dob",d.dob);
+      by.set(uid,fill);
+    });
     const nextAccounts=Array.from(by.values()).map(a=>({...a,role:normRole(a.role),phone:a.phone||a.mobile||"",photo:a.photo||a.photoURL||"",status:a.status||"active"}));
     const accountsChanged=JSON.stringify(nextAccounts)!==JSON.stringify(DB.accounts);
     DB.accounts=nextAccounts;
@@ -2911,7 +2980,7 @@ function initPage() {
        existing team row without reloading the database. */
     const users=new Map(accountUsers.map(u=>[String(u.uid||u.id),u]));
     const team=accountAdmins.filter(r=>String(r.status||"")!=="disabled").map(r=>{
-      const uid=String(r.uid||r.id),profile=users.get(uid)||{},raw=String(r.role||"").toLowerCase();
+      const uid=String(r.uid||r.id),profile=users.get(uid)||accountDonorRow(uid)||{},raw=String(r.role||"").toLowerCase();
       const permissions=Array.isArray(r.permissions)?r.permissions:
         (raw==="admin"?PERMS.slice():ROLES.mod.perms.slice());
       return {uid,name:r.name||profile.name||r.email||profile.email||"—",
@@ -2925,7 +2994,26 @@ function initPage() {
     if(teamChanged)DB.team=team;
     /* সত্যিকারের পরিবর্তন ছাড়া আবার কোনো কাজ হবে না — বারবার লোডিং/রিলোড নেই */
     if(!accountsChanged&&!teamChanged)return;
-    try{paintNav();if(!document.querySelector(".sheet")&&["team","access"].includes(SUB))go(CUR,SUB,false,ARG)}catch(e){}
+    try{paintNav();if(!document.querySelector(".sheet")&&["team","access","donorid"].includes(SUB))go(CUR,SUB,false,ARG)}catch(e){}
+  }
+  /* ── ডোনার আইডি ব্যবস্থাপনার জন্য সম্পূর্ণ (unfiltered) ডোনার তালিকা ──
+     Shared store-এর `donors` তালিকা শুধু অনুমোদিত (status==="approved") ডোনার
+     রাখে — পাবলিক ওয়েবসাইটের জন্য সঠিক, কিন্তু "ডোনার আইডি ব্যবস্থাপনায়"
+     RTDB-তে থাকা **সব** ডোনার আইডি দেখাতে হবে (অনুমোদিত / স্থগিত / অপেক্ষমাণ /
+     বাতিল — সব)। `donors` node public-read, তাই এখানে সরাসরি unfiltered
+     listener বসানো হয়; শুধু ডোনার আইডি স্ক্রিনে ব্যবহৃত হয়। */
+  let stopDonorIdWatch=()=>{}, donorIdRows=[], donorIdRowsReady=false;
+  function watchDonorIds(){
+    stopDonorIdWatch();
+    stopDonorIdWatch=watchList(NODES.donors,rows=>{
+      donorIdRows=rows;
+      donorIdRowsReady=true;
+      /* এই স্ক্রিন খোলা থাকলে সাথে সাথে তালিকা হালনাগাদ হয় (রিলোড নয়) */
+      try{
+        if(SUB==="donorid")renderSub("donorid");
+        if(CUR==="people"&&!SUB)paintTop();
+      }catch(e){ console.warn("donorid refresh:",e&&e.message); }
+    });
   }
   function watchAccounts(){
     stopAccountWatch();
@@ -3071,6 +3159,19 @@ function initPage() {
       totalBags:d?Number(d.totalBags)||0:Number(data.totalBags)||0};
     if(d)Object.assign(d,patch);else DB.donors.unshift(patch);
   }
+  /* linked ডোনার রেকর্ডে বদল আনলে অ্যাকাউন্ট (users/{ownerUid})ও একই উৎসে
+     হালনাগাদ হয় — Donor Panel/Profile/Main Website সব জায়গায় একই তথ্য থাকে,
+     কোনো প্যানেল stale দেখায় না (item 10)। শুধু অ-খালি মান লেখা হয়। */
+  const LINKED_ACCOUNT_KEY:Record<string,string>={
+    name:"name",gender:"gender",dob:"dob",phone:"phone",group:"bloodGroup",area:"area",last:"lastDonation"
+  };
+  async function syncLinkedDonorAccount(d,key,v){
+    const owner=String((d&&(d.ownerUid||d.uid))||"").trim();
+    const uk=LINKED_ACCOUNT_KEY[key];
+    if(!owner||!uk||String(v||"").trim()==="")return;
+    try{await updateRow(NODES.users,owner,{[uk]:String(v).trim()});}
+    catch(e){console.warn("linked account sync:",e&&e.message)}
+  }
   async function syncAdminDonorPublicRecord(changed={}){
     const publicKeys=["name","gender","dob","area","phone","photo","photoURL","bloodGroup","lastDonation","whatsapp"];
     if(!publicKeys.some(k=>changed[k]!==undefined))return;
@@ -3085,6 +3186,86 @@ function initPage() {
       await updateRow(NODES.donors,id,patch);
       updateLocalAdminDonor(id,{...patch,lastDonation:ME.lastDonation,joined:(row&&row.joined)||ME.joined});
     }catch(e){console.warn("admin donor public sync:",e&&e.message);throw e}
+  }
+  /* ── নিজের রক্তদানের হিসাব — Approved Donation রেকর্ড থেকেই (সর্বশেষ উৎস) ── */
+  function myDonationRecords(){
+    return (DB.donations||[]).filter(r=>String(r.donorId||"")===String(ME.donorId||""));
+  }
+  function myDonationCount(){
+    const mine=myDonationRecords().length;
+    if(mine>0)return mine;
+    const donor=localAdminDonor();
+    return donor?Math.max(0,Number(donor.donations)||0):0;
+  }
+  function myDonationBags(){
+    const bags=myDonationRecords().reduce((s,r)=>s+Math.max(0,Math.floor(Number(r.bags)||0)),0);
+    if(bags>0)return bags;
+    const donor=localAdminDonor();
+    return donor?Math.max(0,Number(donor.totalBags)||0):0;
+  }
+  /* ── Admin নিজে রক্তদান রেকর্ড যোগ — Donor Panel-এর রক্তদান যোগের মতোই,
+        কিন্তু সরল: শুধু তারিখ + স্থান (ঐচ্ছিক: রোগী/ব্যাগ) — কোনো দীর্ঘ ফর্ম বা
+        প্রমাণ ছবি লাগে না। রেকর্ডটি সরাসরি অনুমোদিত হয়ে বিদ্যমান Approved
+        Donation সিস্টেমে যোগ হয় — History, পরিসংখ্যান (জীবন/ব্যাগ), Donor Panel-এর
+        যাচাইকৃত তালিকা ও পাবলিক ডোনার প্রোফাইল সব বিদ্যমান নিয়মে হালনাগাদ হয়। ── */
+  function addMyDonationSheet(page){
+    if(!ME.isDonor)return;
+    const s=sheet("নতুন রক্তদান",`
+      <div class="note i">${SI.info(17)}<span>নিজের রক্তদানের রেকর্ড যোগ করুন — শুধু তারিখ ও স্থান দিন।
+        রেকর্ডটি সরাসরি অনুমোদিত হয়ে আপনার রক্তদানের History ও পরিসংখ্যানে যুক্ত হবে।</span></div>
+      <div class="f"><label>রক্তদানের তারিখ <i>*</i></label>
+        <input id="md_date" type="date" value="${iso(now())}" max="${iso(now())}"></div>
+      <div class="f"><label>হাসপাতাল / স্থান <i>*</i></label>
+        <input id="md_place" placeholder="যেমন: চমেক ব্লাড ব্যাংক" maxlength="120"></div>
+      <div class="f"><label>রোগীর নাম <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
+        <input id="md_pat" maxlength="120"></div>
+      <div class="f"><label>কত ব্যাগ</label>
+        <input id="md_bags" type="number" value="1" min="1" max="99"></div>`,
+      `<button class="btn gh" data-close>বাতিল</button>
+       <button class="btn" id="md_ok">${SI.check(15)} রক্তদান যোগ করুন</button>`);
+    s.q("#md_ok").onclick=async()=>{
+      const date=s.q("#md_date").value, place=s.q("#md_place").value.trim();
+      if(!date)return toast("রক্তদানের তারিখ দিন","er");
+      if(!place)return toast("হাসপাতাল / স্থান লিখুন","er");
+      const btn=s.q("#md_ok");btn.disabled=true;btn.textContent="সংরক্ষণ হচ্ছে…";
+      try{
+        const uid=String(ME.uid||"");
+        const donor=await ownAdminDonorRow();
+        const donorId=String((donor&&(donor.id||donor.donorId))||ME.donorId||"");
+        if(!donorId)throw new Error("ডোনার রেকর্ড পাওয়া যায়নি");
+        const bags=Math.max(1,Math.floor(Number(s.q("#md_bags").value)||1));
+        const at=nowIso();
+        const record={
+          id:safeDonationId(uid,date,place),
+          donorId,ownerUid:uid,name:ME.name||"",group:ME.bloodGroup||"",
+          area:ME.area||"",photo:ME.photo||"",phone:ME.phone||"",
+          place,date,bags,proof:"",
+          patient:s.q("#md_pat").value.trim().slice(0,120),note:"",
+          livesSaved:1,approvedAt:at,approvedBy:ME.name||"অ্যাডমিন",updatedAt:at,
+          source:"self",submittedAt:at};
+        await saveApprovedDonation(record,null);
+        /* নিজের users/{uid} প্রোফাইলেও সর্বশেষ রক্তদান + নিজের pending যাচাই queue
+           সরিয়ে ফেলা (নিজের রেকর্ড নিজেই অনুমোদিত হয়েছে)। */
+        const extra={[`users/${uid}/lastDonation`]:date};
+        DB.queue.filter(q=>q.kind==="donation"
+          &&String(q.ownerUid||q.uid||"")===uid
+          &&String(q.date||"")===date&&String(q.place||"")===place)
+          .forEach(q=>{extra[`queue/${q.id}`]=null});
+        if(Object.keys(extra).length)await updatePaths(extra);
+        DB.queue=DB.queue.filter(q=>!(q.kind==="donation"
+          &&String(q.ownerUid||q.uid||"")===uid
+          &&String(q.date||"")===date&&String(q.place||"")===place));
+        ME.lastDonation=date;
+        await logMe("নতুন রক্তদান যোগ",date+" · "+place,"donor");
+        await logAudit("নিজের রক্তদান রেকর্ড যোগ",donorId+" · "+date+" · "+place,"donation");
+        s.close();renderSub(page);
+        toast("রক্তদান যোগ হয়েছে — History ও পরিসংখ্যান হালনাগাদ হয়েছে","ok");
+      }catch(e){
+        console.warn("my donation add:",e&&e.message);
+        btn.disabled=false;btn.textContent="রক্তদান যোগ করুন";
+        toast(e&&e.message?e.message:"রক্তদান যোগ করা যায়নি","er");
+      }
+    };
   }
   function adminDonorForm(page){
     const a=ME,bounds=dobBounds(SITE.rules.minAge,SITE.rules.maxAge);
@@ -3109,9 +3290,10 @@ function initPage() {
         <div class="f"><label>মোবাইল নম্বর <i>*</i></label>
           <input id="ad_phone" name="ad_phone" value="${esc(a.phone||"")}" inputmode="numeric" maxlength="11" ${a.phone?"readonly aria-readonly=\"true\"":""}></div>
         <div class="f"><label>রক্তের গ্রুপ <i>*</i></label>
-          <select id="ad_group" name="ad_group" ${GROUPS.includes(a.bloodGroup)?"disabled aria-disabled=\"true\"":""}>
+          <select id="ad_group" name="ad_group">
             <option value="">রক্তের গ্রুপ নির্বাচন করুন</option>
-            ${GROUPS.map(v=>`<option ${a.bloodGroup===v?"selected":""}>${esc(v)}</option>`).join("")}</select></div>
+            ${GROUPS.map(v=>`<option ${a.bloodGroup===v?"selected":""}>${esc(v)}</option>`).join("")}</select>
+          <span class="hint">প্রোফাইলে আগে থেকে থাকা গ্রুপ বদলাতে চাইলে এখান থেকেই নতুন গ্রুপ বেছে নিন — রক্তদাতা তালিকা, কার্ড ও প্রোফাইল সব জায়গায় হালনাগাদ হবে।</span></div>
         <div class="f"><label>সর্বশেষ রক্তদান <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
           <input id="ad_last" name="ad_last" type="date" max="${iso(now())}" value="${esc(a.lastDonation||"")}"></div>
         <div class="f"><label>স্বাস্থ্য তথ্য <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
@@ -3148,7 +3330,10 @@ function initPage() {
           throw new Error("অ্যাকাউন্টের প্রয়োজনীয় তথ্য সঠিক নয়");
         const savedGroups=[current.bloodGroup,current.group,current.blood_group,current.data&&current.data.bloodGroup,ME.bloodGroup]
           .map(x=>String(x||"").trim());
-        const bloodGroup=savedGroups.find(x=>GROUPS.includes(x))||s.q("#ad_group").value;
+        /* Select সবসময় সক্রিয় — অ্যাকাউন্টে থাকা গ্রুপ এখান থেকেই বদলানো যায়।
+           ফাঁকা/অবৈধ হলে (আগের মতো) অ্যাকাউন্টে সংরক্ষিত গ্রুপই নেওয়া হয়। */
+        const picked=s.q("#ad_group").value;
+        const bloodGroup=GROUPS.includes(picked)?picked:(savedGroups.find(x=>GROUPS.includes(x))||"");
         if(!GROUPS.includes(bloodGroup))throw new Error("সঠিক রক্তের গ্রুপ নির্বাচন করুন");
         const lastDonation=s.q("#ad_last").value||"",health=s.q("#ad_health").value.trim()||"";
         const whatsapp=s.q("#ad_wa").value.trim()||"";
@@ -3286,6 +3471,10 @@ function initPage() {
         ${ME.isDonor?`<div class="row"><span class="tx"><b>ডোনার অবস্থা</b><small>${esc(ME.donorId)}</small></span>
           <span class="rt"><span class="tag g">অনুমোদিত</span></span></div>`:""}
         ${ME.isDonor?sRow("রক্তের গ্রুপ",ME.bloodGroup,"editBlood"):""}
+        ${ME.isDonor?`<div class="row"><span class="tx"><b>মোট রক্তদান</b>
+            <small>জীবন বাঁচিয়েছেন ${bn(myDonationCount())} বার · ${bn(myDonationBags())} ব্যাগ</small></span>
+          <span class="rt"><span class="tag g">${bn(myDonationCount())} বার</span></span></div>`:""}
+        ${ME.isDonor?sRow("নতুন রক্তদান যোগ করুন","শুধু তারিখ ও স্থান — রেকর্ড সরাসরি যুক্ত হবে","addDonation"):""}
         ${ME.isDonor?sRow("সর্বশেষ রক্তদান",ME.lastDonation?dL(ME.lastDonation):"তথ্য নেই","editLastD"):""}
         ${ME.isDonor?sRow("WhatsApp",ME.whatsapp||"দেওয়া হয়নি","editDonorWa"):""}
         ${ME.isDonor?sRow("স্বাস্থ্য তথ্য",ME.health||"দেওয়া হয়নি","editDonorHealth"):""}
@@ -3298,7 +3487,7 @@ function initPage() {
     el.innerHTML=`
       <div class="card pad0">
         ${sRow("পাসওয়ার্ড","সর্বশেষ পরিবর্তন "+dL(ME.security.passwordChangedAt),"editPass")}
-        ${sRow("পাসওয়ার্ড ভুলে গেছেন?","ইমেইল বা মোবাইলে OTP পাঠানো হবে","forgotPass")}
+        ${sRow("পাসওয়ার্ড ভুলে গেছেন?","অ্যাকাউন্টের ইমেইলে রিসেট লিংক পাঠানো হবে","forgotPass")}
       </div>
       <div class="sec-t">লগইন সুরক্ষা</div>
       <div class="card pad0">
@@ -3585,6 +3774,7 @@ function initPage() {
       if(v.length>300){toast("সর্বোচ্চ ৩০০ অক্ষর লিখুন","er");return false}
       ME.health=v;await await pushMeProfile({health:v});await await logMe("স্বাস্থ্য তথ্য হালনাগাদ",v||"—","donor");await back();toast("সংরক্ষিত","ok")},
       {type:"textarea"});
+    if(a==="addDonation")addMyDonationSheet(page);
   
     if(a==="editPass"){
       const s=sheet("পাসওয়ার্ড বদলান",`<div class="f">
@@ -3740,10 +3930,87 @@ function initPage() {
     if(!email)throw new Error("এই অ্যাকাউন্টে ইমেইল নেই।");
     await setOrChangePassword(user, email, currentPassword, newPassword);
   }
-  /* পাসওয়ার্ড ভুলে গেলে — সাইটের আলাদা full-page UI (/forgot-password)।
-     সেখান থেকেই Firebase-এর built-in reset link পাঠানো হয়; কোনো custom OTP নেই। */
+  /* পাসওয়ার্ড ভুলে গেলে — Donor Panel-এর হুবহু একই সিস্টেম: অ্যাডমিন ইতিমধ্যে
+     লগইন করা, তাই আলাদা full-page UI-তে ইমেইল চাওয়া হয় না। Firebase Auth-এর
+     অ্যাকাউন্ট ইমেইলে সরাসরি reset link পাঠিয়ে ছোট confirmation sheet দেখানো হয়। */
   function sheetForgot(){
-    try{ window.location.assign(appBase()+"forgot-password"); }catch(e){ navigateToPage("home"); }
+    const shared=initSharedFirebase();
+    const user=shared.auth && shared.auth.currentUser;
+    const email=String((user&&user.email)||ME.email||"").trim().toLowerCase();
+    if(!email||!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){
+      toast("এই অ্যাকাউন্টে ইমেইল নেই","er");
+      return;
+    }
+    const s=sheet("পাসওয়ার্ড রিসেট লিংক",`
+      <div id="fg_body" style="text-align:center;padding:8px 0 2px">
+        <div style="width:64px;height:64px;margin:0 auto 14px;border-radius:50%;background:var(--grn-s);
+          color:var(--grn);display:grid;place-items:center;box-shadow:inset 0 0 0 1px rgba(8,122,75,.12)">
+          ${ICON.mail(28)}
+        </div>
+        <b id="fg_title" style="display:block;font-size:.95rem;margin-bottom:6px">লিংক পাঠানো হচ্ছে…</b>
+        <p id="fg_desc" class="mut" style="font-size:.82rem;line-height:1.7;margin:0 0 12px">
+          <span data-noi18n>${esc(email)}</span>
+        </p>
+        <div id="fg_note" class="note i" style="text-align:left;margin:0">
+          ${ICON.info(16)}
+          <span>অনুগ্রহ করে একটু অপেক্ষা করুন…</span>
+        </div>
+      </div>`,
+      `<button class="btn" data-close style="flex:1" id="fg_ok" disabled>বুঝেছি</button>`);
+    const setState=(kind,msg)=>{
+      const title=s.q("#fg_title"), desc=s.q("#fg_desc"), note=s.q("#fg_note"), ok=s.q("#fg_ok");
+      if(kind==="ok"){
+        title.textContent="রিসেট লিংক পাঠানো হয়েছে";
+        desc.innerHTML=`আপনার অ্যাকাউন্টের ইমেইলে পাসওয়ার্ড রিসেট লিংক পাঠানো হয়েছে।<br>
+          <b data-noi18n style="color:var(--ink);font-weight:800">${esc(email)}</b>`;
+        note.className="note g";
+        note.style.textAlign="left";
+        note.style.margin="0";
+        note.innerHTML=`${ICON.checkC(16)}
+          <span>ইমেইল খুলে লিংকে ক্লিক করে নতুন পাসওয়ার্ড সেট করুন। ইমেইল না পেলে স্প্যাম ফোল্ডার দেখুন।</span>`;
+        if(ok){ok.disabled=false;ok.textContent="বুঝেছি";}
+        s.q(".ft").innerHTML=`
+          <button class="btn gh" id="fg_again" style="flex:1">আবার পাঠান</button>
+          <button class="btn" data-close style="flex:1">বুঝেছি</button>`;
+        s.q("#fg_again").onclick=()=>send(true);
+      }else if(kind==="er"){
+        title.textContent="লিংক পাঠানো যায়নি";
+        desc.innerHTML=`<span data-noi18n>${esc(email)}</span>`;
+        note.className="note r";
+        note.style.textAlign="left";
+        note.style.margin="0";
+        note.innerHTML=`${ICON.warn(16)}<span>${esc(msg||"আবার চেষ্টা করুন।")}</span>`;
+        s.q(".ft").innerHTML=`
+          <button class="btn gh" data-close style="flex:1">বন্ধ</button>
+          <button class="btn" id="fg_again" style="flex:1">আবার পাঠান</button>`;
+        s.q("#fg_again").onclick=()=>send(true);
+      }else{
+        title.textContent="লিংক পাঠানো হচ্ছে…";
+        desc.innerHTML=`<span data-noi18n>${esc(email)}</span>`;
+        note.className="note i";
+        note.style.textAlign="left";
+        note.style.margin="0";
+        note.innerHTML=`${ICON.info(16)}<span>অনুগ্রহ করে একটু অপেক্ষা করুন…</span>`;
+        if(ok){ok.disabled=true;}
+      }
+    };
+    let busy=false;
+    async function send(again){
+      if(busy)return;busy=true;
+      setState("load");
+      try{
+        await requestPasswordReset(shared.auth, email);
+        await logMe(again?"পাসওয়ার্ড রিসেট লিংক আবার পাঠানো":"পাসওয়ার্ড রিসেট লিংক পাঠানো",
+          email,"security");
+        setState("ok");
+        toast("রিসেট লিংক পাঠানো হয়েছে","ok");
+      }catch(err){
+        const msg=authErrorMessage(err,{fallback:"রিসেট লিংক পাঠানো যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।"});
+        setState("er", msg);
+        toast(msg,"er");
+      }finally{busy=false}
+    }
+    send(false);
   }
   /* ---------- delete my own admin account ----------
      A staff account is never deleted silently: the last admin must stay,
@@ -4118,18 +4385,35 @@ function initPage() {
           ||DB.donors.find(x=>x.name===q.name);
         if(d){
           /* One approved donation event = one life. Bag quantity is kept as a
-             separate statistic (`totalBags`), never used for lives saved. */
+             separate statistic (`totalBags`), never used for lives saved.
+             ডুপ্লিকেট প্রতিরোধ: একই event (date|place) অন্য id-তে থাকলে পুরোনো
+             record সরানো হয়; পরিসংখ্যান increment-এ নয় — RTDB-র পূর্ণ তালিকা
+             থেকে পুনরায় হিসাব করা হয়, তাই donor history কখনো approved
+             তালিকা থেকে সরে যায় না। */
           const bags=Math.max(1,Math.floor(Number(q.bags)||1));
-          const count=(Number(d.donations)||0)+1;
-          const totalBags=(Number(d.totalBags)||0)+bags;
-          const last=!d.last||q.date>d.last?q.date:d.last;
           const record=await makeApprovedRecord(q,d);
-          approvedDonation={d,count,totalBags,last,record};
+          let donorRecords:any[]=[];
+          try{
+            donorRecords=(((await listOnce(NODES.donations))||[]).filter(
+              r=>r&&String(r.donorId||"")===String(d.id||"")));
+          }catch(e){donorRecords=[]}
+          const eventKey=donationVerKey(q.date,q.place);
+          donorRecords=donorRecords.filter(r=>{
+            if(String(r.id)===String(record.id))return false;
+            if(donationVerKey(r.date,r.place)===eventKey){
+              if(String(r.id||""))paths[`donations/${r.id}`]=null;
+              return false;
+            }
+            return true;
+          });
+          donorRecords.push(record);
+          const stats=donorStatsFromRecords(donorRecords);
+          approvedDonation={d,count:stats.lives,totalBags:stats.bags,last:stats.last,record};
           paths[`donations/${record.id}`]=record;
-          paths[`donors/${d.id}/donations`]=count;
-          paths[`donors/${d.id}/totalDonations`]=count;
-          paths[`donors/${d.id}/totalBags`]=totalBags;
-          if(last)paths[`donors/${d.id}/lastDonationDate`]=last;
+          paths[`donors/${d.id}/donations`]=stats.lives;
+          paths[`donors/${d.id}/totalDonations`]=stats.lives;
+          paths[`donors/${d.id}/totalBags`]=stats.bags;
+          if(stats.last)paths[`donors/${d.id}/lastDonationDate`]=stats.last;
           /* Legacy mirror + authoritative verified list: mark the exact
              user-side record so the donor panel shows it as verified. The
              verifiedDonations list is admin/moderator-only in the RTDB rules. */
@@ -4271,15 +4555,15 @@ function initPage() {
         <button class="g" data-sub="donors"><b>${bn(DB.donors.length)}</b><span>রক্তদাতা</span></button>
         <button class="r" data-sub="donors"><b>${bn(ready)}</b><span>প্রস্তুত</span></button>
         <button class="a" data-sub="users"><b>${bn(DB.reports.filter(r=>r.status!=="resolved").length)}</b><span>অভিযোগ</span></button>
-        <button class="b" data-sub="donorid"><b>${bn(DB.donors.length)}</b><span>ডোনার আইডি</span></button>
+        <button class="b" data-sub="donorid"><b>${bn(donorIdRowsReady?donorIdRows.length:DB.donors.length)}</b><span>ডোনার আইডি</span></button>
       </div>`
     +sect("",[
         row("donor.view","donors","drop","রক্তদাতা তালিকা","খুঁজুন, সম্পাদনা করুন, স্থগিত করুন",bn(DB.donors.length)),
         row("donation.manage","approved","checkC","অনুমোদিত রক্তদান","অনুমোদিত রক্তদান — দেখুন, সম্পাদনা ও মুছুন",bn(DB.donations.length)),
         row("user.view","users","users","ব্যবহারকারী ও অভিযোগ","অ্যাকাউন্ট ও রিপোর্ট",DB.reports.filter(r=>r.status!=="resolved").length?bn(DB.reports.filter(r=>r.status!=="resolved").length):""),
         row("user.view","inbox","mail","বার্তা","ওয়েবসাইটের যোগাযোগ ফর্ম",unread()?`<span class="tag r">${bn(unread())} নতুন</span>`:""),
-        row("team.view","team","users","ডোনার ব্যবস্থাপনা","শুধু Website/Firebase অ্যাকাউন্ট-ওয়ালা ডোনার",bn(accountDonors().length)),
-        row("team.view","donorid","card","ডোনার আইডি ব্যবস্থাপনা","সব ডোনার আইডি — অ্যাকাউন্ট না থাকলেও",bn(DB.donors.length))])
+        row("team.view","team","users","ডোনার ব্যবস্থাপনা","ডোনার তালিকায় থাকা ডোনার — Main Website/Donor Panel-এর সাথে সিঙ্ক",bn(donorIdRowsReady?donorIdRows.length:DB.donors.length)),
+        row("team.view","donorid","card","ডোনার আইডি ব্যবস্থাপনা","RTDB-তে যত ডোনার আইডি আছে সব — অ্যাকাউন্ট না থাকলেও",bn(donorIdRowsReady?donorIdRows.length:DB.donors.length))])
     +`<div class="sec-t">শীর্ষ রক্তদাতা</div>
       <div class="card pad0">${DB.donors.slice().sort((a,b)=>b.donations-a.donations).slice(0,5)
         .map((d,i)=>`<button class="prow" data-dn="${d.id}">
@@ -4321,8 +4605,8 @@ function initPage() {
     +sect("",ACC_PAGES.map(a=>row(null,a.id,a.icon,a.title,a.desc,"")))
     +sect("ব্যবস্থাপনা",[
         row("access.manage","access","key","অ্যাক্সেস ও ভূমিকা","অ্যাডমিন, মডারেটর বা ডোনার ভূমিকা পরিবর্তন",""),
-        row("team.view","team","users","ডোনার ব্যবস্থাপনা","শুধু Website/Firebase অ্যাকাউন্ট-ওয়ালা ডোনার",bn(accountDonors().length)),
-        row("team.view","donorid","card","ডোনার আইডি ব্যবস্থাপনা","সব ডোনার আইডি — অ্যাকাউন্ট না থাকলেও",bn(DB.donors.length)),
+        row("team.view","team","users","ডোনার ব্যবস্থাপনা","ডোনার তালিকায় থাকা ডোনার — Main Website/Donor Panel-এর সাথে সিঙ্ক",bn(donorIdRowsReady?donorIdRows.length:DB.donors.length)),
+        row("team.view","donorid","card","ডোনার আইডি ব্যবস্থাপনা","সব ডোনার আইডি — ডোনার তালিকা + শুধু অ্যাকাউন্টে থাকা",bn(donorIdRowsReady?donorIdRows.length:DB.donors.length)),
         row("donation.manage","approved","checkC","অনুমোদিত রক্তদান","অনুমোদিত রক্তদান — দেখুন, সম্পাদনা ও মুছুন",bn(DB.donations.length)),
         row("gallery.manage","gallery","cam","গ্যালারি","ওয়েবসাইটের গ্যালারিতে ছবি যোগ/মুছুন",bn(DB.gallery.length)),
         row("settings.manage","rules","gear","অনুমোদন ও সেটিংস","কোন কোন কাজে অনুমোদন লাগবে","")])
@@ -4494,6 +4778,20 @@ function initPage() {
           suspended:false,joined:iso(now()),donations:0,totalBags:0});logAudit("নতুন ডোনার যোগ",n,"donor")}
       try{await persist();}
       catch(e){toast("রক্তদাতা সংরক্ষণ করা যায়নি — কোনো সফলতা দেখানো হয়নি","er");return;}
+      /* linked অ্যাকাউন্ট (users/{ownerUid}) একই তথ্যে হালনাগাদ — অ্যাকাউন্ট,
+         Donor Panel ও পাবলিক প্রোফাইল যেন একই মান দেখে (item 10)। */
+      if(id){
+        const owner=String((d&&(d.ownerUid||d.uid))||"").trim();
+        if(owner){
+          const up:Record<string,string>={};
+          (Object.entries({name:o.name,gender:o.gender,dob:o.dob,area:o.area,phone:o.phone,
+            bloodGroup:o.group,lastDonation:o.last}) as [string,string][]).forEach(([k,vv])=>{
+            const t=String(vv||"").trim();if(t)up[k]=t;});
+          if(Object.keys(up).length){
+            try{await updateRow(NODES.users,owner,up);}catch(e){console.warn("donor form account sync:",e&&e.message)}
+          }
+        }
+      }
       s.close();renderSub("donors");toast("সংরক্ষণ হয়েছে","ok")};
   }
   
@@ -4535,7 +4833,7 @@ function initPage() {
     return stats;
   }
   async function deleteApprovedDonation(record){
-    const {paths,stats}=await deleteApprovedDonation(record,donationIo);
+    const {paths,stats}=await deleteDonationRecord(record,donationIo);
     await updatePaths(paths);
     clearDonationQueueFor(record);
     DB.donations=DB.donations.filter(x=>String(x.id)!==String(record.id));
@@ -4549,7 +4847,7 @@ function initPage() {
     if(approvedDonationBackfillRun||!can("donation.manage"))return;
     approvedDonationBackfillRun=true;
     try{
-      const {paths,newRecords,touched}=await backfillApprovedDonations(donationIo,DB.donations||[],DB.donors||[]);
+      const {paths,newRecords,touched}=await backfillDonationLog(donationIo,DB.donations||[],DB.donors||[]);
       if(!newRecords.length)return;
       await updatePaths(paths);
       newRecords.forEach(r=>{DB.donations.unshift(r)});
@@ -4565,21 +4863,46 @@ function initPage() {
   }
   /* Approve-এর সময় queue থেকে তৈরি রেকর্ড (proof URL সহ) — shared module */
   const makeApprovedRecord=(q:any,d:any)=>makeApprovedDonationRecord(q,d,ME.name||"অ্যাডমিন",donationIo);
+  /* পুরোনো duplicate (একই event, ভিন্ন id) RTDB থেকে পরিষ্কার + প্রতিটি donor-এর
+     aggregate (history/stats) approved তালিকার সাথে মিলিয়ে নেওয়া। শুধু পরিবর্তন
+     হলেই write হয়; স্ক্রিনে একবার, তারপর donations node বদলালে (debounced)। */
+  let approvedDonationReconciled=false, reconcileT:any=null;
+  async function reconcileApprovedDonationsScreen(){
+    if(!can("donation.manage"))return;
+    try{
+      const {paths,statsByDonor}=await reconcileDonationLog(donationIo);
+      if(Object.keys(paths).length){
+        await updatePaths(paths);
+        for(const [id,stats] of Object.entries(statsByDonor)){
+          const d=DB.donors.find(x=>String(x.id)===String(id));
+          if(d){d.donations=stats.lives;d.totalDonations=stats.lives;d.totalBags=stats.bags;d.last=stats.last;}
+        }
+        DB.donations=(((await donationIo.listOnce(NODES.donations))||[]).filter(Boolean));
+        logAudit("অনুমোদিত রক্তদান পুনঃসংযোজন",bn(Object.keys(paths).length)+"টি ক্ষেত্র হালনাগাদ","donation");
+      }
+      if(SUB==="approved"&&!document.querySelector(".sheet"))renderSub("approved");
+    }catch(e){console.warn("approved donation reconcile:",e&&e.message)}
+  }
   let appFil={q:"",g:""};
   SUBP.approved=el=>{
-    const list=(DB.donations||[]).slice().sort((a,b)=>String(b.date||b.approvedAt).localeCompare(String(a.date||a.approvedAt)));
+    /* একই event (donorId|date|place) একাধিক id-তে থাকলে তালিকায় একবারই দেখানো হয় */
+    const seen=new Set();
+    const dedupe=r=>{const k=String(r.donorId||"")+"|"+String(r.date||"").trim()+"|"+String(r.place||"").trim();if(seen.has(k))return false;seen.add(k);return true;};
+    const rows=(DB.donations||[]).filter(dedupe);
+    const list=rows.slice().sort((a,b)=>String(b.date||b.approvedAt).localeCompare(String(a.date||a.approvedAt)));
     const filtered=list.filter(r=>{
       if(appFil.q&&![r.name,r.donorId,r.id,r.place,r.group].join(" ").toLowerCase().includes(appFil.q.toLowerCase()))return false;
       if(appFil.g&&r.group!==appFil.g)return false;
       return true;
     });
-    const totalBags=DB.donations.reduce((s,r)=>s+Math.max(0,Number(r.bags)||0),0);
+    const totalBags=list.reduce((s,r)=>s+Math.max(0,Number(r.bags)||0),0);
+    if(!approvedDonationReconciled){approvedDonationReconciled=true;reconcileApprovedDonationsScreen();}
     el.innerHTML=ptitle("অনুমোদিত রক্তদান","অনুমোদিত রক্তদান — দেখুন, সম্পাদনা ও মুছুন")
     +`<div class="astat">
-        <button class="g"><b>${bn(DB.donations.length)}</b><span>জীবন বাঁচিয়েছে</span></button>
+        <button class="g"><b>${bn(list.length)}</b><span>জীবন বাঁচিয়েছে</span></button>
         <button class="b"><b>${bn(totalBags)}</b><span>মোট ব্যাগ</span></button>
-        <button class="a"><b>${bn(new Set(DB.donations.map(r=>r.donorId)).size)}</b><span>রক্তদাতা</span></button>
-        <button class="r"><b>${bn((DB.donations||[]).reduce((s,r)=>s+(r.approvedAt?1:0),0))}</b><span>যাচাইকৃত</span></button>
+        <button class="a"><b>${bn(new Set(list.map(r=>r.donorId)).size)}</b><span>রক্তদাতা</span></button>
+        <button class="r"><b>${bn(list.reduce((s,r)=>s+(r.approvedAt?1:0),0))}</b><span>যাচাইকৃত</span></button>
       </div>
       <div class="frow">
         <input class="gw" id="aq" value="${esc(appFil.q)}" placeholder="নাম / আইডি / স্থান…">
@@ -4591,7 +4914,7 @@ function initPage() {
         const thumb=proofUrlOf(r)||(donor&&donor.photo)||"";
         return `<button class="prow" data-aid="${r.id}">
           <span class="bg2">${esc(r.group)}</span>
-          <span class="tx"><b>${esc(r.name)}</b><small>${esc(r.donorId||r.id)} · ${esc(r.place||"")} · ${dL(r.date)}</small></span>
+          <span class="tx"><b>${esc(r.name)}</b><small>${esc(r.donorId||r.id)} · ${esc(r.place||"")} · ${dts(r.date)}</small></span>
           <span style="display:flex;align-items:center;gap:6px;flex:none">
             <span class="tag b">${bn(r.bags)} ব্যাগ</span>${thumb?`<img src="${esc(thumb)}" alt="" style="width:32px;height:32px;border-radius:8px;object-fit:cover">`:""}
           </span></button>`;
@@ -4626,18 +4949,18 @@ function initPage() {
     const s=sheet("Approved Donation",`
       <div class="per">${thumb?`<img src="${esc(thumb)}" style="width:46px;height:46px;border-radius:14px;object-fit:cover" alt="">`
         :`<span class="bg2" style="width:44px;height:44px;border-radius:12px">${esc(r.group)}</span>`}
-        <div class="i"><b>${esc(r.name)}</b><small>${esc(r.donorId||"")} · ${dL(r.date)}</small></div>
+        <div class="i"><b>${esc(r.name)}</b><small>${esc(r.donorId||"")} · ${dts(r.date)}</small></div>
         <span class="pill g">যাচাইকৃত</span></div>
       <div class="kv" style="margin-top:11px">
         <div><span>Donation ID</span><b>${esc(r.id)}</b></div>
         <div><span>রক্তদাতা</span><b>${esc(r.name)}</b></div>
         <div><span>রক্তের গ্রুপ</span><b>${esc(r.group)}</b></div>
-        <div><span>রক্তদানের তারিখ</span><b>${dL(r.date)}</b></div>
+        <div><span>রক্তদানের তারিখ</span><b>${dts(r.date)}</b></div>
         <div><span>হাসপাতাল / স্থান</span><b>${esc(r.place)}</b></div>
         <div><span>ব্যাগ</span><b>${bn(r.bags)}</b></div>
         <div><span>জীবন বাঁচিয়েছে</span><b>${bn(1)}</b></div>
-        <div><span>Submitted</span><b>${r.submittedAt?dL(r.submittedAt):"—"}</b></div>
-        <div><span>Approved</span><b>${r.approvedAt?dL(r.approvedAt):"—"}</b></div>
+        <div><span>Submitted</span><b>${dts(r.submittedAt)}</b></div>
+        <div><span>Approved</span><b>${dts(r.approvedAt)}</b></div>
         ${r.patient?`<div><span>রোগী</span><b>${esc(r.patient)}</b></div>`:""}
         ${r.note?`<div><span>মন্তব্য</span><b>${esc(r.note)}</b></div>`:""}
       </div>
@@ -4648,7 +4971,7 @@ function initPage() {
        <button class="btn" id="ad_edit">${SI.edit(16)} সম্পাদনা</button>`);
     s.q("#ad_edit").onclick=()=>{s.close();editApprovedDonation(id)};
     s.q("#ad_del").onclick=async()=>{
-      if(!await confirmS({title:"এই রক্তদানের সম্পূর্ণ রেকর্ড মুছে ফেলবেন? এই কাজটি পূর্বাবস্থায় ফেরানো যাবে না।",desc:`${r.donorId||r.id} · ${dL(r.date)} · ${r.place}`,
+      if(!await confirmS({title:"এই রক্তদানের সম্পূর্ণ রেকর্ড মুছে ফেলবেন? এই কাজটি পূর্বাবস্থায় ফেরানো যাবে না।",desc:`${r.donorId||r.id} · ${dts(r.date)} · ${r.place}`,
         ok:"Delete",cancel:"Cancel",danger:true}))return;
       try{
         const stats=await deleteApprovedDonation(r);
@@ -4667,7 +4990,7 @@ function initPage() {
         <label>হাসপাতাল / স্থান</label><input id="ad_place" value="${esc(r.place)}">
         <label>কত ব্যাগ</label><input id="ad_bags" type="number" value="${Number(r.bags)||1}" min="1" max="99">
         <label>নতুন প্রমাণের ছবি (ঐচ্ছিক)</label><input id="ad_file" type="file" accept="image/*">
-        ${r.proof?`<a href="${esc(r.proof)}" target="_blank" rel="noopener"><img src="${esc(r.proof)}" alt="প্রমাণ" style="max-height:130px;border-radius:10px;border:1px solid var(--line)"></a>`:""}
+        ${proofUrlOf(r)?`<a href="${esc(proofUrlOf(r))}" target="_blank" rel="noopener"><img src="${esc(proofUrlOf(r))}" alt="প্রমাণ" style="max-height:130px;border-radius:10px;border:1px solid var(--line)"></a>`:""}
         <label>রোগীর নাম (ঐচ্ছিক)</label><input id="ad_pat" value="${esc(r.patient||'')}">
         <label>মন্তব্য</label><input id="ad_note" value="${esc(r.note||'')}">
       </div>`,
@@ -4832,23 +5155,62 @@ function initPage() {
        • চেকবক্সে ক্লিক = শুধু নির্বাচন/বাতিল; কখনো প্রোফাইল খোলে না।
        • নির্বাচিত এক/একাধিক ডোনারের **অ্যাকাউন্ট** মুছে যায় (scope
          "account") — ডোনার আইডি অক্ষত থাকে। */
-  let teamSel=new Set(), donorIdSel=new Set();
-
-  /** কোন ডোনারের Website/Firebase অ্যাকাউন্ট আছে (users/{uid} রেকর্ড)। */
-  function accountDonors(){
-    const byUid=new Map(accountUsers.map(u=>[String(u.uid||u.id),u]));
-    return DB.donors.filter(d=>{
-      const uid=String((d&&(d.ownerUid||d.uid))||"").trim();
-      return !!uid&&byUid.has(uid);
-    });
-  }
+  let teamSel=new Set(), donorIdSel=new Set(), dmQ="";
 
   /** তালিকার row — username/photo অ্যাকাউন্ট থেকে (থাকলে), না থাকলে শুধু donor। */
   function donorManageRows(all){
     const byUid=new Map(accountUsers.map(u=>[String(u.uid||u.id),u]));
-    return (all?DB.donors:accountDonors()).map(d=>{
+    /* all=true (ডোনার আইডি স্ক্রিন) → RTDB-র সব ডোনার আইডি (ডোনার তালিকার
+       রেকর্ড + অ্যাকাউন্টে লেখা অরফান আইডি);
+       all=false (ডোনার ব্যবস্থাপনা) → শুধু প্রকৃত ডোনার তালিকার রেকর্ড —
+       অ্যাকাউন্ট থাকলেই যে কেউ এখানে আসে না, Main Website/Donor Panel-এর
+       বর্তমান ডোনার তালিকার সাথেই সরাসরি sync। */
+    const base=all&&donorIdRowsReady?allDonorIdRows():donorIdRows;
+    return base.map(d=>{
       const prof=d.ownerUid?byUid.get(String(d.ownerUid)):null;
       return {d,username:String((prof&&prof.username)||""),photo:String(d.photo||(prof&&prof.photo)||"")};
+    });
+  }
+
+  /** অরফান ডোনার আইডি — অ্যাকাউন্টে (users/{uid}/donorId বা accounts/…/donorId)
+      লেখা আছে, কিন্তু ডোনার তালিকায় (donors/{id}) কোনো রেকর্ড নেই। */
+  function orphanDonorIdRows(){
+    const out=[];
+    const donorIds=new Set(donorIdRows.map(d=>String(d.id||d.donorId||"")));
+    (accountUsers||[]).forEach(u=>{
+      const uid=String(u.uid||u.id||"");if(!uid)return;
+      const did=String((u&&(u.donorId||u.id))||"").trim();
+      if(!did||did===uid||donorIds.has(did))return;
+      if(!out.some(x=>x.donorId===did))out.push({
+        id:did,donorId:did,uid,name:u.name||"",email:u.email||"",
+        username:u.username||"",phone:u.phone||"",area:u.area||"",orphan:true
+      });
+    });
+    /* accounts/*-এ স্পষ্ট donorId ফিল্ড থাকলেই (row-এর id কখনো ডোনার আইডি নয়) */
+    (DB.accounts||[]).forEach(a=>{
+      const did=String((a&&a.donorId)||"").trim();
+      if(!did||donorIds.has(did)||out.some(x=>x.donorId===did))return;
+      const uid=String((a&&(a.uid||a.ownerUid||a.id))||"").trim();
+      /* অ্যাকাউন্টে donorId আছে, কিন্তু users/{uid} থেকেও মেলেনি — অরফান */
+      if(uid&&!accountUsers.some(u=>String(u.uid||u.id)===uid&&String(u.donorId||"").trim()===did))
+        out.push({id:did,donorId:did,uid,name:a.name||"",email:a.email||"",
+          username:a.username||"",phone:a.phone||a.mobile||"",area:a.area||"",orphan:true});
+    });
+    return out;
+  }
+  /** ডোনার আইডি স্ক্রিনের সম্পূর্ণ তালিকা — ডোনার রেকর্ড + অরফান আইডি। */
+  function allDonorIdRows(){
+    const rows=donorIdRows.map(d=>({...d}));
+    orphanDonorIdRows().forEach(o=>rows.push(o));
+    return rows;
+  }
+
+  /** ডোনার খোঁজা (নাম / আইডি / ফোন / এলাকা / ইউজারনেম / গ্রুপ) — দুটি স্ক্রিনেই। */
+  function filterDonorManage(rows,q){
+    q=String(q||"").trim().toLowerCase();
+    if(!q)return rows;
+    return rows.filter(({d,username})=>{
+      return [d.name,d.id,d.donorId,d.phone,d.area,d.group,username].join(" ").toLowerCase().includes(q);
     });
   }
 
@@ -4859,45 +5221,71 @@ function initPage() {
     sel.clear();pruned.forEach(id=>sel.add(id));
     const selCount=pruned.size;
     const allChecked=rows.length>0&&selCount===rows.length;
-    return `<div class="frow" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
-        <label style="display:flex;align-items:center;gap:7px;font-size:.78rem;font-weight:700;cursor:pointer">
-          <input type="checkbox" id="tall" ${allChecked?"checked":""} style="width:17px;height:17px;accent-color:var(--grn)">
-          সব নির্বাচন করুন</label>
-        <span class="mut" style="font-size:.75rem">${bn(rows.length)} জন ডোনার</span>
-        <button class="btn red sm" id="tdel" ${selCount?"":"disabled"}>${SI.trash(14)} ডিলিট করুন${selCount?" ("+bn(selCount)+")":""}</button>
-        <button class="btn gh sm" id="tdedupe" style="margin-left:auto">${SI.shield(14)} ডুপ্লিকেট যাচাই</button>
+    return `<div style="display:flex;flex-direction:column;gap:9px;margin-bottom:10px">
+        <div class="frow" style="gap:8px">
+          <input class="gw" id="dmq" value="${esc(dmQ)}" placeholder="নাম / আইডি / ফোন / এলাকা খুঁজুন…"
+            autocomplete="off" style="flex:1;min-width:150px" aria-label="ডোনার খুঁজুন">
+          <button class="btn gh sm" id="tdedupe" style="flex:none">${SI.shield(14)} ডুপ্লিকেট যাচাই</button>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:6px;font-size:.78rem;font-weight:700;cursor:pointer">
+            <input type="checkbox" id="tall" ${allChecked?"checked":""} style="width:16px;height:16px;accent-color:var(--grn)">
+            সব নির্বাচন করুন</label>
+          <span class="mut" style="font-size:.75rem">${bn(rows.length)} জন ডোনার</span>
+          <button class="btn red sm" id="tdel" ${selCount?"":"disabled"} style="flex:none">${SI.trash(14)} ডিলিট করুন${selCount?" ("+bn(selCount)+")":""}</button>
+        </div>
       </div>`
     +(rows.length
       ?`<div class="card pad0">${rows.map(({d,username,photo})=>`<div class="prow" style="cursor:pointer" data-row="${esc(d.id)}">
           <input type="checkbox" data-tsel="${esc(d.id)}" ${sel.has(String(d.id))?"checked":""}
             style="width:17px;height:17px;accent-color:var(--red);flex:none" aria-label="নির্বাচন করুন">
           ${photo?`<img src="${esc(photo)}" alt="" style="width:40px;height:40px;border-radius:11px;object-fit:cover;background:var(--card2)">`
-            :`<span class="bg2" style="background:var(--grn-s);color:var(--grn)">${esc(d.group||"")}</span>`}
+            :`<span class="bg2" style="background:var(--grn-s);color:var(--grn)">${esc(d.group||(d.name&&d.name.slice(0,1))||"•")}</span>`}
           <span class="tx"><b>${esc(d.name)}${d.ownerUid===ME.uid?" (আপনি)":""}</b>
-            <small>${username?"@"+esc(username)+" · ":""}${esc(d.group||"")} · ${esc(d.area||"")}</small>
-            <small>${esc(d.donorId||d.id)} · ${d.suspended?`<span style="color:var(--red)">স্থগিত</span>`:`<span style="color:var(--grn)">অনুমোদিত</span>`}</small></span>
+            <small>${username?"@"+esc(username)+" · ":""}${esc(d.group||"")}${d.group&&d.area?" · ":""}${esc(d.area||"")}</small>
+            <small>${esc(d.donorId||d.id)} · ${d.orphan?`<span style="color:var(--amb)">শুধু অ্যাকাউন্টে — তালিকায় নেই</span>`
+              :d.suspended?`<span style="color:var(--red)">স্থগিত</span>`:`<span style="color:var(--grn)">অনুমোদিত</span>`}</small></span>
         </div>`).join("")}</div>`
       :`<div class="card">${emptyBox("users",emptyTitle,emptyDesc)}</div>`);
   }
 
   /** row ক্লিক → প্রোফাইল; চেকবক্স ক্লিক → শুধু নির্বাচন (stopPropagation)। */
   function wireDonorManage(el,rows,sel,scope){
+    /* scope: "list" = ডোনার ব্যবস্থাপনা (ডিলিট = তালিকা থেকে সরানো),
+              "donor" = ডোনার আইডি ব্যবস্থাপনা (ডিলিট = স্থায়ী permanent delete) */
     $("#tall").onchange=e=>{
       sel.clear();
       if(e.target.checked)rows.forEach(r=>sel.add(String(r.d.id)));
-      renderSub(scope==="account"?"team":"donorid");
+      renderSub(scope==="list"?"team":"donorid");
+    };
+    /* খোঁজা — টাইপের সাথে সাথে তালিকা ফিল্টার হয় (কোনো রিলোড নয়) */
+    let dmqT;
+    const dmq=$("#dmq");
+    if(dmq)dmq.oninput=e=>{
+      dmQ=e.target.value;
+      clearTimeout(dmqT);
+      dmqT=setTimeout(()=>{
+        const sub=scope==="list"?"team":"donorid";
+        renderSub(sub);
+        const i=$("#dmq");if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length)}
+      },240);
     };
     el.querySelectorAll("[data-tsel]").forEach(c=>{
       c.onclick=e=>e.stopPropagation();
       c.onchange=()=>{
         const id=String(c.dataset.tsel);
         c.checked?sel.add(id):sel.delete(id);
-        renderSub(scope==="account"?"team":"donorid");
+        renderSub(scope==="list"?"team":"donorid");
       };
     });
-    /* কার্ড/পঙ্‌ক্তির অন্য যেকোনো অংশ → বিদ্যমান প্রোফাইল ভিউ (দেখুন বাটন নেই) */
-    el.querySelectorAll("[data-row]").forEach(x=>x.onclick=()=>openDonor(x.dataset.row));
-    $("#tdel").onclick=()=>bulkDeleteEntities(scope,[...sel]);
+    /* কার্ড/পঙ্‌ক্তির অন্য যেকোনো অংশ → প্রোফাইল ভিউ (দেখুন বাটন নেই);
+       অরফান আইডি (তালিকায় নেই) হলে তার সংক্ষিপ্ত শিট খোলে */
+    el.querySelectorAll("[data-row]").forEach(x=>x.onclick=()=>{
+      const row=rows.find(r=>String(r.d.id)===String(x.dataset.row));
+      if(row&&row.d.orphan)openOrphanIdSheet(row.d);else openDonor(x.dataset.row);
+    });
+    /* ডোনার ব্যবস্থাপনা → তালিকা থেকে সরানো; ডোনার আইডি → স্থায়ী মুছন */
+    $("#tdel").onclick=()=>scope==="list"?removeDonorsFromList([...sel]):bulkDeleteEntities("donor",[...sel]);
     $("#tdedupe").onclick=()=>openDedupe();
   }
 
@@ -4956,14 +5344,17 @@ function initPage() {
     }
   }
 
-  /* ---------- ডোনার ব্যবস্থাপনা — শুধু অ্যাকাউন্ট-ওয়ালা ডোনার ---------- */
+  /* ---------- ডোনার ব্যবস্থাপনা — শুধু ডোনার তালিকায় থাকা ডোনার ----------
+     অ্যাকাউন্ট (users/{uid}) থাকলেই কাউকে এখানে দেখানো হয় না — শুধু প্রকৃত
+     ডোনার রেকর্ড (donors/{id}) যাদের আছে; Main Website/Donor Panel-এর বর্তমান
+     ডোনার তালিকার সাথেই সরাসরি sync (একই RTDB source, live listener)। */
   SUBP.team=el=>{
     /* ডেটা না আসা পর্যন্ত স্কেলিটন — "কোনো ডোনার নেই"/ভুল তালিকা নয় */
-    if(!dataReady("donors","users")){el.innerHTML=skelRows(4);return}
-    const rows=donorManageRows(false);
+    if(!dataReady("donors","users")||!donorIdRowsReady){el.innerHTML=skelRows(4);return}
+    const rows=filterDonorManage(donorManageRows(false),dmQ);
     el.innerHTML=donorManageHtml(rows,teamSel,
-      "কোনো ডোনার নেই","অ্যাকাউন্ট-ওয়ালা অনুমোদিত রক্তদাতারা এখানে দেখা যাবেন");
-    wireDonorManage(el,rows,teamSel,"account");
+      dmQ?"কোনো ডোনার মেলেনি":"কোনো ডোনার নেই","ডোনার তালিকায় থাকা রক্তদাতারা এখানে দেখা যাবেন — Main Website/Donor Panel-এর সাথে সরাসরি সিঙ্ক");
+    wireDonorManage(el,rows,teamSel,"list");
   };
 
   /* ---------- ডোনার আইডি ব্যবস্থাপনা — সব ডোনার আইডি (অ্যাকাউন্ট ছাড়াও) ----------
@@ -4973,10 +5364,11 @@ function initPage() {
      একই ব্যক্তির (সার্ভারে যাচাইকৃত) লগইন অ্যাকাউন্ট (Firebase Authentication)
      যুক্ত থাকলে সেটিও মোছে। আলাদা/অমিল অ্যাকাউন্ট কখনোই স্পর্শ হয় না। */
   SUBP.donorid=el=>{
-    if(!dataReady("donors")){el.innerHTML=skelRows(4);return}
-    const rows=donorManageRows(true);
+    /* unfiltered তালিকা (donorIdRows) আসা পর্যন্ত স্কেলিটন — ভুল "কোনো আইডি নেই" নয় */
+    if(!dataReady("donors")||!donorIdRowsReady){el.innerHTML=skelRows(4);return}
+    const rows=filterDonorManage(donorManageRows(true),dmQ);
     el.innerHTML=donorManageHtml(rows,donorIdSel,
-      "কোনো ডোনার আইডি নেই","সব ডোনার আইডি এখানে দেখা যাবেন — অ্যাকাউন্ট ছাড়াও");
+      dmQ?"কোনো ডোনার আইডি মেলেনি":"কোনো ডোনার আইডি নেই","সব ডোনার আইডি এখানে দেখা যাবে — ডোনার তালিকায় থাকা + শুধু অ্যাকাউন্টে থাকা (অরফান)");
     wireDonorManage(el,rows,donorIdSel,"donor");
   };
 
@@ -5021,21 +5413,21 @@ function initPage() {
   }
 
   async function bulkDeleteEntities(scope,ids){
-    const isAccount=scope==="account";
-    const entity=isAccount?"অ্যাকাউন্ট":"ডোনার আইডি";
-    const list=DB.donors.filter(d=>ids.includes(String(d.id)));
-    if(!list.length)return toast("কোনো ডোনার নির্বাচিত হয়নি","er");
+    /* ডোনার আইডি ব্যবস্থাপনার ডিলিট — স্থায়ী permanent delete (সার্ভার-যাচাই):
+       ডোনার আইডি + সম্পূর্ণ ডোনার ডেটা/History + সংশ্লিষ্ট Firebase Auth লগইন */
+    const entity="ডোনার আইডি";
+    const list=(donorIdRowsReady?allDonorIdRows():donorIdRows)
+      .filter(d=>ids.includes(String(d.id)));
+    if(!list.length)return toast("কোনো ডোনার আইডি নির্বাচিত হয়নি","er");
     const names=list.slice(0,3).map(d=>d.name).join(", ")+(list.length>3?" সহ "+bn(list.length)+" জন":"");
     if(!await confirmS({title:list.length>1?`নির্বাচিত ${entity}গুলো মুছবেন?`:`${entity} মুছবেন?`,
-      desc:isAccount
-        ?`${names}-এর Website/Firebase অ্যাকাউন্ট (users/accounts/admins রেকর্ড) এবং তার লগইন অ্যাকাউন্ট (Firebase Authentication) মুছে যাবে — ডোনার আইডি ও পাবলিক ডোনার তথ্য অক্ষত থাকবে। এটি ফেরানো যাবে না।`
-        :`${names}-এর ডোনার আইডি ও ডোনার-সম্পর্কিত রেকর্ড (members/queue) মুছে যাবে; একই ব্যক্তির লগইন অ্যাকাউন্ট (Firebase Authentication) যুক্ত থাকলে সেটিও মুছে যাবে। আলাদা/অমিল অ্যাকাউন্ট কখনোই মোছা হবে না। এটি ফেরানো যাবে না।`,
+      desc:`${names}-এর ডোনার আইডি, ডোনারের সব তথ্য ও History (members/queue/donations/requests/reports) স্থায়ীভাবে মুছে যাবে; একই ব্যক্তির লগইন অ্যাকাউন্ট (Firebase Authentication) যুক্ত থাকলে সেটিও মুছে যাবে। আলাদা/অমিল অ্যাকাউন্ট কখনোই মোছা হবে না। এটি ফেরানো যাবে না।`,
       ok:"হ্যাঁ, মুছুন",danger:true}))return;
     const done=[],failed=[];
     for(const d of list){
       /* প্রতিটি entity আলাদাভাবে সার্ভারে যাচাই হয় — ভুল identity অন্য
          কারও তথ্য মুছতে পারে না। */
-      const result=await deleteOneEntity(d,scope).catch(e=>{
+      const result=await deleteOneEntity(d,"donor").catch(e=>{
         console.warn("server delete:",d.id,e&&e.message);
         return {ok:false,scope,donorId:String(d.id||""),uid:String((d&&(d.ownerUid||d.uid))||""),
           name:d.name||d.id,rtdb:"skipped",auth:"skipped",server:"failed",
@@ -5048,14 +5440,86 @@ function initPage() {
     /* সবকিছু সফল হলেই success — আংশিক হলে কী কী বাকি আছে তা জানানো হয়।
        সারসংক্ষেপে লগইন (Firebase Authentication) অংশের প্রকৃত অবস্থা বলা হয়। */
     if(!failed.length){
-      (isAccount?teamSel:donorIdSel).clear();
+      donorIdSel.clear();
       toast(bulkDeletionMessage(done),"ok");
     }else{
       toast((done.length?bn(done.length)+" জন মুছে গেছে — ":"")+failed.slice(0,2).join(" | ")
         +(failed.length>2?" | আরও "+bn(failed.length-2)+" জন":""),"er");
     }
     /* live listener-ই তালিকা/পরিসংখ্যান আপডেট করে — reload নয় */
-    renderSub(isAccount?"team":"donorid");paintNav();paintTop();
+    renderSub("donorid");paintNav();paintTop();
+  }
+
+  /* ══════════ ডোনার ব্যবস্থাপনা — ডিলিট = ডোনার তালিকা থেকে সরানো ══════════
+     (scope "list") — Donor Panel-এ "রক্তদাতা হিসেবে যুক্ত হন" থেকে কেউ
+     বেরিয়ে গেলে যেমন হয়, ঠিক তেমনই: ডোনার রেকর্ড (donors/{id}), অপেক্ষমাণ
+     আবেদন (queue/members) ও ডোনার-সংক্রান্ত status (users/{uid}/donorStatus,
+     donorId ইত্যাদি) মুছে যায় — অ্যাকাউন্ট, লগইন (Firebase Auth) ও রক্তদানের
+     ইতিহাস (donations/*) অক্ষত থাকে। Main Website/Donor Panel-এ সাথে সাথে
+     কার্যকর হয় (একই RTDB, live listener)। স্থায়ী permanent delete শুধু
+     "ডোনার আইডি ব্যবস্থাপনা" স্ক্রিনের। */
+  async function removeDonorsFromList(ids){
+    const list=(donorIdRowsReady?donorIdRows:DB.donors).filter(d=>ids.includes(String(d.id)));
+    if(!list.length)return toast("কোনো ডোনার নির্বাচিত হয়নি","er"),false;
+    const names=list.slice(0,3).map(d=>d.name).join(", ")+(list.length>3?" সহ "+bn(list.length)+" জন":"");
+    if(!await confirmS({title:list.length>1?`নির্বাচিত ডোনারদের তালিকা থেকে সরাবেন?`:`${names} কে ডোনার তালিকা থেকে সরাবেন?`,
+      desc:`${names}-কে ডোনার তালিকা থেকে সরানো হবে — ডোনার রেকর্ড, অপেক্ষমাণ আবেদন (queue/members) ও ডোনার-সংক্রান্ত status মুছে যাবে। অ্যাকাউন্ট, লগইন ও রক্তদানের ইতিহাস অক্ষত থাকবে; ডোনার প্যানেলে "রক্তদাতা হিসেবে যুক্ত হন" আবার দেখা যাবে। এটি ফেরানো যাবে না।`,
+      ok:"হ্যাঁ, সরান",danger:true}))return false;
+    const paths={};
+    const uids=new Set();
+    for(const d of list){
+      const id=String(d&&d.id||"");if(!id)continue;
+      paths[`donors/${id}`]=null;
+      try{ releaseDonorSerial(id); }catch(_e){}
+      /* queue-র PD-<donorId>-ধাঁচের পুরোনো কীও (Doner Panel-এর মতো) */
+      const pd=id.replace(/[^A-Za-z0-9]/g,"").slice(-10);
+      if(pd)paths[`queue/PD-${pd}`]=null;
+      const uid=String((d&&(d.ownerUid||d.uid))||"").trim();
+      if(uid&&isAuthUid(uid))uids.add(uid);
+    }
+    /* অপেক্ষমাণ/সংশ্লিষ্ট queue ও members রেকর্ড — ডোনার আইডি/মালিক UID দিয়ে */
+    try{
+      const [queueRows,memberRows]=await Promise.all([
+        listOnce(NODES.queue).catch(()=>null),
+        listOnce(NODES.members).catch(()=>null)
+      ]);
+      const byId=new Set(list.map(d=>String(d.id)));
+      const byUid=new Set([...uids]);
+      (queueRows||[]).forEach(q=>{
+        const qid=String(q&&q.id||"");if(!qid)return;
+        const qo=String((q&&(q.ownerUid||q.uid))||"").trim();
+        if(byUid.has(qo)||(q&&byId.has(String(q.donorId||""))))paths[`queue/${qid}`]=null;
+      });
+      (memberRows||[]).forEach(m=>{
+        const mid=String(m&&m.id||"");if(!mid)return;
+        const mo=String((m&&(m.ownerUid||m.uid))||"").trim();
+        if(byUid.has(mo)||(m&&byId.has(String(m.donorId||""))))paths[`members/${mid}`]=null;
+      });
+    }catch(e){ console.warn("queue/member scan:",e&&e.message); }
+    /* users/{uid} — ডোনার status/ID পরিষ্কার (অ্যাকাউন্ট, bloodGroup, ইতিহাস
+       অক্ষত) — Donor Panel-এ "রক্তদাতা হিসেবে যুক্ত হন" আবার দেখা যাবে। */
+    for(const uid of uids){
+      paths[`users/${uid}/donorStatus`]=null;
+      paths[`users/${uid}/donorId`]=null;
+      paths[`users/${uid}/lastDonation`]=null;
+      paths[`users/${uid}/health`]=null;
+      paths[`users/${uid}/whatsapp`]=null;
+      paths[`users/${uid}/available`]=null;
+      paths[`users/${uid}/appliedAt`]=null;
+      paths[`users/${uid}/donorRejectNote`]=null;
+      paths[`users/${uid}/groupChange`]=null;
+      const pd=uid.replace(/[^A-Za-z0-9]/g,"").slice(-40);
+      if(pd)paths[`queue/PD-${pd}`]=null;
+    }
+    if(!Object.keys(paths).length)return toast("কোনো ডোনার পাওয়া যায়নি","er"),false;
+    try{
+      await updatePaths(paths);
+      donorIdRows=donorIdRows.filter(d=>!ids.includes(String(d.id)));
+      await logAudit("ডোনার তালিকা থেকে সরানো",`${names} — ${bn(list.length)} জন`,"donor");
+      toast("ডোনার তালিকা থেকে সরানো হয়েছে","ok");
+      renderSub("team");paintNav();paintTop();
+      return true;
+    }catch(e){ console.warn("donor list removal:",e&&e.message); toast("সরানো যায়নি — আবার চেষ্টা করুন","er"); return false; }
   }
 
   /* Team editing and the account directory use one guarded editor. This
@@ -5073,9 +5537,48 @@ function initPage() {
   let dvTab="over", dvId=null;
   
   function openDonor(id){dvId=id;dvTab="over";go(CUR,"donor",true,id)}
+
+  /* অরফান ডোনার আইডির সংক্ষিপ্ত ভিউ — ডোনার তালিকায় রেকর্ড নেই, শুধু
+     অ্যাকাউন্টে (users/{uid}/donorId) লেখা আছে। এখান থেকেই স্থায়ী মুছন
+     যায় (ডোনার আইডি ব্যবস্থাপনার permanent delete — সংশ্লিষ্ট অ্যাকাউন্ট
+     ও Firebase Auth লগইনসহ)। */
+  function openOrphanIdSheet(d){
+    const s=sheet("ডোনার আইডি — শুধু অ্যাকাউন্টে আছে",`
+      <div class="note w">${SI.warn(17)}<span>এই ডোনার আইডির কোনো ডোনার রেকর্ড নেই (ডোনার তালিকায় নেই) — শুধু অ্যাকাউন্টে লেখা আছে। স্থায়ীভাবে মুছলে সংশ্লিষ্ট অ্যাকাউন্ট ও লগইনও মুছে যাবে।</span></div>
+      <div class="card pad0">
+        <div class="row"><span class="ic">${SI.card(18)}</span><span class="tx"><b>${esc(d.donorId||d.id)}</b><small>ডোনার আইডি</small></span></div>
+        <div class="row"><span class="ic">${SI.user(18)}</span><span class="tx"><b>${esc(d.name||"—")}</b><small>নাম</small></span></div>
+        <div class="row"><span class="ic">${SI.mail(18)}</span><span class="tx"><b>${esc(d.email||"—")}</b><small>ইমেইল</small></span></div>
+        ${d.username?`<div class="row"><span class="ic">${SI.user(18)}</span><span class="tx"><b>@${esc(d.username)}</b><small>ইউজারনেম</small></span></div>`:""}
+        <div class="row"><span class="ic">${SI.pin(18)}</span><span class="tx"><b>${esc(d.area||"—")}</b><small>এলাকা</small></span></div>
+        <div class="row"><span class="ic">${SI.phone(18)}</span><span class="tx"><b>${esc(d.phone||"—")}</b><small>মোবাইল</small></span></div>
+        <div class="row"><span class="ic">${SI.key(18)}</span><span class="tx"><b style="font-size:.72rem">${esc(d.uid||"")}</b><small>UID</small></span></div>
+      </div>`,
+      `<button class="btn gh" data-close>বন্ধ</button>
+       <button class="btn red" id="oi_del">${SI.trash(15)} স্থায়ীভাবে মুছুন</button>`);
+    s.q("#oi_del").onclick=async()=>{
+      if(!await confirmS({title:"ডোনার আইডি স্থায়ীভাবে মুছবেন?",
+        desc:"এই ডোনার আইডি, সংশ্লিষ্ট অ্যাকাউন্ট (users/admins/accounts) এবং Firebase Authentication লগইন অ্যাকাউন্ট স্থায়ীভাবে মুছে যাবে — ফেরানো যাবে না।",
+        ok:"মুছে ফেলুন",danger:true}))return;
+      const btn=s.q("#oi_del");btn.disabled=true;btn.textContent="মুছে ফেলা হচ্ছে…";
+      const result=await deleteOneEntity(d,"donor").catch(e=>{
+        console.warn("orphan delete:",d.id,e&&e.message);
+        toast(describeDeletionFailure(d.name||d.id,
+          [{id:"server",label:"নিরাপদ সার্ভার অনুরোধ",ok:false,error:(e&&e.message)||"অজানা সমস্যা"}]),"er");
+        return {ok:false};
+      });
+      if(!result||!result.ok){btn.disabled=false;btn.textContent="স্থায়ীভাবে মুছুন";return}
+      (result.warnings||[]).forEach(w=>toast(w,""));
+      s.close();
+      toast(deletionMessage(result),"ok");
+    };
+  }
   
   SUBP.donor=el=>{
-    const d=DB.donors.find(x=>x.id===(ARG||dvId));
+    /* ডোনার আইডি স্ক্রিন থেকে অ-অনুমোদিত ডোনারও প্রোফাইলে খোলা যায় —
+       unfiltered তালিকা (donorIdRows) fallback হিসেবে */
+    const d=DB.donors.find(x=>x.id===(ARG||dvId))
+      ||donorIdRows.find(x=>x.id===(ARG||dvId));
     if(!d)return el.innerHTML=`<div class="card">${emptyBox("search","রক্তদাতা পাওয়া যায়নি")}</div>`;
     dvId=d.id;
     const rest=d.last?Math.max(0,DB.rules.interval-dayDiff(d.last)):0;
@@ -5275,8 +5778,19 @@ function initPage() {
         if(a===null||a<DB.rules.minAge||a>DB.rules.maxAge)
           return toast(`জন্ম তারিখ অনুযায়ী বয়স ${bn(DB.rules.minAge)}–${bn(DB.rules.maxAge)} বছরের মধ্যে হতে হবে`,"er");
       }
+      const prev=d[key];
       d[key]=v;logAudit("ডোনার তথ্য সম্পাদনা — "+F.t,d.id,"donor");
-      try{await persist();}catch(e){restoreLastPersistedDB();return toast("ডোনার তথ্য সংরক্ষণ করা যায়নি","er");}
+      /* সরাসরি ডোনার রেকর্ডে (donors/{id}) আংশিক আপডেট — shared store-এর
+         lossy full-replace পথে না গিয়ে (সেটি status/অন্যান্য ফিল্ড মুছে
+         দিতে পারত)। RTDB live listener-ই সব স্ক্রিন/ওয়েবসাইট হালনাগাদ করে।
+         `group`/`last` পুরোনো key — পাবলিক ও সব প্যানেল পড়ে bloodGroup/
+         lastDonationDate, তাই সঠিক key-তেই লেখা হয় (stale fix, item 10)। */
+      const RTDB_DONOR_KEY:Record<string,string>={group:"bloodGroup",last:"lastDonationDate"};
+      const rKey=RTDB_DONOR_KEY[key]||key;
+      try{await updateRow(NODES.donors,String(d.id||""),{[rKey]:v});}
+      catch(e){d[key]=prev;console.warn("donor field save:",e&&e.message);return toast("ডোনার তথ্য সংরক্ষণ করা যায়নি","er");}
+      /* linked অ্যাকাউন্ট একই তথ্যে হালনাগাদ — Donor Panel/Profile reload ছাড়াই নতুন মান দেখে */
+      await syncLinkedDonorAccount(d,key,v);
       s.close();renderSub("donor");toast("সংরক্ষণ হয়েছে","ok")};
   }
   function donorAction(a,d){
@@ -5324,16 +5838,18 @@ function initPage() {
       </div>`,`<button class="btn gh w" data-close>বন্ধ</button>`);
       s.querySelectorAll("[data-m]").forEach(b=>b.onclick=async()=>{
         const m=b.dataset.m;s.close();
-        if(m==="verify"){d.verified=!d.verified;
-          logAudit(d.verified?"ডোনার যাচাই":"যাচাই বাতিল",d.id,"donor");
-          try{await persist();}catch(e){restoreLastPersistedDB();return toast("হালনাগাদ সংরক্ষণ করা যায়নি","er");}
+        if(m==="verify"){const nv=!d.verified;d.verified=nv;
+          logAudit(nv?"ডোনার যাচাই":"যাচাই বাতিল",d.id,"donor");
+          try{await updateRow(NODES.donors,String(d.id||""),{verified:nv});}
+          catch(e){d.verified=!nv;console.warn("verify save:",e&&e.message);return toast("হালনাগাদ সংরক্ষণ করা যায়নি","er");}
           renderSub("donor");toast("হালনাগাদ হয়েছে","ok")}
         if(m==="susp"){
           if(!await confirmS({title:d.suspended?"স্থগিত তুলবেন?":"অ্যাকাউন্ট স্থগিত?",
             desc:d.suspended?"আবার পাবলিক তালিকায় দেখা যাবে।":"পাবলিক তালিকা থেকে লুকানো হবে।",
             danger:!d.suspended}))return;
-          d.suspended=!d.suspended;logAudit(d.suspended?"ডোনার স্থগিত":"স্থগিত প্রত্যাহার",d.id,"donor");
-          try{await persist();}catch(e){restoreLastPersistedDB();return toast("হালনাগাদ সংরক্ষণ করা যায়নি","er");}
+          const nv=!d.suspended;d.suspended=nv;logAudit(nv?"ডোনার স্থগিত":"স্থগিত প্রত্যাহার",d.id,"donor");
+          try{await updateRow(NODES.donors,String(d.id||""),{suspended:nv});}
+          catch(e){d.suspended=!nv;console.warn("suspend save:",e&&e.message);return toast("হালনাগাদ সংরক্ষণ করা যায়নি","er");}
           renderSub("donor");toast("হালনাগাদ হয়েছে","ok")}
         if(m==="flag"){
           const fs=sheet("অ্যাডমিনের নজরে আনুন",
@@ -5359,21 +5875,12 @@ function initPage() {
             ["আইডি","নাম","গ্রুপ","এলাকা","ফোন","জন্ম তারিখ","বয়স","লিঙ্গ","শেষ দান","জীবন বাঁচিয়েছেন","মোট ব্যাগ","অবস্থা"]));
           logAudit("প্রোফাইল রপ্তানি",d.id,"data");toast("ফাইল নামছে","ok")}
         if(m==="del"){
-          if(!await confirmS({title:"ডোনার আইডি স্থায়ীভাবে মুছবেন?",
-            desc:"এই ডোনার আইডি ও ডোনার-সম্পর্কিত রেকর্ড মুছে যাবে; একই ব্যক্তির লগইন অ্যাকাউন্ট (Firebase Authentication) যুক্ত থাকলে সেটিও মুছে যাবে। আলাদা/অমিল অ্যাকাউন্ট কখনোই মোছা হবে না। সাধারণত স্থগিত করাই ভালো — মুছলে ফেরানো যায় না।",
-            ok:"মুছে ফেলুন",danger:true}))return;
-          /* নিরাপদ সার্ভার ডিলিট (scope "donor") — সংশ্লিষ্ট লগইন অ্যাকাউন্টও
-             সার্ভারে যাচাই হয়ে মোছা হয়; আলাদা/অমিল অ্যাকাউন্ট স্পর্শ হয় না */
-          const delResult=await deleteOneEntity(d,"donor").catch(e=>{
-            console.warn("server delete:",d.id,e&&e.message);
-            toast(describeDeletionFailure(d.name||d.id,
-              [{id:"server",label:"নিরাপদ সার্ভার অনুরোধ",ok:false,error:(e&&e.message)||"অজানা সমস্যা"}]),"er");
-            return {ok:false} as ReturnType<typeof deleteOneEntity> extends Promise<infer R>?R:never;
-          });
-          if(!delResult||!delResult.ok)return;
-          (delResult.warnings||[]).forEach(w=>toast(w,""));
-          /* live listener-ই তালিকা ও পরিসংখ্যান আপডেট করে — কোনো reload নয় */
-          go(CUR,"donors");toast(deletionMessage(delResult),"ok")}
+          /* ডোনার ব্যবস্থাপনার ডিলিট — ডোনার তালিকা থেকে সরানো (ডোনার ডেটা;
+             অ্যাকাউন্ট/লগইন/ইতিহাস অক্ষত)। স্থায়ী permanent delete (অ্যাকাউন্টসহ)
+             শুধু "ডোনার আইডি ব্যবস্থাপনা" স্ক্রিনে। */
+          const removed=await removeDonorsFromList([String(d.id)]);
+          if(removed)go(CUR,"donors");
+        }
       });
     }
   }
@@ -5520,12 +6027,15 @@ function initPage() {
           ||await getRow(NODES.users,String(uid)).catch(()=>null)||null;
         const liveAdmin=accountAdmins.find(x=>String(x.uid||x.id)===String(uid))
           ||await getRow(NODES.admins,String(uid)).catch(()=>null)||null;
+        /* ডোনার রেকর্ড (donors/{id}) — users/{uid} sparse হলে ভূমিকা পরিবর্তনের
+           সময়ও বিদ্যমান নাম/ফোন/ছবি/এলাকা হারিয়ে যায় না (আইটেম ৭)। */
+        const liveDonor=accountDonorRow(uid)||null;
         const firstFilled=(...vals)=>{for(const v of vals){const t=String(v??"").trim();if(t)return t}return ""};
         const identity={
-          name:firstFilled(a.name,liveAdmin&&liveAdmin.name,liveUser&&liveUser.name),
+          name:firstFilled(a.name,liveAdmin&&liveAdmin.name,liveUser&&liveUser.name,liveDonor&&liveDonor.name),
           username:firstFilled(a.username,liveAdmin&&liveAdmin.username,liveUser&&liveUser.username),
-          email:firstFilled(a.email,liveAdmin&&liveAdmin.email,liveUser&&liveUser.email),
-          photo:firstFilled(a.photo,liveAdmin&&(liveAdmin.photo||liveAdmin.photoURL),liveUser&&(liveUser.photo||liveUser.photoURL)),
+          email:firstFilled(a.email,liveAdmin&&liveAdmin.email,liveUser&&liveUser.email,liveDonor&&liveDonor.email),
+          photo:firstFilled(a.photo,liveAdmin&&(liveAdmin.photo||liveAdmin.photoURL),liveUser&&(liveUser.photo||liveUser.photoURL),liveDonor&&(liveDonor.photo||liveDonor.photoURL)),
           designation:firstFilled(liveAdmin&&liveAdmin.designation,liveUser&&liveUser.designation)
         };
         const paths={[`users/${uid}/role`]:roleValue};
@@ -6464,22 +6974,25 @@ function initPage() {
     el.innerHTML=`<div class="note i">${SI.info(17)}<span>কোন কাজে অনুমোদন (approval) লাগবে তা এখান থেকে ঠিক করুন।
       প্রতিটি সুইচ বদলালেই সেটিং সাথে সাথে Realtime Database-এ সংরক্ষিত ও সব জায়গায় কার্যকর হয়।</span></div>
       <div class="sec-t">অনুমোদন প্রক্রিয়া</div>
-      <div class="card pad0">${APPROVAL_TOGGLES.map(([k,t,help,state])=>`<label class="row" style="cursor:pointer">
+      <div class="card pad0">${APPROVAL_TOGGLES.map(([k,t,help,state])=>`<div class="row">
           <span class="tx"><b>${t}</b><small>${help}</small>
             <small style="color:${r[k]!==false?"var(--grn)":"var(--mut)"}">${r[k]!==false?"চালু · ":"বন্ধ · "}${esc(state)}</small></span>
-          <input type="checkbox" data-rl="${k}" ${r[k]!==false?"checked":""}
-            style="width:20px;height:20px;accent-color:var(--grn);flex:none" aria-label="${esc(t)}"></label>`).join("")}</div>
+          <button class="tg ${r[k]!==false?"on":""}" data-rl="${k}" role="switch" aria-checked="${r[k]!==false}"
+            aria-label="${esc(t)}"></button></div>`).join("")}</div>
       <p class="hint2" style="margin-top:9px">ON থাকলে সংশ্লিষ্ট কাজ approval/queue flow অনুসরণ করবে;
         OFF থাকলে সেই কাজ সরাসরি সম্পন্ন হবে এবং approval queue-তে যাবে না।</p>`;
-    el.querySelectorAll("[data-rl]").forEach(c=>c.onchange=async()=>{
-      const key=c.dataset.rl,previous=r[key];r[key]=c.checked;
+    el.querySelectorAll("[data-rl]").forEach(b=>b.onclick=async()=>{
+      const key=b.dataset.rl,previous=r[key],next=r[key]===false;
+      r[key]=next;
       if(key==="emergencyApproval")r.reqApproval=r.emergencyApproval;
-      c.disabled=true;
+      b.disabled=true;
       try{await pushSettings();await logAudit("অনুমোদন সেটিংস হালনাগাদ",
-          (APPROVAL_TOGGLES.find(t=>t[0]===key)||[,key])[1]+" → "+(c.checked?"ON":"OFF"),"settings");
+          (APPROVAL_TOGGLES.find(t=>t[0]===key)||[,key])[1]+" → "+(next?"ON":"OFF"),"settings");
         toast("সেটিংস RTDB-তে সংরক্ষিত হয়েছে","ok");renderSub("rules");}
-      catch(e){r[key]=previous;if(key==="emergencyApproval")r.reqApproval=previous;c.checked=!!previous;
+      catch(e){r[key]=previous;if(key==="emergencyApproval")r.reqApproval=previous;
+        b.classList.toggle("on",previous!==false);b.setAttribute("aria-checked",previous!==false);
         toast("সেটিংস সংরক্ষণ করা যায়নি","er");}
+      finally{b.disabled=false;}
     });
   };
   
@@ -6536,15 +7049,29 @@ function initPage() {
       try{
         initSharedFirebase();
         const {subscribeAuthUser}=await import("../lib/authState");
+        /* একই uid-এ বারবার event (Firebase token refresh / duplicate initial
+           snapshot) এলে আবার boot হয় না — অন্যথায় প্রতি event-এ সম্পূর্ণ
+           re-render + নতুন করে RTDB watcher (duplicate listener) জমত,
+           ফলে অপ্রয়োজনীয় লোডিং ও অস্থিরতা দেখা দিত। শুধু logout (null) বা
+           অন্য uid-এ স্যুইচ করলেই আবার কাজ হয়। */
+        let bootedUid="";
         subscribeAuthUser(async (user)=>{
           if(!user){
+            bootedUid="";
             navigateToPage("home");
             return;
           }
+          if(bootedUid===user.uid)return;
+          bootedUid=user.uid;
           const email=String(user.email||"").toLowerCase();
+          /* দ্রুত প্রবেশ — users/{uid} একবারই পড়া হয়: resolveUserRole-কে
+             knownProfile হিসেবে দেওয়া হয় (দ্বিতীয় read নেই) এবং applyMeRow-তে
+             একই মান বসে। ফলে লগইনের পর অপ্রয়োজনীয় লোডিং/round-trip নেই। */
+          let profileRow=null;
+          try{ profileRow=await getRow(NODES.users,user.uid); }catch(e){console.warn("profile load:",e&&e.message)}
           let resolved={role:"donor",name:"",permissions:[],staff:null};
           try{
-            resolved=await resolveUserRole({uid:user.uid,email,name:user.displayName||""});
+            resolved=await resolveUserRole({uid:user.uid,email,name:user.displayName||""},{knownProfile:profileRow});
           }catch(e){console.warn("role lookup:",e&&e.message)}
 
           const target=panelForRole(resolved.role);          // doner | moderator | admin
@@ -6561,7 +7088,7 @@ function initPage() {
           /* profile-এর authoritative উৎস RTDB users/{uid} — admins রেকর্ড ও Auth
              display name শুধু fallback (default যেন RTDB-র জায়গা নেয় না)।
              অন্য ডিভাইস/ব্রাউজার থেকে লগইন করলেও এখান থেকেই সব তথ্য আসে। */
-          try{ applyMeRow(await getRow(NODES.users,user.uid)); }catch(e){console.warn("profile load:",e&&e.message)}
+          try{ applyMeRow(profileRow); }catch(e){console.warn("profile apply:",e&&e.message)}
           /* getRow সফলভাবে শেষ হলেই hydrated — RTDB-তে রেকর্ড না থাকলেও
              (নতুন স্টাফ) local default লেখা যাবে, কিন্তু নেটওয়ার্ক ব্যর্থ
              হলে কখনোই খালি default দিয়ে আগের তথ্য মোছা হবে না। */
@@ -6576,14 +7103,15 @@ function initPage() {
           ME.role=PANEL.id==="admin"?"admin":"mod";
           if(user.photoURL)ME.photo=ME.photo||user.photoURL;
           upsertMySession();
-          await saveMe();
-          /* live sync — নিজের অ্যাকাউন্ট (users/{uid}), টিম (admins),
-             অডিট লগ ও বার্তা: সব RTDB থেকে, সব প্যানেলে একই তথ্য */
-          watchMe(user.uid);watchTeam();watchAudit();watchMessages();watchAccounts();watchReports();
+          /* আগে প্যানেল দেখাই — RTDB write (session/device সংরক্ষণ) পেছনে চলে */
           applyLogo(document);
           paintTop();paintNav();
-          setTimeout(backfillApprovedDonations,1200);
           proceed();
+          try{ await saveMe(); }catch(e){ console.warn("me save:",e&&e.message); }
+          /* live sync — নিজের অ্যাকাউন্ট (users/{uid}), টিম (admins),
+             অডিট লগ ও বার্তা: সব RTDB থেকে, সব প্যানেলে একই তথ্য */
+          watchMe(user.uid);watchTeam();watchAudit();watchMessages();watchAccounts();watchDonorIds();watchReports();
+          setTimeout(backfillApprovedDonations,1200);
         });
       }catch(e){ console.warn("panel auth:", e&&e.message); proceed(); }
     })();
@@ -6607,8 +7135,18 @@ function initPage() {
     if(window.CBDCShared)CBDCShared.subscribe((st,meta)=>{
       if(meta&&meta.source==="panel:"+PANEL.id)return;
       pullSharedState();
+      /* ডোনার তালিকা এলেই Access & Role/Team-এ donors/{id} fallback হালনাগাদ
+         হয় (users/admins listener-এর আগে/পরে যাই আসুক) — খালি নাম/ফোন কখনোই
+         দীর্ঘক্ষণ থাকে না (আইটেম ৭)। */
+      if(meta&&meta.node==="donors"){ try{ refreshAccounts(); }catch(e){ console.warn("accounts refresh:",e&&e.message); } }
       paintNav();paintTop();
       if(!approvedDonationBackfillRun&&(meta&&(meta.node==="donors"||meta.node==="donations")))backfillApprovedDonations();
+      /* donations node বদলালে (অন্য ডিভাইস/প্যানেল থেকেও) duplicate পরিষ্কার +
+         donor aggregate মিলিয়ে নেওয়া হয় (debounced) */
+      if(meta&&meta.node==="donations"){
+        clearTimeout(reconcileT);
+        reconcileT=setTimeout(()=>reconcileApprovedDonationsScreen(),1200);
+      }
       const node=meta&&meta.node;
       if(node){
         const affected=NODE_SCREENS[node];

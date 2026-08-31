@@ -21,8 +21,8 @@
  *  অ্যাডমিনের dedupe scan-এর নির্দেশনা দেখায়)।
  */
 
-import { ApiError } from "./deleteApi";
-import { emailIndexPath } from "./identityKey";
+import { ApiError } from "./deleteApi.ts";
+import { emailIndexPath } from "./identityKey.ts";
 
 export type ResolveLegacyIo = {
   /** caller-এর Firebase ID token যাচাই → { uid, email } */

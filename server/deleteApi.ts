@@ -18,9 +18,10 @@
  *   • **কোনো private key / service-account / Firebase Admin SDK নেই** — সার্ভারেও
  *     নয়। এজন্যই Firebase Authentication (লগইন) অ্যাকাউন্ট মোছা সম্ভব নয়;
  *     তা রয়ে গেলে স্পষ্ট warning দেওয়া হয় (Console → Authentication)।
- *   • **দুটি স্বাধীন entity** — একটির deletion অন্যটিকে কোনোভাবেই স্পর্শ করে না:
- *       account scope → users/{uid} · admins/{uid} · accounts/*   (ডোনার আইডি অক্ষত)
- *       donor scope   → donors/{donorId} · members/* · queue/*    (অ্যাকাউন্ট অক্ষত)
+   *   • **দুটি স্বাধীন entity** — একটির deletion অন্যটিকে কোনোভাবেই স্পর্শ করে না:
+   *       account scope → users/{uid} · admins/{uid} · accounts/*   (ডোনার আইডি অক্ষত)
+   *       donor scope   → donors/{donorId} · members/* · queue/* · donations/*
+   *                       (ডোনারের History) · requests/* · reports/*
  *   • ভুল/অমিল identity দিলে কিছুই মোছা হয় না; প্রতিটি path মোছার আগে
  *     আগে থেকেই read করে নিশ্চিত হওয়া হয়।
  *
@@ -28,7 +29,7 @@
  * dev middleware, verification harness) একই logic চালানো যায়।
  */
 
-import { emailIndexPath } from "./identityKey";
+import { emailIndexPath } from "./identityKey.ts";
 
 export type DeleteScope = "account" | "donor";
 
@@ -285,7 +286,8 @@ async function deleteAccountEntity(
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   Donor ID entity — donors/{donorId} · members/* · queue/*
+   Donor ID entity — donors/{donorId} · members/* · queue/* ·
+   donations/* (ডোনারের History) · requests/* · reports/*
    + **যুক্ত থাকলে** সংশ্লিষ্ট অ্যাকাউন্ট (users/{uid} · admins/{uid} ·
    accounts/*) ও তার Firebase Authentication লগইন।
 
@@ -306,15 +308,32 @@ async function deleteDonorIdEntity(
   if (!donorId) throw new ApiError(400, "ডোনার আইডি (Donor ID) দিতে হবে।");
 
   const donor = (await io.get(`donors/${donorId}`).catch(() => null)) as any;
-  if (!donor) {
-    throw new ApiError(404, "এই ডোনার আইডির কোনো রেকর্ড পাওয়া যায়নি — কিছু মোছা হয়নি।");
-  }
   /* মালিকানা **শুধুই সার্ভারে পড়া** রেকর্ড থেকে — ক্লায়েন্ট uid নয়। */
-  const uid = ownerOf(donor);
+  const clientUid = String(input?.uid ?? "").trim();
+  let uid = ownerOf(donor);
+
+  /* ডোনার রেকর্ড না থাকলে — অরফান ডোনার আইডি (অ্যাকাউন্টে donorId লেখা আছে,
+     কিন্তু ডোনার তালিকায় রেকর্ড নেই)। identity অ্যাকাউন্ট রেকর্ড দিয়েই
+     সার্ভার-যাচাই করা হয়: users/{uid}/donorId অথবা accounts/…/donorId-কে
+     (মালিক uid সহ) এই donorId-এর সাথে মেলাতে হবে; নইলে কিছুই মোছা হয় না। */
+  if (!donor) {
+    if (!clientUid || !isAuthUid(clientUid)) {
+      throw new ApiError(404, "এই ডোনার আইডির কোনো রেকর্ড পাওয়া যায়নি — কিছু মোছা হয়নি।");
+    }
+    const orphanUser = (await io.get(`users/${clientUid}`).catch(() => null)) as any;
+    const accountRows = (await io.list("accounts").catch(() => null)) || {};
+    const orphanAccountMatch = Object.values(accountRows).some(
+      (r) => accountOf(r, clientUid) && String((r as any)?.donorId ?? "").trim() === donorId,
+    );
+    const orphanUserMatch = !!orphanUser && String(orphanUser?.donorId ?? "").trim() === donorId;
+    if (!orphanUserMatch && !orphanAccountMatch) {
+      throw new ApiError(404, "এই ডোনার আইডির কোনো রেকর্ড পাওয়া যায়নি — কিছু মোছা হয়নি।");
+    }
+    uid = clientUid;
+  }
 
   /* ক্লায়েন্ট যদি uid পাঠায় এবং তা সার্ভারের owner-এর সাথে না মেলে —
      ভুল/পুরোনো ভিউ; নিরাপত্তায় কিছুই মোছা হয় না। */
-  const clientUid = String(input?.uid ?? "").trim();
   if (clientUid && uid && clientUid !== uid) {
     throw new ApiError(
       409,
@@ -337,6 +356,24 @@ async function deleteDonorIdEntity(
   }
   for (const [id, row] of Object.entries(queueRows)) {
     if (donorRecordOf(row, uid, donorId)) paths[`queue/${id}`] = null;
+  }
+
+  /* ── ডোনারের নিজের কাজ/History — Permanent Delete ──
+     • donations/* — এই ডোনার আইডির সব অনুমোদিত রক্তদানের রেকর্ড (History)
+     • requests/* — নিজের তোলা জরুরি রক্তের আবেদন
+     • reports/*  — নিজের পাঠানো অভিযোগ/সমস্যা রিপোর্ট
+     শুধুই এই ডোনার/uid-এর রেকর্ড; অন্য কারও তথ্য কখনো স্পর্শ করা হয় না। */
+  const donationRows = (await io.list("donations").catch(() => null)) || {};
+  for (const [id, row] of Object.entries(donationRows)) {
+    if (row && String((row as any)?.donorId ?? "").trim() === donorId) paths[`donations/${id}`] = null;
+  }
+  const requestRows = (await io.list("requests").catch(() => null)) || {};
+  for (const [id, row] of Object.entries(requestRows)) {
+    if (donorRecordOf(row, uid, donorId)) paths[`requests/${id}`] = null;
+  }
+  const reportRows = (await io.list("reports").catch(() => null)) || {};
+  for (const [id, row] of Object.entries(reportRows)) {
+    if (donorRecordOf(row, uid, donorId)) paths[`reports/${id}`] = null;
   }
 
   /* ── সংশ্লিষ্ট অ্যাকাউন্ট + লগইন — শুধুমাত্র যখন ডোনার রেকর্ডেই বৈধ
@@ -393,7 +430,7 @@ async function deleteDonorIdEntity(
   }
 
   const removed = await applyPaths(io, paths);
-  steps.push({ id: "rtdb", label: "Realtime Database রেকর্ড (donors/members/queue" + (authUid && !isOwnDonor ? "/users/admins/accounts" : "") + ")", ok: true, skipped: removed === 0 });
+  steps.push({ id: "rtdb", label: "Realtime Database রেকর্ড (donors/members/queue/donations/requests/reports" + (authUid && !isOwnDonor ? "/users/admins/accounts" : "") + ")", ok: true, skipped: removed === 0 });
 
   return {
     ok: true,

@@ -443,7 +443,17 @@ function subscribe(fn: (state: any, meta?: any) => void): () => void {
 // ── donor converters ──
 // বয়স আর সংরক্ষণ করা হয় না: ডাটাবেসে থাকে `dob` (জন্ম তারিখ), আর `age`
 // প্রতিবার সেখান থেকে হিসাব করে দেওয়া হয় (src/lib/age.ts)।
+/* ═══ Round-trip safe converters ═══
+   Each converter spreads the source row first and then overrides the canonical
+   keys. This guarantees a save → read → save round trip through the shared
+   store never drops fields written by other panels (appliedAt, createdAt,
+   health, fcmToken, cardTheme, updatedAt, email, username, privacy, …).
+   Without this, an Admin/Moderator persist() that rewrote a donor record could
+   silently erase data written by the Donor Panel — breaking single-source of
+   truth (item 10). `age` is always computed (src/lib/age.ts) and is the only
+   key explicitly excluded from the RTDB write (never stored). */
 const toAdminDonor = (d: any) => ({
+  ...d,
   id: d.id || d.donorId,
   name: d.name || "",
   group: d.bloodGroup || d.group || "",
@@ -465,32 +475,38 @@ const toAdminDonor = (d: any) => ({
   ownerUid: d.ownerUid || d.uid || "",
 });
 
-const fromAdminDonor = (d: any) => ({
-  id: d.id,
-  donorId: d.id,
-  uid: d.ownerUid || d.uid || d.id,
-  name: d.name || "",
-  bloodGroup: d.group || "",
-  gender: d.gender || "",
-  dob: d.dob || "",
-  phone: d.phone || "",
-  whatsapp: d.whatsapp || d.phone || "",
-  area: d.area || "",
-  lastDonationDate: d.last || "",
-  donations: Number(d.donations) || 0,
-  totalDonations: Number(d.donations) || 0,
-  totalBags: Number(d.totalBags ?? d.bags ?? 0) || 0,
-  status: "approved",
-  available: d.available !== false,
-  verified: d.verified !== false,
-  suspended: !!d.suspended,
-  joined: d.joined || "",
-  occupation: d.occupation || "",
-  photo: d.photo || d.photoURL || "",
-  ownerUid: d.ownerUid || "",
-});
+const fromAdminDonor = (d: any) => {
+  const out: any = { ...d };
+  delete out.age; // computed value — never written to RTDB
+  Object.assign(out, {
+    id: d.id,
+    donorId: d.id,
+    uid: d.ownerUid || d.uid || d.id,
+    name: d.name || "",
+    bloodGroup: d.group || "",
+    gender: d.gender || "",
+    dob: d.dob || "",
+    phone: d.phone || "",
+    whatsapp: d.whatsapp || d.phone || "",
+    area: d.area || "",
+    lastDonationDate: d.last || "",
+    donations: Number(d.donations) || 0,
+    totalDonations: Number(d.donations) || 0,
+    totalBags: Number(d.totalBags ?? d.bags ?? 0) || 0,
+    status: "approved",
+    available: d.available !== false,
+    verified: d.verified !== false,
+    suspended: !!d.suspended,
+    joined: d.joined || "",
+    occupation: d.occupation || "",
+    photo: d.photo || d.photoURL || "",
+    ownerUid: d.ownerUid || "",
+  });
+  return out;
+};
 
 const toDonerDonor = (d: any) => ({
+  ...d,
   uid: d.uid || d.ownerUid || d.id,
   donorId: d.id || d.donorId,
   name: d.name || "",
@@ -512,6 +528,7 @@ const toDonerDonor = (d: any) => ({
 });
 
 const fromDonerDonor = (d: any) => ({
+  ...d,
   id: d.donorId || d.id,
   donorId: d.donorId || d.id,
   uid: d.uid || d.donorId || d.id,

@@ -25,6 +25,7 @@ import {
   writeApprovedDonation,
   deleteApprovedDonation,
   backfillApprovedDonations,
+  reconcileApprovedDonations,
 } from "../src/lib/donationLog.ts";
 
 /* ── in-memory RTDB mock ────────────────────────────────────────────────
@@ -603,7 +604,136 @@ test("20. Admin delete/edit clears the local verification queue so persist() can
   const admin = readFileSync(path.join(process.cwd(), "src/pages/Admin.tsx"), "utf8");
   assert.match(admin, /function clearDonationQueueFor\(record\)\{/);
   assert.match(admin, /clearDonationQueueFor\(record\);\s*\n\s*DB\.donations=DB\.donations\.filter/);
-  // delete flow: shared module also removes queue/{id}
-  assert.match(admin, /const \{paths,stats\}=await deleteApprovedDonation\(record,donationIo\);/);
+  // delete flow: the local wrapper must call the SHARED core (aliased import —
+  // a same-name local function would recurse forever and delete would never work)
+  assert.match(admin, /deleteApprovedDonation as deleteDonationRecord/);
+  assert.match(admin, /const \{paths,stats\}=await deleteDonationRecord\(record,donationIo\);/);
   assert.match(admin, /await updatePaths\(paths\);/);
+  assert.doesNotMatch(admin, /async function deleteApprovedDonation\(record\)\{[\s\S]*?await deleteApprovedDonation\(record,donationIo\);/);
+});
+
+/* ══════════ New: data/date/duplicate/delete fixes ══════════ */
+
+test("21. Same event stored under two ids is deduped on write (no double life)", async () => {
+  const db = new MockDb();
+  db.set("donors/CBDC-2026-0001", { ...donor });
+  db.set("users/user-1", seedUser());
+  const io = db.io();
+  const q = {
+    id: "DN-user1-20260830-vx", name: donor.name, group: donor.group, area: donor.area,
+    photo: "", phone: donor.phone, place: "চমেক ব্লাড ব্যাংক", date: "2026-08-30", bags: 4,
+    proofUrl: "https://imgbb/abc.jpg", ownerUid: "user-1", at: "2026-08-30T09:00:00Z",
+  };
+  const rec = await makeApprovedDonationRecord(q, donor, "অ্যাডমিন", io, now);
+  await io.updatePaths((await writeApprovedDonation(rec, null, io)).paths);
+
+  // legacy duplicate of the SAME event under a different (old random) id
+  const dup = { ...rec, id: "DN-LEGACY-RANDOM-1", approvedAt: "2026-08-29T05:00:00Z", proof: "" };
+  db.set("donations/DN-LEGACY-RANDOM-1", dup);
+
+  // a NEW approval for the same donor/date/place → old twin removed, stats correct
+  const { paths, stats } = await writeApprovedDonation(rec, null, io);
+  await io.updatePaths(paths);
+  assert.equal(stats.lives, 1, "same event twice → still 1 life");
+  assert.equal(stats.bags, 4);
+  assert.equal(db.get("donations/DN-LEGACY-RANDOM-1"), undefined, "legacy twin removed from RTDB");
+  const d = db.get("donors/CBDC-2026-0001");
+  assert.equal(d.donations, 1);
+  assert.equal(d.totalBags, 4);
+});
+
+test("22. Delete removes the event including any duplicate twin (stats recomputed)", async () => {
+  const db = new MockDb();
+  db.set("donors/CBDC-2026-0001", { ...donor });
+  db.set("users/user-1", seedUser());
+  const io = db.io();
+  const q = {
+    id: "DN-user1-20260830-vx", name: donor.name, group: donor.group, area: donor.area,
+    photo: "", phone: donor.phone, place: "চমেক ব্লাড ব্যাংক", date: "2026-08-30", bags: 4,
+    proofUrl: "", ownerUid: "user-1", at: "2026-08-30T09:00:00Z",
+  };
+  const rec = await makeApprovedDonationRecord(q, donor, "অ্যাডমিন", io, now);
+  await io.updatePaths((await writeApprovedDonation(rec, null, io)).paths);
+  const twin = { ...rec, id: "DN-OLD-ID-12345678" };
+  db.set("donations/DN-OLD-ID-12345678", twin);
+
+  const { paths, stats } = await deleteApprovedDonation(rec, io);
+  await io.updatePaths(paths);
+
+  assert.equal(db.get("donations/" + rec.id), undefined, "record removed");
+  assert.equal(db.get("donations/DN-OLD-ID-12345678"), undefined, "duplicate twin also removed");
+  assert.equal(stats.lives, 0);
+  const d = db.get("donors/CBDC-2026-0001");
+  assert.equal(d.donations, 0);
+  assert.equal(d.totalBags, 0);
+});
+
+test("23. donorStatsFromRecords ignores invalid/legacy dates for last donation", () => {
+  const stats = donorStatsFromRecords([
+    { id: "a", date: "2026-05-01", bags: 1 },
+    { id: "b", date: "garbage", bags: 2 },
+    { id: "c", date: "2026-08-30T10:00:00.000Z", bags: 3 },
+    { id: "d", date: "", bags: 4 },
+    { id: "e", bags: 5 },
+  ]);
+  assert.equal(stats.lives, 5, "all events still count (1 event = 1 life)");
+  assert.equal(stats.bags, 15, "bags summed regardless of date validity");
+  assert.equal(stats.last, "2026-05-01", "invalid timestamps never become lastDonationDate");
+});
+
+test("24. reconcileApprovedDonations heals legacy duplicates + stale donor aggregates", async () => {
+  const db = new MockDb();
+  db.set("donors/CBDC-2026-0001", { ...donor, donations: 5, totalDonations: 5, totalBags: 99, lastDonationDate: "bad-date" });
+  const io = db.io();
+  // same event twice (best record has approvedAt + proof)
+  const good = { id: "DN-GOOD-1", donorId: donor.id, date: "2026-08-30", place: "চমেক ব্লাড ব্যাংক", bags: 4, proof: "https://imgbb/x.jpg", approvedAt: "2026-08-30T10:00:00Z", updatedAt: now };
+  const twin = { id: "DN-TWIN-1", donorId: donor.id, date: "2026-08-30", place: "চমেক ব্লাড ব্যাংক", bags: 4, proof: "", approvedAt: "" };
+  const other = { id: "DN-OTHER-1", donorId: donor.id, date: "2026-07-01", place: "ম্যাক্স হাসপাতাল", bags: 2, proof: "", approvedAt: "" };
+  db.set("donations/DN-GOOD-1", good);
+  db.set("donations/DN-TWIN-1", twin);
+  db.set("donations/DN-OTHER-1", other);
+
+  const { paths, statsByDonor } = await reconcileApprovedDonations(io);
+  await io.updatePaths(paths);
+
+  assert.equal(db.get("donations/DN-TWIN-1"), undefined, "duplicate twin removed");
+  assert.ok(db.get("donations/DN-GOOD-1"), "best record kept");
+  assert.ok(db.get("donations/DN-OTHER-1"), "distinct event untouched");
+  assert.equal(statsByDonor[donor.id].lives, 2, "2 distinct events → 2 lives");
+  assert.equal(statsByDonor[donor.id].bags, 6);
+  const d = db.get("donors/CBDC-2026-0001");
+  assert.equal(d.donations, 2, "stale aggregate healed");
+  assert.equal(d.totalBags, 6);
+  assert.equal(d.lastDonationDate, "2026-08-30", "invalid last replaced by the real latest date");
+
+  // consistent data → no writes on second pass
+  const again = await reconcileApprovedDonations(io);
+  assert.equal(Object.keys(again.paths).length, 0, "idempotent: no writes when already consistent");
+});
+
+test("25. Approved list UI: no Invalid Date, dedupe by event, safe proof image", () => {
+  const admin = readFileSync(path.join(process.cwd(), "src/pages/Admin.tsx"), "utf8");
+  const screen = admin.slice(admin.indexOf("SUBP.approved=el=>{"), admin.indexOf("async function openApprovedDonation"));
+  const detail = admin.slice(admin.indexOf("async function openApprovedDonation"), admin.indexOf("function editApprovedDonation"));
+  const edit = admin.slice(admin.indexOf("function editApprovedDonation"), admin.indexOf("/* ---------- live requests"));
+
+  /* dates: safe dts() everywhere — dL (YYYY-MM-DD-only) never used for ISO timestamps */
+  assert.match(screen, /· \$\{dts\(r\.date\)\}/);
+  assert.match(detail, /Submitted<\/span><b>\$\{dts\(r\.submittedAt\)\}/);
+  assert.match(detail, /Approved<\/span><b>\$\{dts\(r\.approvedAt\)\}/);
+  assert.doesNotMatch(detail, /dL\(r\.submittedAt\)|dL\(r\.approvedAt\)/);
+
+  /* duplicates hidden in the list by event key (donorId|date|place) */
+  assert.match(screen, /const seen=new Set\(\);/);
+  assert.match(screen, /String\(r\.donorId\|\|""\)\+"\|"\+String\(r\.date\|\|""\)\.trim\(\)\+"\|"\+String\(r\.place\|\|""\)\.trim\(\)/);
+
+  /* edit sheet never renders a broken/wrong proof URL */
+  assert.match(edit, /\$\{proofUrlOf\(r\)\?`<a href="\$\{esc\(proofUrlOf\(r\)\)\}"[\s\S]*?<img src="\$\{esc\(proofUrlOf\(r\)\)\}"/);
+  assert.doesNotMatch(edit, /r\.proof\?`<a href="\$\{esc\(r\.proof\)\}/);
+
+  /* delete really deletes: local wrapper → shared core (no recursion), then refresh */
+  const wrapper = admin.slice(admin.indexOf("async function deleteApprovedDonation(record){"), admin.indexOf("/* ── legacy verifiedDonations"));
+  assert.match(wrapper, /deleteDonationRecord\(record,donationIo\)/);
+  assert.match(detail, /const stats=await deleteApprovedDonation\(r\);/);
+  assert.match(detail, /renderSub\("approved"\)/);
 });

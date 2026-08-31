@@ -4965,7 +4965,10 @@ function initPage() {
         const q=String(identifier).trim().toLowerCase();
         try{
           /* প্রথমে loginIndex — পাবলিক claim-once সূচি (লগইনের আগেই পড়া যায়)।
-             পুরোনো/অনুপস্থিত সূচি হলে আগের users query fallback কাজ করে। */
+             এটিই username/phone → email-এর একমাত্র pre-login উৎস: `users` নোডে
+             query করা যায় না (rules-এ admin ছাড়া read নেই — লগইনের আগে সেটি
+             সবসময় permission-denied; দুইটি অপ্রয়োজনীয় denied round-trip-এ
+             login ধীর হতো, তাই সেসব fallback বাদ দেওয়া হয়েছে)। */
           const {lookupLoginKey}=await import("../lib/identity");
           if(!q.includes("@")){
             const byIndex=await lookupLoginKey("username",q);
@@ -4976,10 +4979,6 @@ function initPage() {
               if(byPhoneIdx&&String(byPhoneIdx).includes("@")) return String(byPhoneIdx).toLowerCase();
             }
           }
-          const byName = await findBy(NODES.users, "username", q);
-          if(byName && byName.email) return String(byName.email).toLowerCase();
-          const byPhone = await findBy(NODES.users, "phone", digits(q));
-          if(byPhone && byPhone.email) return String(byPhone.email).toLowerCase();
         }catch(e){ console.warn("identifier lookup:", e && e.message); }
         return null;
       }
@@ -5435,6 +5434,10 @@ function initPage() {
           let msg="লগইন করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।";
           if(code==="auth/user-not-found"){
             msg="এই তথ্য দিয়ে কোনো অ্যাকাউন্ট পাওয়া যায়নি।";
+            /* ইউজারনেম/ফোন দিয়ে না পাওয়া গেলে ইমেইল পথের পরামর্শ — পুরোনো
+               অ্যাকাউন্টের loginIndex entry না থাকলে ইমেইল দিয়েই লগইন হবে
+               (এবং সাথে সাথে সূচি backfill-ও হয়ে যাবে)। */
+            if(!String(identifier||"").includes("@"))msg+=" ইউজারনেম দিয়ে লগইন করা না গেলে আপনার ইমেইল ঠিকানা দিয়ে চেষ্টা করুন।";
           } else if(code==="auth/wrong-password"||code==="auth/invalid-login-credentials"){
             msg="পাসওয়ার্ড ভুল। পাসওয়ার্ড আবার যাচাই করে পুনরায় চেষ্টা করুন।";
           } else if(code==="auth/invalid-credential"){

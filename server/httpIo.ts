@@ -19,9 +19,9 @@
  * Worker secret (`wrangler secret put`) বা dev `.env`-এ থাকে।
  */
 
-import { ApiError, type DeleteIo } from "./deleteApi";
-import type { ResolveLegacyIo } from "./resolveLegacy";
-import { createAuthDeleter, parseServiceAccount, fetchGoogleAccessToken, type ServiceAccount } from "./authAdmin";
+import { ApiError, type DeleteIo } from "./deleteApi.ts";
+import type { ResolveLegacyIo } from "./resolveLegacy.ts";
+import { createAuthDeleter, parseServiceAccount, fetchGoogleAccessToken, type ServiceAccount } from "./authAdmin.ts";
 
 const IDENTITY_TOOLKIT = "https://identitytoolkit.googleapis.com/v1/accounts:lookup";
 
