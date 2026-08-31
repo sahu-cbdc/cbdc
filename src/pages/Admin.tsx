@@ -3231,9 +3231,10 @@ function initPage() {
         <div class="f"><label>মোবাইল নম্বর <i>*</i></label>
           <input id="ad_phone" name="ad_phone" value="${esc(a.phone||"")}" inputmode="numeric" maxlength="11" ${a.phone?"readonly aria-readonly=\"true\"":""}></div>
         <div class="f"><label>রক্তের গ্রুপ <i>*</i></label>
-          <select id="ad_group" name="ad_group" ${GROUPS.includes(a.bloodGroup)?"disabled aria-disabled=\"true\"":""}>
+          <select id="ad_group" name="ad_group">
             <option value="">রক্তের গ্রুপ নির্বাচন করুন</option>
-            ${GROUPS.map(v=>`<option ${a.bloodGroup===v?"selected":""}>${esc(v)}</option>`).join("")}</select></div>
+            ${GROUPS.map(v=>`<option ${a.bloodGroup===v?"selected":""}>${esc(v)}</option>`).join("")}</select>
+          <span class="hint">প্রোফাইলে আগে থেকে থাকা গ্রুপ বদলাতে চাইলে এখান থেকেই নতুন গ্রুপ বেছে নিন — রক্তদাতা তালিকা, কার্ড ও প্রোফাইল সব জায়গায় হালনাগাদ হবে।</span></div>
         <div class="f"><label>সর্বশেষ রক্তদান <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
           <input id="ad_last" name="ad_last" type="date" max="${iso(now())}" value="${esc(a.lastDonation||"")}"></div>
         <div class="f"><label>স্বাস্থ্য তথ্য <span style="color:var(--mut);font-weight:600">(ঐচ্ছিক)</span></label>
@@ -3270,7 +3271,10 @@ function initPage() {
           throw new Error("অ্যাকাউন্টের প্রয়োজনীয় তথ্য সঠিক নয়");
         const savedGroups=[current.bloodGroup,current.group,current.blood_group,current.data&&current.data.bloodGroup,ME.bloodGroup]
           .map(x=>String(x||"").trim());
-        const bloodGroup=savedGroups.find(x=>GROUPS.includes(x))||s.q("#ad_group").value;
+        /* Select সবসময় সক্রিয় — অ্যাকাউন্টে থাকা গ্রুপ এখান থেকেই বদলানো যায়।
+           ফাঁকা/অবৈধ হলে (আগের মতো) অ্যাকাউন্টে সংরক্ষিত গ্রুপই নেওয়া হয়। */
+        const picked=s.q("#ad_group").value;
+        const bloodGroup=GROUPS.includes(picked)?picked:(savedGroups.find(x=>GROUPS.includes(x))||"");
         if(!GROUPS.includes(bloodGroup))throw new Error("সঠিক রক্তের গ্রুপ নির্বাচন করুন");
         const lastDonation=s.q("#ad_last").value||"",health=s.q("#ad_health").value.trim()||"";
         const whatsapp=s.q("#ad_wa").value.trim()||"";

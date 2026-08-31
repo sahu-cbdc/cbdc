@@ -375,3 +375,91 @@ test("Server account delete keeps donor ID untouched", async () => {
   assert.ok(!set.has("donors/DONOR-001"), "account delete keeps donor ID");
   assert.ok(!set.has("donations/DN-1"));
 });
+
+/* ══════════ 8. প্রোফাইল "আমিও একজন রক্তদাতা" — Donor Panel সিস্টেমে সংযুক্ত ══════════ */
+
+test("Admin: join form blood group is editable (no disabled select) and save honors the picked group", () => {
+  const form = admin.slice(admin.indexOf("function adminDonorForm"), admin.indexOf("async function removeAdminDonor"));
+  /* রক্তের গ্রুপের select আর কখনো disabled হয় না — এখান থেকেই গ্রুপ বদলানো যায় */
+  assert.match(form, /<select id="ad_group" name="ad_group">/);
+  assert.doesNotMatch(form, /id="ad_group"[^>]*disabled/);
+  /* save-এ select-এর মানই প্রথম পছন্দ; ফাঁকা/অবৈধ হলেই অ্যাকাউন্টের পুরোনো মান */
+  assert.match(form, /const picked=s\.q\("#ad_group"\)\.value;/);
+  assert.match(form, /const bloodGroup=GROUPS\.includes\(picked\)\?picked:\(savedGroups\.find\(x=>GROUPS\.includes\(x\)\)\|\|""\);/);
+  /* গ্রুপ বদল users/{uid} + donors/{id} দুটোতেই লেখা হয় (একই updatePaths) */
+  assert.match(form, /paths\[`users\/\$\{uid\}\/bloodGroup`\]=bloodGroup;/);
+  assert.match(form, /id:donorId,donorId,uid,ownerUid:uid,name:identity\.name,bloodGroup,/);
+});
+
+test("Admin: profile toggle is a real switch wired to join/leave, not a preference", () => {
+  const bind = admin.slice(admin.indexOf("function bindMe"), admin.indexOf("function applyPrefs"));
+  assert.match(bind, /if\(k==="isDonor"\)\{/);
+  assert.match(bind, /if\(ME\.isDonor\)await removeAdminDonor\(page\);else adminDonorForm\(page\);/);
+  /* toggle ON/OFF state RTDB users/{uid} থেকে আসে (donorStatus + donorId) */
+  assert.match(admin, /ME\.isDonor=ME\.donorStatus==="approved"&&!!ME\.donorId;/);
+  /* OFF করলে অ্যাকাউন্ট/প্রোফাইল তথ্য মুছে যায় না — শুধু donor field মুছে, bloodGroup থাকে */
+  const remove = admin.slice(admin.indexOf("async function removeAdminDonor"), admin.indexOf("async function setAdminDonorAvailability"));
+  assert.match(remove, /\["donorStatus","donorId","lastDonation","health","whatsapp","available","appliedAt","cardTheme","groupChange"\]/);
+  assert.doesNotMatch(remove, /\["bloodGroup"/);
+});
+
+test("Moderator: profile donor toggle is wired to the real donor system (not a preference)", () => {
+  const bind = moderator.slice(moderator.indexOf("function bindMe"), moderator.indexOf("function applyPrefs"));
+  assert.match(bind, /if\(k==="isDonor"\)\{/);
+  assert.match(bind, /if\(ME\.isDonor\)await removeModeratorDonor\(page\);else moderatorDonorForm\(page\);/);
+  assert.match(bind, /if\(k==="available"&&ME\.isDonor\)\{await setModeratorDonorAvailability/);
+  /* local preference toggle আর নেই */
+  assert.doesNotMatch(bind, /if\(k==="isDonor"\|\|k==="dense"\|\|k==="anim"\)renderSub\(page\);/);
+});
+
+test("Moderator: donor state comes from users/{uid} donorStatus+donorId, never from panel preference", () => {
+  const app = moderator.slice(moderator.indexOf("function applyMeRow"), moderator.indexOf("let stopMeWatch"));
+  assert.match(app, /ME\.donorId=String\(row\.donorId\|\|""\);/);
+  assert.match(app, /ME\.donorStatus=String\(row\.donorStatus\|\|"none"\);/);
+  assert.match(app, /ME\.isDonor=ME\.donorStatus==="approved"&&!!ME\.donorId;/);
+  assert.doesNotMatch(app, /typeof p\.isDonor==="boolean"\)ME\.isDonor=p\.isDonor;/);
+  /* default আর ভুয়া ON দেখায় না */
+  assert.match(moderator, /donorId:"",donorStatus:"none",\n\s+health:"",whatsapp:"",available:true,cardTheme:"green",isDonor:false,/);
+});
+
+test("Moderator: join form writes users/{uid} + donors/{id} in one multi-location update", () => {
+  const form = moderator.slice(moderator.indexOf("function moderatorDonorForm"), moderator.indexOf("async function removeModeratorDonor"));
+  assert.match(form, /paths\[`users\/\$\{uid\}\/donorStatus`\]="approved";/);
+  assert.match(form, /paths\[`users\/\$\{uid\}\/donorId`\]=donorId;/);
+  assert.match(form, /paths\[`users\/\$\{uid\}\/data\/panel\/isDonor`\]=true;/);
+  assert.match(form, /const base=`donors\/\$\{donorId\}`;/);
+  assert.match(form, /id:donorId,donorId,uid,ownerUid:uid,name:identity\.name,bloodGroup,/);
+  /* প্রোফাইলের আগের identity overwrite হয় না — শুধু ফাঁকা field পূরণ হয় */
+  assert.match(form, /Existing identity wins\. কেবল database-এ ফাঁকা field-ই পূরণ করা হয়/);
+  /* রক্তের গ্রুপ select সক্রিয় (এখান থেকেই গ্রুপ বদল) */
+  assert.match(form, /<select id="ad_group" name="ad_group">/);
+  assert.doesNotMatch(form, /id="ad_group"[^>]*disabled/);
+});
+
+test("Moderator: leave clears donor fields but keeps profile info (bloodGroup intact)", () => {
+  const rem = moderator.slice(moderator.indexOf("async function removeModeratorDonor"), moderator.indexOf("/* ---------- every account action"));
+  assert.match(rem, /\["donorStatus","donorId","lastDonation","health","whatsapp","available","appliedAt","cardTheme","groupChange"\]/);
+  assert.doesNotMatch(rem, /\["bloodGroup"/);
+  assert.match(rem, /paths\[`users\/\$\{uid\}\/data\/panel\/isDonor`\]=false;/);
+  assert.match(rem, /Object\.assign\(ME,\{isDonor:false,donorStatus:"none",donorId:""/);
+});
+
+test("Moderator: profile edits sync to the public donor record (same source as Doner Panel)", () => {
+  assert.match(moderator, /await syncModeratorDonorPublicRecord\(clean\);/);
+  const sync = moderator.slice(moderator.indexOf("async function syncModeratorDonorPublicRecord"), moderator.indexOf("async function setModeratorDonorAvailability"));
+  assert.match(sync, /ME\.donorStatus!=="approved"\|\|!ME\.donorId\)return;/);
+  assert.match(sync, /await updateRow\(NODES\.donors,id,patch\);/);
+  assert.match(sync, /bloodGroup:ME\.bloodGroup\|\|""/);
+});
+
+test("Moderator: account donor section shows status + editable donor info rows", () => {
+  const acc = moderator.slice(moderator.indexOf("SUBP.account=el=>{"), moderator.indexOf("SUBP.security=el=>{"));
+  assert.match(acc, /tgRow\("আমিও একজন রক্তদাতা"/);
+  assert.match(acc, /ডোনার অবস্থা/);
+  assert.match(acc, /sRow\("রক্তের গ্রুপ",ME\.bloodGroup,"editBlood"\)/);
+  assert.match(acc, /sRow\("WhatsApp",ME\.whatsapp\|\|"দেওয়া হয়নি","editDonorWa"\)/);
+  assert.match(acc, /sRow\("স্বাস্থ্য তথ্য",ME\.health\|\|"দেওয়া হয়নি","editDonorHealth"\)/);
+  assert.match(acc, /tgRow\("আমি এখন রক্তদানে প্রস্তুত"/);
+  assert.match(moderator, /if\(a==="editDonorWa"\)askText/);
+  assert.match(moderator, /if\(a==="editDonorHealth"\)askText/);
+});
