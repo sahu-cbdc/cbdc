@@ -308,15 +308,32 @@ async function deleteDonorIdEntity(
   if (!donorId) throw new ApiError(400, "ডোনার আইডি (Donor ID) দিতে হবে।");
 
   const donor = (await io.get(`donors/${donorId}`).catch(() => null)) as any;
-  if (!donor) {
-    throw new ApiError(404, "এই ডোনার আইডির কোনো রেকর্ড পাওয়া যায়নি — কিছু মোছা হয়নি।");
-  }
   /* মালিকানা **শুধুই সার্ভারে পড়া** রেকর্ড থেকে — ক্লায়েন্ট uid নয়। */
-  const uid = ownerOf(donor);
+  const clientUid = String(input?.uid ?? "").trim();
+  let uid = ownerOf(donor);
+
+  /* ডোনার রেকর্ড না থাকলে — অরফান ডোনার আইডি (অ্যাকাউন্টে donorId লেখা আছে,
+     কিন্তু ডোনার তালিকায় রেকর্ড নেই)। identity অ্যাকাউন্ট রেকর্ড দিয়েই
+     সার্ভার-যাচাই করা হয়: users/{uid}/donorId অথবা accounts/…/donorId-কে
+     (মালিক uid সহ) এই donorId-এর সাথে মেলাতে হবে; নইলে কিছুই মোছা হয় না। */
+  if (!donor) {
+    if (!clientUid || !isAuthUid(clientUid)) {
+      throw new ApiError(404, "এই ডোনার আইডির কোনো রেকর্ড পাওয়া যায়নি — কিছু মোছা হয়নি।");
+    }
+    const orphanUser = (await io.get(`users/${clientUid}`).catch(() => null)) as any;
+    const accountRows = (await io.list("accounts").catch(() => null)) || {};
+    const orphanAccountMatch = Object.values(accountRows).some(
+      (r) => accountOf(r, clientUid) && String((r as any)?.donorId ?? "").trim() === donorId,
+    );
+    const orphanUserMatch = !!orphanUser && String(orphanUser?.donorId ?? "").trim() === donorId;
+    if (!orphanUserMatch && !orphanAccountMatch) {
+      throw new ApiError(404, "এই ডোনার আইডির কোনো রেকর্ড পাওয়া যায়নি — কিছু মোছা হয়নি।");
+    }
+    uid = clientUid;
+  }
 
   /* ক্লায়েন্ট যদি uid পাঠায় এবং তা সার্ভারের owner-এর সাথে না মেলে —
      ভুল/পুরোনো ভিউ; নিরাপত্তায় কিছুই মোছা হয় না। */
-  const clientUid = String(input?.uid ?? "").trim();
   if (clientUid && uid && clientUid !== uid) {
     throw new ApiError(
       409,

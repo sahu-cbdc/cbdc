@@ -74,16 +74,62 @@ test("Donor ID management shows ALL donor IDs (unfiltered, not just approved)", 
   assert.match(admin, /stopDonorIdWatch=watchList\(NODES\.donors,rows=>\{/);
   /* শুধু ডোনার আইডি স্ক্রিনে ব্যবহৃত; store/অন্য স্ক্রিন স্পর্শ করে না */
   assert.doesNotMatch(admin.slice(admin.indexOf("function watchDonorIds"), admin.indexOf("function watchAccounts")), /status/);
-  /* list rendering uses the raw rows */
-  assert.match(admin, /const base=all&&donorIdRowsReady\?donorIdRows:DB\.donors;/);
+  /* list rendering — ডোনার আইডি স্ক্রিনে raw rows + অরফান আইডি; ডোনার
+     ব্যবস্থাপনায় শুধু ডোনার তালিকার rows */
+  assert.match(admin, /const base=all&&donorIdRowsReady\?allDonorIdRows\(\):donorIdRows;/);
   /* screen waits for the raw list before showing anything (no false empty) */
   assert.match(admin, /if\(!dataReady\("donors"\)\|\|!donorIdRowsReady\)\{el\.innerHTML=skelRows\(4\);return\}/);
   /* delete + profile + boot wiring use the same raw list */
-  assert.match(admin, /\(isAccount\?DB\.donors:\(donorIdRowsReady\?donorIdRows:DB\.donors\)\)/);
+  assert.match(admin, /const list=\(donorIdRowsReady\?allDonorIdRows\(\):donorIdRows\)/);
   assert.match(admin, /\|\|donorIdRows\.find\(x=>x\.id===\(ARG\|\|dvId\)\)/);
   assert.match(admin, /watchDonorIds\(\);watchReports\(\);/);
   /* people-screen count reflects the full list */
   assert.match(admin, /bn\(donorIdRowsReady\?donorIdRows\.length:DB\.donors\.length\)/);
+});
+
+test("Donor management = only donors on the donor list (no account-only rows)", () => {
+  /* team স্ক্রিন শুধু ডোনার তালিকার rows দেখায় — অ্যাকাউন্ট থাকলেই নয় */
+  const team = admin.slice(admin.indexOf("SUBP.team=el=>{"), admin.indexOf("SUBP.donorid=el=>{"));
+  assert.match(team, /donorManageRows\(false\)/);
+  assert.match(team, /!donorIdRowsReady\)\{el\.innerHTML=skelRows\(4\);return\}/);
+  assert.match(team, /wireDonorManage\(el,rows,teamSel,"list"\)/);
+  assert.doesNotMatch(team, /accountDonors\(\)/);
+  /* donorManageRows(false) base = শুধু donorIdRows (ডোনার তালিকা) */
+  assert.match(admin, /const base=all&&donorIdRowsReady\?allDonorIdRows\(\):donorIdRows;/);
+  /* ডোনার ব্যবস্থাপনার ডিলিট = তালিকা থেকে সরানো (permanent নয়) */
+  assert.match(admin, /\$\("#tdel"\)\.onclick=\(\)=>scope==="list"\?removeDonorsFromList\(\[\.\.\.sel\]\):bulkDeleteEntities\("donor",\[\.\.\.sel\]\)/);
+  /* সরানো = donors/{id} + queue/members + users/{uid}/donorStatus... — অ্যাকাউন্ট/ইতিহাস অক্ষত */
+  const rm = admin.slice(admin.indexOf("async function removeDonorsFromList"), admin.indexOf("/* Team editing and the account directory"));
+  assert.match(rm, /paths\[`donors\/\$\{id\}`\]=null/);
+  assert.match(rm, /paths\[`users\/\$\{uid\}\/donorStatus`\]=null/);
+  assert.match(rm, /paths\[`users\/\$\{uid\}\/donorId`\]=null/);
+  assert.match(rm, /await updatePaths\(paths\)/);
+  assert.match(rm, /releaseDonorSerial\(id\)/);
+  assert.doesNotMatch(rm, /serverDeleteEntity|deleteAuthUser/);
+  /* আপডেট সরাসরি donors/{id}-এ (lossy store full-replace নয়) */
+  const edit = admin.slice(admin.indexOf("function editDonorField"), admin.indexOf("function donorAction"));
+  assert.match(edit, /updateRow\(NODES\.donors,String\(d\.id\|\|""\),\{\[key\]:v\}\)/);
+  assert.doesNotMatch(edit, /await persist\(\)/);
+  /* verify/suspend টগলও সরাসরি ডোনার রেকর্ডে */
+  assert.match(admin, /updateRow\(NODES\.donors,String\(d\.id\|\|""\),\{verified:nv\}\)/);
+  assert.match(admin, /updateRow\(NODES\.donors,String\(d\.id\|\|""\),\{suspended:nv\}\)/);
+});
+
+test("Donor ID screen includes orphan IDs (in account but not on donor list)", () => {
+  assert.match(admin, /function orphanDonorIdRows\(\)\{/);
+  assert.match(admin, /const did=String\(\(u&&\(u\.donorId\|\|u\.id\)\)\|\|""\)\.trim\(\)/);
+  assert.match(admin, /donorIds\.has\(did\)/);
+  assert.match(admin, /orphan:true/);
+  assert.match(admin, /function allDonorIdRows\(\)\{/);
+  assert.match(admin, /orphanDonorIdRows\(\)\.forEach\(o=>rows\.push\(o\)\)/);
+  /* অরফান সারিতে ক্লিক → সংক্ষিপ্ত শিট (ডোনার workspace নয়) */
+  assert.match(admin, /if\(row&&row\.d\.orphan\)openOrphanIdSheet\(row\.d\);else openDonor\(x\.dataset\.row\)/);
+  assert.match(admin, /function openOrphanIdSheet\(d\)\{/);
+  assert.match(admin, /deleteOneEntity\(d,"donor"\)/);
+  /* অরফান ব্যাজ */
+  assert.match(admin, /d\.orphan\?`<span style="color:var\(--amb\)">শুধু অ্যাকাউন্টে — তালিকায় নেই<\/span>`/);
+  /* অ্যাকাউন্ট/ব্যবহারকারী বদলালে ডোনার আইডি স্ক্রিনও রি-রেন্ডার */
+  assert.match(admin, /\["team","access","donorid"\]\.includes\(SUB\)/);
 });
 
 test("Donor management keeps select-all, delete-selected and duplicate check", () => {
@@ -258,6 +304,61 @@ test("Server donor-ID delete: permanent full cleanup (donations/requests/reports
   assert.ok(!set.has("donors/DONOR-002"));
   assert.ok(!set.has("donations/DN-2"), "another donor's history untouched");
   assert.ok(!set.has("requests/REQ-2"), "another user's request untouched");
+});
+
+test("Server donor-ID delete: orphan ID (account-only, no donors/{id} record) also permanently deleted", async () => {
+  /* অরফান: users/{uid}/donorId ও accounts/…/donorId-তে লেখা, কিন্তু donors/{id} রেকর্ড নেই */
+  const data = {
+    "admins/ADMIN_0123456789abcdef": { uid: "ADMIN_0123456789abcdef", role: "admin", status: "active", name: "বস" },
+    "users/USER_ORPHAN_012345678": { uid: "USER_ORPHAN_012345678", name: "অরফান", email: "orphan@example.com", username: "orphan", donorId: "ORPHAN-9" },
+    "admins/USER_ORPHAN_012345678": { uid: "USER_ORPHAN_012345678", role: "moderator", status: "active", name: "অরফান" },
+    "accounts/AC-ORPHAN": { id: "AC-ORPHAN", uid: "USER_ORPHAN_012345678", donorId: "ORPHAN-9" },
+    "donations/DN-ORPHAN": { id: "DN-ORPHAN", donorId: "ORPHAN-9", ownerUid: "USER_ORPHAN_012345678", date: "2026-01-01" },
+    "queue/Q-ORPHAN": { id: "Q-ORPHAN", kind: "donation", ownerUid: "USER_ORPHAN_012345678" },
+    "requests/REQ-ORPHAN": { id: "REQ-ORPHAN", ownerUid: "USER_ORPHAN_012345678" },
+    "reports/RP-ORPHAN": { id: "RP-ORPHAN", ownerUid: "USER_ORPHAN_012345678" },
+    "donors/DONOR-002": { id: "DONOR-002", ownerUid: "USER_OTHER_0123456789", name: "করিম" },
+  };
+  const applied = [];
+  const io = {
+    async verifyToken() { return { uid: "ADMIN_0123456789abcdef" }; },
+    async get(p) { return data[p] !== undefined ? data[p] : null; },
+    async list(node) {
+      const out = {};
+      for (const [p, v] of Object.entries(data)) {
+        if (p.startsWith(node + "/")) out[p.slice(node.length + 1)] = v;
+      }
+      return out;
+    },
+    async apply(paths) { for (const p of Object.keys(paths)) applied.push(p); return true; },
+    async deleteAuthUser() { return "deleted"; },
+  };
+  const result = await handleAdminEntityDelete(
+    { scope: "donor", donorId: "ORPHAN-9", uid: "USER_ORPHAN_012345678", idToken: "tok" },
+    io,
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.auth, "deleted");
+  const set = new Set(applied);
+  assert.ok(set.has("users/USER_ORPHAN_012345678"), "linked account removed");
+  assert.ok(set.has("admins/USER_ORPHAN_012345678"), "linked staff record removed");
+  assert.ok(set.has("accounts/AC-ORPHAN"), "linked account row removed");
+  assert.ok(set.has("donations/DN-ORPHAN"), "orphan's donation history deleted");
+  assert.ok(set.has("queue/Q-ORPHAN"), "orphan's pending queue row removed");
+  assert.ok(set.has("requests/REQ-ORPHAN"), "orphan's requests removed");
+  assert.ok(set.has("reports/RP-ORPHAN"), "orphan's reports removed");
+  assert.ok(!set.has("donors/DONOR-002"), "other donors untouched");
+});
+
+test("Server donor-ID delete: orphan ID without matching account record is rejected (nothing deleted)", async () => {
+  const { io, applied } = makeMemoryIo();
+  const result = await handleAdminEntityDelete(
+    { scope: "donor", donorId: "GHOST-1", uid: "USER_ORPHAN_012345678", idToken: "tok" },
+    io,
+  ).catch((e) => ({ ok: false, error: e && e.message, status: e && e.status }));
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 404);
+  assert.equal(applied.length, 0, "nothing deleted");
 });
 
 test("Server account delete keeps donor ID untouched", async () => {
