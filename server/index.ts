@@ -18,11 +18,12 @@
  *  ও `vars` সেট করা আছে — উভয় মান public: client config-এর হুবহু মান)।
  */
 
-import { handleAdminEntityDelete, type ServerDeleteResult } from "./deleteApi.ts";
+import { handleAdminEntityDelete, handleAdminConfigCheck, type ServerDeleteResult } from "./deleteApi.ts";
 import { handleAdminDedupe } from "./dedupeApi.ts";
 import { handleDonorApply } from "./applyApi.ts";
 import { handleResolveLegacy } from "./resolveLegacy.ts";
 import { makeApplyIo, makeHttpIo, makePrivilegedIo } from "./httpIo.ts";
+import { serviceAccountConfigured } from "./authAdmin.ts";
 
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -41,10 +42,11 @@ export default {
     const path = url.pathname.replace(/\/+$/, "");
     const isDelete = path.endsWith("/api/admin/delete");
     const isDedupe = path.endsWith("/api/admin/dedupe");
+    const isConfigCheck = path.endsWith("/api/admin/config-check");
     const isResolve = path.endsWith("/api/account/resolve-legacy");
     const isApply = path.endsWith("/api/donor/apply");
 
-    if (!isDelete && !isDedupe && !isResolve && !isApply) {
+    if (!isDelete && !isDedupe && !isConfigCheck && !isResolve && !isApply) {
       /* static assets (Vite build) — SPA fallback সহ */
       return env.ASSETS && typeof env.ASSETS.fetch === "function"
         ? env.ASSETS.fetch(request)
@@ -76,6 +78,16 @@ export default {
         const result = await handleAdminDedupe(
           { apply: body.apply === true, idToken },
           makeHttpIo(env, idToken),
+        );
+        return jsonResponse(result);
+      }
+      if (isConfigCheck) {
+        /* Admin panel-এর ডিলিট preflight — FIREBASE_SERVICE_ACCOUNT secret
+           কনফিগার আছে কি না (শুধু boolean; secret-এর মান কখনো যায় না)। */
+        const result = await handleAdminConfigCheck(
+          { idToken },
+          makeHttpIo(env, idToken),
+          { serviceAccountConfigured: serviceAccountConfigured(env) },
         );
         return jsonResponse(result);
       }

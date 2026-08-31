@@ -5052,7 +5052,10 @@ function initPage() {
       b.classList.add("on");pick=b.dataset.r;paintPowers()});
   
     const ok=s.q("#acok");
+    /* একই অ্যাকাউন্টে একসাথে দ্বিতীয় সংরক্ষণ নয় (duplicate request/race guard) */
+    let acSaving=false;
     if(ok)ok.onclick=async()=>{
+      if(acSaving)return;
       if(pick===a.role)return toast(tp("ভূমিকা বদলানো হয়নি","Role unchanged"));
       const why=(s.q("#acwhy").value||"").trim();
       if(why.length<4)return toast(tp("কারণ লিখতে হবে","A reason is required"),"er");
@@ -5063,31 +5066,54 @@ function initPage() {
           ?`${a.name} ${tp("এখন থেকে","will now be a")} ${ROLE_META[pick].label} ${tp("হিসেবে প্যানেলে ঢুকতে পারবেন।","and can sign in to the panel.")}`
           :`${a.name} ${tp("আর প্যানেলে ঢুকতে পারবেন না। ডোনার অ্যাকাউন্ট ঠিক থাকবে।","will no longer reach the panel. Their donor account is untouched.")}`,
         ok:grant?tp("অ্যাক্সেস দিন","Grant"):tp("তুলে নিন","Revoke"),danger:!grant}))return;
-  
+
+      acSaving=true;
+      const okHtml=ok.innerHTML;
+      ok.disabled=true;ok.textContent=tp("সংরক্ষণ হচ্ছে…","Saving…");
       const before=a.role;
-      a.role=pick;
       const staffRole = pick === "admin" ? "admin" : pick === "mod" ? "moderator" : "donor";
-      if(grant){
-        setRow(NODES.admins, a.uid, {
-          uid:a.uid, email:a.email||"", name:a.name||"", username:a.username||"",
-          role:staffRole, permissions:pick==="admin"?PERMS:ROLES.mod.perms, updatedAt:nowIso()
-        }).catch(e=>console.warn("role grant:",e&&e.message));
-      }else{
-        removeRow(NODES.admins, a.uid).catch(e=>console.warn("role revoke:",e&&e.message));
-      }
-      updateRow(NODES.users, a.uid, {role:staffRole}).catch(e=>console.warn("user role update:",e&&e.message));
-      /* keep the team list in step: staff appear there, users do not */
-      const tIdx=DB.team.findIndex(t=>t.uid===a.uid);
-      if(isStaff(pick)){
-        if(tIdx<0)DB.team.push({uid:a.uid,name:a.name,role:pick,last:new Date().toISOString()});
-        else DB.team[tIdx].role=pick;
-      }else if(tIdx>=0)DB.team.splice(tIdx,1);
-  
-      logAudit(grant?"অ্যাক্সেস দেওয়া হয়েছে":"অ্যাক্সেস তুলে নেওয়া হয়েছে",
-        `${a.name} · ${roleLabel(before)} → ${roleLabel(pick)} — ${why.slice(0,60)}`,"access");
-      await persist();s.close();renderSub("access");paintNav();paintTop();
-      toast(grant?tp(a.name+" এখন "+ROLE_META[pick].label,a.name+" is now "+ROLE_META[pick].label)
-                 :tp("অ্যাক্সেস তুলে নেওয়া হয়েছে","Access revoked"),"ok");
+      try{
+        /* ══ Root-cause fix ══
+           আগে setRow/removeRow/updateRow গুলো fire-and-forget ছিল (.catch শুধু
+           console.warn) এবং তারপর পুরো shared-store persist() হতো — ফলে
+           ডাটাবেসে লেখা ব্যর্থ হলেও (যেমন Security Rules-এ মডারেটরের
+           access-grant অনুমতি নেই) সবুজ "সফল" toast দেখাত, আর persist() ব্যর্থ
+           হলে sheet/বোতাম আটকে থাকত। এখন এক **atomic multi-path write** await
+           করা হয় — ডাটাবেস সফল হলে তবেই UI বদলায়; ব্যর্থ হলে আগের অবস্থাই
+           থাকে এবং স্পষ্ট বাংলা কারণ দেখানো হয়। কোনো full-store persist()
+           দরকার নেই — role-এর উৎস users/{uid} · admins/{uid}, listener-ই
+           বাকি সব প্যানেলে realtime পৌঁছে দেয়। */
+        const paths={[`${NODES.users}/${a.uid}/role`]:staffRole};
+        if(grant){
+          paths[`${NODES.admins}/${a.uid}`]={
+            uid:a.uid, email:a.email||"", name:a.name||"", username:a.username||"",
+            role:staffRole, permissions:pick==="admin"?PERMS:ROLES.mod.perms, updatedAt:nowIso()
+          };
+        }else{
+          paths[`${NODES.admins}/${a.uid}`]=null;
+        }
+        await updatePaths(paths);
+
+        /* ডাটাবেস সফল — এবার লোকাল state (শুধু role; অন্য কোনো তথ্য নয়) */
+        a.role=pick;
+        const tIdx=DB.team.findIndex(t=>t.uid===a.uid);
+        if(isStaff(pick)){
+          if(tIdx<0)DB.team.push({uid:a.uid,name:a.name,role:pick,last:new Date().toISOString()});
+          else DB.team[tIdx].role=pick;
+        }else if(tIdx>=0)DB.team.splice(tIdx,1);
+
+        logAudit(grant?"অ্যাক্সেস দেওয়া হয়েছে":"অ্যাক্সেস তুলে নেওয়া হয়েছে",
+          `${a.name} · ${roleLabel(before)} → ${roleLabel(pick)} — ${why.slice(0,60)}`,"access");
+        s.close();renderSub("access");paintNav();paintTop();
+        toast(grant?tp(a.name+" এখন "+ROLE_META[pick].label,a.name+" is now "+ROLE_META[pick].label)
+                   :tp("অ্যাক্সেস তুলে নেওয়া হয়েছে","Access revoked"),"ok");
+      }catch(e){
+        console.warn("access save:",e&&e.message);
+        ok.disabled=false;ok.innerHTML=okHtml;
+        toast(/permission.denied|PERMISSION/i.test(String(e&&e.message||""))
+          ?tp("অনুমতি নেই — ভূমিকা দেওয়া/তুলে নেওয়া শুধু অ্যাডমিন করতে পারেন","Not allowed — only an admin can grant or revoke roles")
+          :tp("ভূমিকা সংরক্ষণ করা যায়নি — আবার চেষ্টা করুন","Could not save the role — try again"),"er");
+      }finally{acSaving=false;}
     };
   }
   

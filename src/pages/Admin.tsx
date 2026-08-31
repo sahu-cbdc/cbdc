@@ -28,7 +28,7 @@ import {
   reconcileApprovedDonations as reconcileDonationLog,
   proofUrlOf,
 } from "../lib/donationLog";
-import { serverDeleteEntity, deletionMessage, bulkDeletionMessage, describeDeletionFailure, isAuthUid, runDedupeScan, type DeletionStep, type DeleteScope } from "../lib/accountDelete";
+import { serverDeleteEntity, deletionMessage, bulkDeletionMessage, describeDeletionFailure, isAuthUid, runDedupeScan, checkDeleteServerConfig, type DeletionStep, type DeleteScope } from "../lib/accountDelete";
 import { noticeIsActive, noticeTarget } from "../lib/notice";
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -2956,8 +2956,20 @@ function initPage() {
   }
   function refreshAccounts(){
     const by=new Map();
-    (DB.accounts||[]).forEach(a=>by.set(String(a.uid||a.id),{...a}));
-    accountUsers.forEach(u=>{const uid=String(u.uid||u.id);if(!uid)return;by.set(uid,{...by.get(uid),...u,uid,role:by.get(uid)?.role||u.role||"user"});});
+    /* ══ Realtime-correctness (root cause fix) ══
+       আগে তালিকাটি সবসময় আগের DB.accounts snapshot দিয়ে seed হতো এবং
+       users listener-এর টাটকা role-এর ওপরে পুরোনো (cached) role-কে অগ্রাধিকার
+       দেওয়া হতো। ফলে —
+         • Admin→Donor demote (admins/{uid} মুছে যায়) refresh না করা পর্যন্ত
+           Access & Role-এ পুরোনো ভূমিকাই দেখাত,
+         • মুছে ফেলা অ্যাকাউন্ট stale seed থেকে তালিকায় (এবং publishSharedState
+           হয়ে RTDB `accounts` node-এও) ফিরে আসত।
+       এখন users+admins দুটো listener-ই ready হলে RTDB snapshot-ই একমাত্র উৎস —
+       পুরোনো cache/seed ব্যবহার হয় না; আর listener-এর টাটকা role সবসময় জেতে।
+       প্রথম snapshot আসার আগে (boot) শুধু ফাঁকা ঝলক এড়াতে আগের তালিকা থাকে। */
+    if(!dataReady("users","admins"))
+      (DB.accounts||[]).forEach(a=>by.set(String(a.uid||a.id),{...a}));
+    accountUsers.forEach(u=>{const uid=String(u.uid||u.id);if(!uid)return;by.set(uid,{...by.get(uid),...u,uid,role:u.role||by.get(uid)?.role||"user"});});
     accountAdmins.forEach(a=>{const uid=String(a.uid||a.id);if(!uid)return;by.set(uid,{...by.get(uid),...a,uid,role:a.role||by.get(uid)?.role||"mod",permissions:a.permissions||by.get(uid)?.permissions||[]});});
     /* donors/{id} fallback — শুধু ফাঁকা ফিল্ড পূরণ হয় (আগের মান কখনো
        overwrite হয় না): promoted donor-এর users/{uid} sparse হলে Access &
@@ -5460,18 +5472,54 @@ function initPage() {
     }finally{deletingEntities.delete(key);}
   }
 
+  /** bulk delete চলাকালীন পুনরায় শুরু আটকানো — বোতাম disabled/loading থাকে,
+      একই action একাধিকবার execute হয় না (duplicate request নয়)। */
+  let bulkDeleteBusy=false;
   async function bulkDeleteEntities(scope,ids){
     /* ডোনার আইডি ব্যবস্থাপনার ডিলিট — স্থায়ী permanent delete (সার্ভার-যাচাই):
        ডোনার আইডি + সম্পূর্ণ ডোনার ডেটা/History + সংশ্লিষ্ট Firebase Auth লগইন */
+    if(bulkDeleteBusy)return;                       /* ইতিমধ্যে চলছে — দ্বিতীয় request নয় */
     const entity="ডোনার আইডি";
+    ids=[...new Set((ids||[]).map(String))];
     const list=(donorIdRowsReady?allDonorIdRows():donorIdRows)
       .filter(d=>ids.includes(String(d.id)));
     if(!list.length)return toast("কোনো ডোনার আইডি নির্বাচিত হয়নি","er");
+    /* নির্বাচিত কিন্তু বর্তমান তালিকায় নেই (এইমাত্র অন্য জায়গা থেকে মুছে
+       গেছে/বদলে গেছে) — নীরবে বাদ না দিয়ে স্পষ্টভাবে জানানো হয়, যেন
+       "২ জন নির্বাচন → (১/১)" ধরনের বিভ্রান্তি না হয়। */
+    const found=new Set(list.map(d=>String(d.id)));
+    const missing=ids.filter(id=>!found.has(id));
     const names=list.slice(0,3).map(d=>d.name).join(", ")+(list.length>3?" সহ "+bn(list.length)+" জন":"");
     if(!await confirmS({title:list.length>1?`নির্বাচিত ${entity}গুলো মুছবেন?`:`${entity} মুছবেন?`,
       desc:`${names}-এর ডোনার আইডি, ডোনারের সব তথ্য ও History (members/queue/donations/requests/reports) স্থায়ীভাবে মুছে যাবে; একই ব্যক্তির লগইন অ্যাকাউন্ট (Firebase Authentication) যুক্ত থাকলে সেটিও মুছে যাবে। আলাদা/অমিল অ্যাকাউন্ট কখনোই মোছা হবে না। এটি ফেরানো যাবে না।`,
       ok:"হ্যাঁ, মুছুন",danger:true}))return;
+    bulkDeleteBusy=true;
+    /* ডিলিট চলাকালীন বোতাম disabled/loading — multiple click-এ duplicate নয় */
+    const tdel=$("#tdel");
+    if(tdel){tdel.disabled=true;tdel.textContent="মুছে ফেলা হচ্ছে…";}
+    try{
+    /* ══ Preflight — সার্ভার কনফিগারেশন যাচাই ══
+       নির্বাচিত কারও লিংকড লগইন অ্যাকাউন্ট (Auth UID) থাকলে আগে server-এর
+       config-check করা হয়: FIREBASE_SERVICE_ACCOUNT secret না থাকলে ডিলিট
+       **শুরুই হয় না** — "মুছে ফেলা হচ্ছে…" দেখিয়ে পরে config-error দেখানোর
+       আংশিক/বিভ্রান্তিকর অবস্থা আর নেই; একটিই স্পষ্ট বার্তা দেখানো হয়।
+       (পুরোনো সার্ভারে endpoint না থাকলে configured=null — তখন ব্লক নয়;
+        সার্ভারের atomic delete নিজেই partial delete আটকে দেয়।) */
+    const needsAuthDelete=list.some(d=>{
+      const u=String((d&&(d.ownerUid||d.uid))||"").trim();
+      return u&&isAuthUid(u)&&u!==String(ME.uid);
+    });
+    if(needsAuthDelete){
+      const cfg=await checkDeleteServerConfig();
+      if(cfg.configured===false){
+        toast("সার্ভারে service-account secret (FIREBASE_SERVICE_ACCOUNT) কনফিগার করা নেই — "
+          +"লগইন অ্যাকাউন্টসহ সম্পূর্ণ ডিলিট সম্ভব নয়, তাই কিছুই মোছা হয়নি। "
+          +"ডিপ্লয়ে `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT` (বা dev-এ `.env`-এ) সেট করে আবার চেষ্টা করুন।","er");
+        return;
+      }
+    }
     const done=[],failed=[];
+    if(missing.length)failed.push(bn(missing.length)+" জন বর্তমান তালিকায় নেই (সম্ভবত ইতিমধ্যে মুছে গেছে)");
     for(const d of list){
       /* প্রতিটি entity আলাদাভাবে সার্ভারে যাচাই হয় — ভুল identity অন্য
          কারও তথ্য মুছতে পারে না। */
@@ -5491,11 +5539,17 @@ function initPage() {
       donorIdSel.clear();
       toast(bulkDeletionMessage(done),"ok");
     }else{
+      /* সফলগুলো নির্বাচন থেকে সরানো হয় — ব্যর্থগুলোই শুধু নির্বাচিত থাকে */
+      done.forEach(r=>donorIdSel.delete(String(r.donorId)));
       toast((done.length?bn(done.length)+" জন মুছে গেছে — ":"")+failed.slice(0,2).join(" | ")
         +(failed.length>2?" | আরও "+bn(failed.length-2)+" জন":""),"er");
     }
-    /* live listener-ই তালিকা/পরিসংখ্যান আপডেট করে — reload নয় */
-    renderSub("donorid");paintNav();paintTop();
+    }finally{
+      bulkDeleteBusy=false;
+      /* live listener-ই তালিকা/পরিসংখ্যান আপডেট করে — reload নয়; বোতামও
+         পুনরায় আঁকা হয় (renderSub) — কোনো আটকে থাকা disabled state নয় */
+      renderSub("donorid");paintNav();paintTop();
+    }
   }
 
   /* ══════════ ডোনার ব্যবস্থাপনা — ডিলিট = ডোনার তালিকা থেকে সরানো ══════════
@@ -5507,6 +5561,7 @@ function initPage() {
      কার্যকর হয় (একই RTDB, live listener)। স্থায়ী permanent delete শুধু
      "ডোনার আইডি ব্যবস্থাপনা" স্ক্রিনের। */
   async function removeDonorsFromList(ids){
+    if(bulkDeleteBusy)return false;                 /* ইতিমধ্যে চলছে — দ্বিতীয় request নয় */
     const list=(donorIdRowsReady?donorIdRows:DB.donors).filter(d=>ids.includes(String(d.id)));
     if(!list.length)return toast("কোনো ডোনার নির্বাচিত হয়নি","er"),false;
     const names=list.slice(0,3).map(d=>d.name).join(", ")+(list.length>3?" সহ "+bn(list.length)+" জন":"");
@@ -5560,6 +5615,9 @@ function initPage() {
       if(pd)paths[`queue/PD-${pd}`]=null;
     }
     if(!Object.keys(paths).length)return toast("কোনো ডোনার পাওয়া যায়নি","er"),false;
+    bulkDeleteBusy=true;
+    const tdel=$("#tdel");
+    if(tdel){tdel.disabled=true;tdel.textContent="সরানো হচ্ছে…";}
     try{
       await updatePaths(paths);
       donorIdRows=donorIdRows.filter(d=>!ids.includes(String(d.id)));
@@ -5567,7 +5625,8 @@ function initPage() {
       toast("ডোনার তালিকা থেকে সরানো হয়েছে","ok");
       renderSub("team");paintNav();paintTop();
       return true;
-    }catch(e){ console.warn("donor list removal:",e&&e.message); toast("সরানো যায়নি — আবার চেষ্টা করুন","er"); return false; }
+    }catch(e){ console.warn("donor list removal:",e&&e.message); toast("সরানো যায়নি — আবার চেষ্টা করুন","er"); renderSub("team"); return false; }
+    finally{bulkDeleteBusy=false;}
   }
 
   /* Team editing and the account directory use one guarded editor. This
@@ -6027,6 +6086,14 @@ function initPage() {
 
   /* Role Management — শুধুই ভূমিকা পরিবর্তন (কোনো অ্যাকাউন্ট তথ্য বা
      permission তালিকা নেই)। নিচে ৩টি বোতাম: বাতিল / সংরক্ষণ / ডিলিট। */
+  /** একই অ্যাকাউন্টের একসাথে একাধিক role-save আটকাতে (duplicate click/race) —
+      সম্পূর্ণ শেষ হলে key ছাড়া হয়; দুটি প্যানেল/ট্যাব থেকেও double-write হয় না। */
+  const savingRoles=new Set();
+  /** কোনো read/write নেটওয়ার্ক সমস্যায় চিরকাল ঝুলে থাকলে Save বোতাম আটকে
+      যেত — নির্দিষ্ট সময় পরে স্পষ্ট বাংলা error দিয়ে বোতাম ফিরিয়ে দেওয়া হয়।
+      (RTDB write idempotent — পরে আবার Save চাপলে একই ফলাফল, কোনো ক্ষতি নেই।) */
+  const withTimeout=(p,ms,msg)=>Promise.race([p,
+    new Promise((_,rej)=>setTimeout(()=>rej(new Error(msg||"সময়সীমা পেরিয়ে গেছে")),ms))]);
   async function roleManageSheet(uid){
     const a=DB.accounts.find(x=>String(x.uid)===String(uid));if(!a)return;
     a.role=normRole(a.role);
@@ -6055,26 +6122,41 @@ function initPage() {
       if(hint)hint.textContent=roleHint(pick);
     });
     s.q("#acdelete")?.addEventListener("click",async()=>{
+      const delBtn=s.q("#acdelete"),okBtn=s.q("#acok");
+      if(delBtn.disabled)return;                       /* ডিলিট চলছে — দ্বিতীয় request নয় */
+      const delHtml=delBtn.innerHTML;
+      delBtn.disabled=true;delBtn.textContent="মুছে ফেলা হচ্ছে…";
+      if(okBtn)okBtn.disabled=true;
       const ok=await deleteManagedAccount(uid);
-      if(ok)s.close();
+      if(ok){s.close();return}
+      delBtn.disabled=isMe;delBtn.innerHTML=delHtml;
+      if(okBtn)okBtn.disabled=isMe;
     });
     s.q("#acok")?.addEventListener("click",async()=>{
       if(pick===a.role){s.close();return}
+      const saveKey=String(uid);
+      if(savingRoles.has(saveKey))return;                    /* ইতিমধ্যে চলছে — দ্বিতীয় request নয় */
+      savingRoles.add(saveKey);
       const roleValue=pick==="admin"?"admin":pick==="mod"?"moderator":"donor";
       /* প্যানেলের মেনু দেখানোর অভ্যন্তরীণ ডিফল্ট তালিকা — আলাদা করে
          কারও জন্য permission কাস্টমাইজ করার সুযোগ আর নেই। */
       const permissionList=pick==="user"?[]:(pick==="admin"?PERMS.slice():ROLES.mod.perms.slice());
-      const btn=s.q("#acok");btn.disabled=true;
+      const btn=s.q("#acok"),delBtn=s.q("#acdelete");
+      const btnHtml=btn.innerHTML;
+      btn.disabled=true;btn.textContent="সংরক্ষণ হচ্ছে…";
+      if(delBtn)delBtn.disabled=true;
       try{
         /* ══ Existing account information কখনো overwrite করা হয় না ══
            লেখার আগে RTDB-র সর্বশেষ users/admins রেকর্ড পড়া হয়; যে কোনো
            ফিল্ডের মান খালি থাকলে সেটি লেখাই হয় না (ফলে আগের মান অক্ষত থাকে)।
            এতে Name/Username/Email/UID/Donor ID/Mobile/Photo — কোনোটিই মোছে
-           যায় না বা empty হয় না, শুধু role ও permission আপডেট হয়। */
+           যায় না বা empty হয় না, শুধু role ও permission আপডেট হয়।
+           (listener cache-ই প্রাথমিক উৎস; fallback-read-এ টাইমআউট আছে যেন
+            নেটওয়ার্ক সমস্যায় Save বোতাম চিরকাল আটকে না থাকে।) */
         const liveUser=accountUsers.find(u=>String(u.uid||u.id)===String(uid))
-          ||await getRow(NODES.users,String(uid)).catch(()=>null)||null;
+          ||await withTimeout(getRow(NODES.users,String(uid)),12000).catch(()=>null)||null;
         const liveAdmin=accountAdmins.find(x=>String(x.uid||x.id)===String(uid))
-          ||await getRow(NODES.admins,String(uid)).catch(()=>null)||null;
+          ||await withTimeout(getRow(NODES.admins,String(uid)),12000).catch(()=>null)||null;
         /* ডোনার রেকর্ড (donors/{id}) — users/{uid} sparse হলে ভূমিকা পরিবর্তনের
            সময়ও বিদ্যমান নাম/ফোন/ছবি/এলাকা হারিয়ে যায় না (আইটেম ৭)। */
         const liveDonor=accountDonorRow(uid)||null;
@@ -6102,21 +6184,32 @@ function initPage() {
           Object.keys(identity).forEach(k=>{if(identity[k])staff[k]=identity[k]});
           paths[`${NODES.admins}/${uid}`]=staff;
         }
-        await updatePaths(paths);
+        await withTimeout(updatePaths(paths),15000,
+          "নেটওয়ার্ক ধীর/বিচ্ছিন্ন — সংযোগ ফিরলে আবার চেষ্টা করুন");
         /* লোকাল state-এ শুধু role/permission বদলাই — বাকি তথ্য অপরিবর্তিত */
         a.role=pick;a.permissions=permissionList;
         ["name","username","email","photo"].forEach(k=>{if(identity[k])a[k]=identity[k]});
         const ti=DB.team.findIndex(t=>String(t.uid)===String(uid));
         if(pick==="user"){if(ti>=0)DB.team.splice(ti,1);}
         else {const entry={uid:String(uid),name:a.name||"",username:a.username||"",email:a.email||"",photo:a.photo||"",role:pick,status:a.status||"active",permissions:permissionList,last:nowIso()};ti<0?DB.team.push(entry):Object.assign(DB.team[ti],entry);}
-        await logAudit("ভূমিকা পরিবর্তন",`${a.name||a.email||uid} · ${roleLabel(pick)}`,"access");
+        /* audit লগ ব্যর্থ হলেও role save সফল — UI আটকে থাকবে না (fire-safe) */
+        try{await withTimeout(logAudit("ভূমিকা পরিবর্তন",`${a.name||a.email||uid} · ${roleLabel(pick)}`,"access"),8000)}
+        catch(e){console.warn("role audit:",e&&e.message)}
         s.close();
         /* শুধু বর্তমান স্ক্রিনটি আবার আঁকা হয় (ডেটা রিলোড নয়) — অন্য
            প্যানেল/ডিভাইসে RTDB listener-ই realtime-এ নতুন ভূমিকা আনে। */
         try{renderSub(SUB==="team"?"team":"access")}catch(e){}
         paintNav();paintTop();
         toast("ভূমিকা হালনাগাদ হয়েছে","ok");
-      }catch(e){btn.disabled=false;console.warn("role update:",e&&e.message);toast("ভূমিকা হালনাগাদ করা যায়নি — আবার চেষ্টা করুন","er");}
+      }catch(e){
+        btn.disabled=false;btn.innerHTML=btnHtml;
+        if(delBtn)delBtn.disabled=false;
+        console.warn("role update:",e&&e.message);
+        const msg=/permission.denied|PERMISSION/i.test(String(e&&e.message||""))
+          ?"অনুমতি নেই — শুধু অ্যাডমিন ভূমিকা বদলাতে পারেন"
+          :(e&&e.message&&/নেটওয়ার্ক|সময়সীমা/.test(e.message)?e.message:"ভূমিকা হালনাগাদ করা যায়নি — আবার চেষ্টা করুন");
+        toast(msg,"er");
+      }finally{savingRoles.delete(saveKey);}
     });
   }
 
