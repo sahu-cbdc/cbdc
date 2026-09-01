@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { handleAdminEntityDelete, handleAdminConfigCheck, ApiError } from "./server/deleteApi";
 import { toUserSafeMessage } from "./server/index";
-import { IMGBB_PUBLIC_CONFIG } from "./src/config/imgbb";
+import { IMGBB_UPLOAD_MAX_BYTES } from "./server/config/imgbb";
 import { handleAdminDedupe } from "./server/dedupeApi";
 import { handleDonorApply } from "./server/applyApi";
 import { handleResolveLegacy } from "./server/resolveLegacy";
@@ -193,7 +193,7 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
         req.on("data", (chunk: Buffer) => {
           chunks.push(chunk);
           bodySize += chunk.length;
-          const limit = gateway === "media" ? IMGBB_PUBLIC_CONFIG.uploadMaxBytes : 64 * 1024;
+          const limit = gateway === "media" ? IMGBB_UPLOAD_MAX_BYTES : 64 * 1024;
           if (bodySize > limit) oversized = true;
         });
         req.on("end", () => {

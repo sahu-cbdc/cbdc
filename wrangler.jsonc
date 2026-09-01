@@ -1,9 +1,9 @@
 {
   // Worker entry (server/index.ts) hosts the secure /api/... gateways.
   // NO configuration lives here: public service config comes from the single
-  // shared source src/config/firebase.ts, and secrets are server-side only —
-  // `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT` and `IMGBB_API_KEY`
-  // (for local dev use process environment variables).
+  // shared source src/config/firebase.ts. The ImgBB key lives in
+  // server/config/imgbb.ts (optionally overridden by the IMGBB_API_KEY
+  // Worker secret); the Firebase service account is a Worker secret only.
   "name": "cbdc",
   "compatibility_date": "2026-08-16",
   "main": "server/index.ts",

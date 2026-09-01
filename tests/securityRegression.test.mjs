@@ -336,39 +336,41 @@ test("pages: no direct Firebase SDK, ImgBB, or raw endpoint fetch in components"
   assert.match(siteCfg, /INTERNAL_ENDPOINTS\.siteConfigSource/, "site-config channel lives in a helper");
 });
 
-test("imgbb: key centralized in src/config/imgbb.ts — server-only, never client-bundled", () => {
-  const central = read("src/config/imgbb.ts");
-  assert.match(central, /IMGBB_SERVER/, "central server section");
-  assert.match(central, /apiKey:\s*"[0-9a-f]{20,}"/, "the key lives here");
-  assert.match(central, /uploadEndpoint:\s*"https:\/\/api\.imgbb\.com/, "upload endpoint lives here");
-  const pub = read("src/config/imgbb.public.ts");
-  assert.match(pub, /IMGBB_PUBLIC_CONFIG/, "client-safe public half");
-  assert.doesNotMatch(pub, /apiKey|IMGBB_SERVER/, "public half carries no key reference");
-  /* client code must import ONLY the public half — never the central file */
+test("imgbb: ONE central server-side config (server/config/imgbb.ts); nothing in src/config or the bundle", () => {
+  const central = read("server/config/imgbb.ts");
+  assert.match(central, /IMGBB_API_KEY = "[0-9a-f]{20,}"/, "the key lives here");
+  assert.match(central, /IMGBB_UPLOAD_ENDPOINT = "https:\/\/api\.imgbb\.com/, "upload endpoint lives here");
+  assert.match(central, /IMGBB_UPLOAD_MAX_BYTES/, "upload ceiling lives here");
+  /* src/config carries NO imgbb file at all; no client code touches the key */
+  const files = execFileSync("find", ["src/config", "-type", "f"]).toString().trim().split("\n");
+  for (const f of files) {
+    assert.ok(!/imgbb/i.test(f), `src/config must not contain an imgbb file (${f})`);
+  }
   for (const f of ["imgbb", "api", "rtdb", "authActions", "siteConfig", "applyRequest", "accountDelete", "firebase", "identity", "store"]) {
     const lib = read(`src/lib/${f}.ts`);
-    assert.doesNotMatch(lib, /from ["']\.\.\/config\/imgbb["']/, `${f}.ts must not import the central imgbb config`);
+    assert.doesNotMatch(lib, /config\/imgbb|IMGBB_API_KEY/, `${f}.ts must not reach imgbb server config`);
   }
   for (const f of ["Home", "Admin", "Moderator", "Doner"]) {
     const page = read(`src/pages/${f}.tsx`);
-    assert.doesNotMatch(page, /from ["']\.\.\/config\/imgbb["']/, `${f}.tsx must not import the central imgbb config (lib helper is fine)`);
+    assert.doesNotMatch(page, /config\/imgbb|IMGBB_API_KEY|api\.imgbb\.com/, `${f}.tsx must stay imgbb-clean`);
   }
-  /* key value exists in exactly ONE repo file */
+  /* the key VALUE exists in exactly one repo file and never under src/ */
   const hits = execFileSync("grep", ["-rl", "8a5458f04438f111f2150bb73ee7499d", "src", "server", "vite.config.ts", "wrangler.jsonc", "database.rules.json"]).toString().trim().split("\n").filter(Boolean);
-  assert.deepEqual(hits, ["src/config/imgbb.ts"], "the key value must exist only in src/config/imgbb.ts");
-  /* server resolves env-override → central key; upload endpoint not duplicated */
+  assert.deepEqual(hits, ["server/config/imgbb.ts"], "key value only in server/config/imgbb.ts");
+  /* /api/media resolves key + endpoint + limit from the central file only */
   const cfg = read("server/config.ts");
-  assert.match(cfg, /IMGBB_SERVER\.apiKey/, "server config falls back to the central key");
+  assert.match(cfg, /\.\/config\/imgbb\.ts/, "server config imports the central imgbb config");
+  assert.match(cfg, /CENTRAL_IMGBB_KEY/, "env override -> central key precedence");
   const api = read("server/imagesApi.ts");
-  assert.match(api, /IMGBB_URL = IMGBB_SERVER\.uploadEndpoint/, "upload endpoint single-sourced");
+  assert.match(api, /IMGBB_URL = IMGBB_UPLOAD_ENDPOINT/, "endpoint single-sourced");
+  assert.match(api, /MAX_UPLOAD_BYTES = IMGBB_UPLOAD_MAX_BYTES/, "limit single-sourced");
   assert.doesNotMatch(api, /["']https:\/\/api\.imgbb\.com/, "no hardcoded endpoint duplicate");
-  const lib = read("src/lib/imgbb.ts");
-  assert.match(lib, /from ["']\.\.\/config\/imgbb\.public["']/, "client uses the public half");
-  assert.match(lib, /IMGBB_PUBLIC_CONFIG\.compression\.maxDimension/, "compression from config");
-  const dup = read("server/imagesApi.ts") + read("vite.config.ts") + read("src/lib/imgbb.ts");
+  const vite = read("vite.config.ts");
+  assert.match(vite, /gateway === "media" \? IMGBB_UPLOAD_MAX_BYTES/, "dev middleware limit single-sourced");
+  const dup = read("server/imagesApi.ts") + read("vite.config.ts");
   assert.doesNotMatch(dup, /8 \* 1024 \* 1024/, "no duplicated 8MB literal");
-  assert.doesNotMatch(dup, /maxDim = 1600/, "no duplicated compression default");
 });
+
 
 
 test("secrets: no service-account material in client sources", () => {
