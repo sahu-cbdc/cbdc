@@ -336,19 +336,28 @@ test("pages: no direct Firebase SDK, ImgBB, or raw endpoint fetch in components"
   assert.match(siteCfg, /INTERNAL_ENDPOINTS\.siteConfigSource/, "site-config channel lives in a helper");
 });
 
-test("imgbb: ONE central server-side config (server/config/imgbb.ts); nothing in src/config or the bundle", () => {
+test("imgbb: private config ONLY in server/config/imgbb.ts; src/config/imgbb.ts public-only; key never client-side", () => {
   const central = read("server/config/imgbb.ts");
   assert.match(central, /IMGBB_API_KEY = "[0-9a-f]{20,}"/, "the key lives here");
   assert.match(central, /IMGBB_UPLOAD_ENDPOINT = "https:\/\/api\.imgbb\.com/, "upload endpoint lives here");
   assert.match(central, /IMGBB_UPLOAD_MAX_BYTES/, "upload ceiling lives here");
-  /* src/config carries NO imgbb file at all; no client code touches the key */
+  /* src/config/imgbb.ts exists and is PUBLIC-ONLY: compression settings, no key/endpoint/limit */
+  const pub = read("src/config/imgbb.ts");
+  assert.match(pub, /IMGBB_PUBLIC_CONFIG/, "public imgbb config exists");
+  assert.match(pub, /maxDimension|quality|mimeType/, "public config = compression settings");
+  for (const banned of [/IMGBB_API_KEY/, /api\.imgbb\.com/, /IMGBB_UPLOAD_ENDPOINT/, /IMGBB_UPLOAD_MAX_BYTES/, /[0-9a-f]{20,}/]) {
+    assert.doesNotMatch(pub, banned, "src/config/imgbb.ts must stay key-free");
+  }
+  /* every other src/config file stays imgbb-free */
   const files = execFileSync("find", ["src/config", "-type", "f"]).toString().trim().split("\n");
   for (const f of files) {
-    assert.ok(!/imgbb/i.test(f), `src/config must not contain an imgbb file (${f})`);
+    if (f !== "src/config/imgbb.ts") assert.ok(!/imgbb/i.test(f), `unexpected imgbb file (${f})`);
   }
+  /* no client lib ever touches the private key/config surface */
   for (const f of ["imgbb", "api", "rtdb", "authActions", "siteConfig", "applyRequest", "accountDelete", "firebase", "identity", "store"]) {
     const lib = read(`src/lib/${f}.ts`);
-    assert.doesNotMatch(lib, /config\/imgbb|IMGBB_API_KEY/, `${f}.ts must not reach imgbb server config`);
+    assert.doesNotMatch(lib, /IMGBB_API_KEY/, `${f}.ts must not reach imgbb server config`);
+    if (f !== "imgbb") assert.doesNotMatch(lib, /config\/imgbb/, `${f}.ts must not import imgbb config`);
   }
   for (const f of ["Home", "Admin", "Moderator", "Doner"]) {
     const page = read(`src/pages/${f}.tsx`);

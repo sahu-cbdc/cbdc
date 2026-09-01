@@ -104,7 +104,7 @@ async function readUploadBody(request: Request, maxBytes: number): Promise<Uint8
       const chunk = new Uint8Array(value);
       total += chunk.length;
       if (total > maxBytes) {
-        throw new ApiError(413, "ছবির আকার ৮ MB-র বেশি — ছোট ছবি দিন।");
+        throw new ApiError(413, "ছবিটি অনেক বড় — ছোট ছবি দিন।");
       }
       chunks.push(chunk);
     }
@@ -188,7 +188,7 @@ export default {
         const len = contentLength(request);
         if (len > MAX_UPLOAD_BYTES) {
           return jsonResponse(
-            { ok: false, error: "ছবির আকার ৮ MB-র বেশি — ছোট ছবি দিন।" },
+            { ok: false, error: "ছবিটি অনেক বড় — ছোট ছবি দিন।" },
             { status: 413, corsHeaders: cors.headers },
           );
         }

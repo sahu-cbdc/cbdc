@@ -1,7 +1,7 @@
 /**
  * Public website submissions — the only API that works without a login.
  *
- *   POST /api/public/submit {kind:"donor-registration"|"emergency-request", payload}
+ *   POST /api/data {op:"public-submit", kind:"donor-registration"|"emergency-request", payload}
  *
  * Mirrors exactly what the public Home forms used to write directly, minus
  * everything the browser used to decide on its own:

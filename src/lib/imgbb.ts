@@ -3,13 +3,7 @@
 import { getAuthInstance } from "./firebase";
 import { appBase } from "./router";
 import { API_GATEWAYS, API_TIMEOUTS } from "../config/api";
-
-/** Client-side pre-upload downscaling (server limits live server-side only). */
-const CLIENT_COMPRESSION = {
-  maxDimension: 1600,
-  quality: 0.85,
-  mimeType: "image/jpeg",
-} as const;
+import { IMGBB_PUBLIC_CONFIG } from "../config/imgbb";
 
 const ENDPOINT = API_GATEWAYS.media;
 const CONFIG_ENDPOINT = API_GATEWAYS.admin;
@@ -53,8 +47,8 @@ export interface ImgbbResult {
 
 function compressImage(
   file: File,
-  maxDim: number = CLIENT_COMPRESSION.maxDimension,
-  quality: number = CLIENT_COMPRESSION.quality
+  maxDim: number = IMGBB_PUBLIC_CONFIG.compression.maxDimension,
+  quality: number = IMGBB_PUBLIC_CONFIG.compression.quality
 ): Promise<Blob> {
   return new Promise((resolve) => {
     let objectUrl = "";
@@ -84,7 +78,7 @@ function compressImage(
         ctx.drawImage(img, 0, 0, width, height);
         canvas.toBlob(
           (blob) => resolve(blob || file),
-          CLIENT_COMPRESSION.mimeType,
+          IMGBB_PUBLIC_CONFIG.compression.mimeType,
           quality
         );
       } catch {

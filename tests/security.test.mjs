@@ -10,7 +10,7 @@
  *                        flooding 429 দেয়; legitimate usage unlimited।
  *   4. Server-side authentication & authorization (401/403) — delete / dedupe /
  *                        apply / images-upload; IDOR (client-পাঠানো uid) দমন।
- *   5. Firebase Rules consistency — settings/imgbb আর public-readable নয়;
+ *   5. Firebase Rules consistency — legacy settings/imgbb নোড সম্পূর্ণ removed;
  *                        settings/app পাবলিক; server-এ সব protected API token দাবি।
  */
 import { test } from "node:test";
@@ -374,13 +374,11 @@ test("images upload: valid token + key → uploads, returns sanitized URL only",
    5. FIREBASE RULES + API WIRING
    ═══════════════════════════════════════════════════════════════════════ */
 
-test("rules: settings/imgbb not public-read; settings/app stays public; no naked '*' CORS", () => {
+test("rules: legacy settings/imgbb key node fully removed; settings/app stays public; no naked '*' CORS", () => {
   const rules = read("database.rules.json");
-  /* imgbb block (নেস্টেড ব্রেস ছাড়া) — .read অবশ্যই admin-শর্ত */
-  const imgbbBlock = (rules.match(/"imgbb":\s*\{[^}]*\}/) || [""])[0];
-  assert.ok(imgbbBlock, "imgbb rules block present");
-  assert.match(imgbbBlock, /"\.read": "auth != null/);
-  assert.doesNotMatch(imgbbBlock, /"\.read": true/);
+  /* key এখন শুধু server-side — RTDB-তে imgbb নোডই নেই */
+  assert.doesNotMatch(rules, /"imgbb"/, "settings/imgbb node must not exist");
+  assert.doesNotMatch(rules, /imgbb/i, "no imgbb trace left in rules");
   /* app block — public read */
   const appBlock = (rules.match(/"app":\s*\{[^}]*\}/) || [""])[0];
   assert.ok(appBlock, "app rules block present");

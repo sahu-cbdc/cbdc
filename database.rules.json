@@ -120,9 +120,6 @@
       ".read": "auth != null && (root.child('admins').child(auth.uid).child('role').val() === 'admin' || root.child('admins').child(auth.uid).child('role').val() === 'moderator')",
       "app": {
         ".read": true
-      },
-      "imgbb": {
-        ".read": "auth != null && root.child('admins').child(auth.uid).child('role').val() === 'admin'"
       }
     },
     "audit": {

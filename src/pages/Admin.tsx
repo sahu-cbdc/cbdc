@@ -977,7 +977,7 @@ function initPage() {
         donorApproval:true,donationApproval:true,emergencyApproval:true,bloodGroupApproval:true,
         
         reqApproval:true},
-      integr:{imgbbKey:"",firebase:true}};
+      integr:{firebase:true}};
   }
   let DB=seed(), SHARED_PULLING=false;
   let lastPersistedDB=null;
@@ -5188,10 +5188,9 @@ function initPage() {
     +(may?`<button class="btn w" style="margin-top:12px" id="gUp">${SI.up(16)} ছবি যোগ করুন</button>`:"")
     +`<div class="sec-t">ImgBB সংযোগ</div>
       <div class="card"><div class="kv">
-        <div><span>অবস্থা</span><b id="gKeyState">${DB.integr.imgbbKey?"কী সংরক্ষিত":"কী দেওয়া হয়নি"}</b></div>
-        <div><span>সর্বোচ্চ আকার</span><b>৩২ MB</b></div></div>
-        <p class="hint2" style="margin-top:9px">নিয়ন্ত্রণ → অনুমোদন ও সেটিংস থেকে API কী দিলে সরাসরি আপলোড চালু হবে।</p></div>`;
-    getImgbbStatus().then(k=>{if(k){DB.integr.imgbbKey="1";const inp=$("#gKeyState");if(inp)inp.textContent="কী সংরক্ষিত";}});
+        <div><span>অবস্থা</span><b id="gKeyState">যাচাই হচ্ছে…</b></div></div>
+        <p class="hint2" style="margin-top:9px">ছবি স্বয়ংক্রিয়ভাবে সুরক্ষিত সার্ভারের মাধ্যমে ImgBB-তে আপলোড হয়।</p></div>`;
+    getImgbbStatus().then(k=>{const inp=$("#gKeyState");if(inp)inp.textContent=k?"সক্রিয়":"কনফিগার করা নেই";});
     el.querySelectorAll("[data-gt]").forEach(b=>b.onclick=async()=>{
       const g=DB.gallery.find(x=>x.id===b.dataset.gt);if(!g)return;
       g.status=g.status==="published"?"draft":"published";
@@ -5209,7 +5208,7 @@ function initPage() {
   function uploadSheet(){
     const s=sheet("ছবি যোগ করুন",`
       <div class="dz" id="dz"><span>${SI.up(24)}</span><b>ছবি বেছে নিন</b>
-        <small>JPG / PNG · সর্বোচ্চ ৩২ MB</small>
+        <small>JPG / PNG</small>
         <input type="file" id="fi" accept="image/*" hidden></div>
       <div class="f" style="margin-top:12px"><label>শিরোনাম</label>
         <input id="up_t"></div>
@@ -5224,7 +5223,6 @@ function initPage() {
     fi.onchange=()=>fi.files[0]&&take(fi.files[0]);
     function take(f){
       if(!/^image\//.test(f.type))return toast("ছবি ফাইল দিন","er");
-      if(f.size>32*1024*1024)return toast("ফাইল ৩২ MB-র বেশি","er");
       file=f;url=URL.createObjectURL(f);
       dz.innerHTML=`<img src="${url}" style="max-height:110px;border-radius:9px"><b>${esc(f.name)}</b>
         <small>${bn((f.size/1024).toFixed(0))} KB</small>`;

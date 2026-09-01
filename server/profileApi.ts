@@ -1,13 +1,13 @@
 /**
  * Account endpoints: own-profile upsert + identity/login index claims.
  *
- *   POST /api/account/profile     — upsert users/{caller.uid} (server merge)
- *   POST /api/account/claim-email — identityIndex/email claim (CAS semantics)
- *   POST /api/account/claim-login — loginIndex username/phone claims
+ *   POST /api/auth {op:"profile"}     — upsert users/{caller.uid} (server merge)
+ *   POST /api/auth {op:"claim-email"} — identityIndex/email claim (CAS)
+ *   POST /api/auth {op:"claim-login"} — loginIndex username/phone claims
  *
  * The caller's uid/email ALWAYS come from the verified ID token; anything the
  * client sends for uid is ignored (IDOR-safe). Computed writes are re-checked
- * through the same write guard used by /api/data/write.
+ * through the same write guard used by /api/data op=write.
  */
 import { ApiError } from "./deleteApi.ts";
 import { emailIndexKey, emailIndexPath } from "./identityKey.ts";

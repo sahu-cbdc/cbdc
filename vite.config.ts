@@ -199,7 +199,7 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
         req.on("end", () => {
           void (async () => {
             try {
-              if (oversized) throw new Error(gateway === "media" ? "ছবির আকার ৮ MB-র বেশি — ছোট ছবি দিন।" : "payload too large");
+              if (oversized) throw new ApiError(413, gateway === "media" ? "ছবিটি অনেক বড় — ছোট ছবি দিন।" : "অনুরোধ অনেক বড় — আবার চেষ্টা করুন।");
               const raw = Buffer.concat(chunks);
               const payload = gateway === "media" ? {} : (JSON.parse(raw.toString("utf8") || "{}") as Record<string, unknown>);
               

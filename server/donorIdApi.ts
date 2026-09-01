@@ -1,8 +1,8 @@
 /**
  * Staff-only donor-id allocation.
  *
- *   POST /api/donor/id {action:"next"}                → CBDC-YYYY-NNNN
- *   POST /api/donor/id {action:"release", donorId}    → free the serial
+ *   POST /api/admin {op:"donor-id", action:"next"}    → CBDC-YYYY-NNNN
+ *   POST /api/admin {op:"donor-id", action:"release"} → free the serial
  *
  * Serial allocation used to run in the browser with an RTDB transaction;
  * it now runs on the server so _meta claims stay privileged and ids stay
