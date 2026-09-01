@@ -144,8 +144,8 @@ async function submitDonorRegistration(
 
   const memberId = pushId();
   const createdAt = new Date().toISOString();
-  const member = {
-    ...payload,
+  const member: Record<string, unknown> = {
+    id: memberId,
     name,
     bloodGroup,
     gender,
@@ -154,10 +154,12 @@ async function submitDonorRegistration(
     district: district || area,
     phone,
     ...(whatsapp ? { whatsapp } : {}),
+    ...(health ? { healthNotes: health } : {}),
+    ...(last ? { lastDonationDate: last } : {}),
+    ...(address ? { address } : {}),
     ...(uid ? { uid, ownerUid: uid } : {}),
     status: "pending",
     createdAt,
-    id: memberId,
     updatedAt: createdAt,
   };
   const paths: Record<string, any> = {

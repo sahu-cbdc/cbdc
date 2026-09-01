@@ -44,69 +44,34 @@ async function verifyIdentityLookup(
 }
 
 
-async function restGet(
-  base: string,
-  token: string,
-  path: string,
-  fetchImpl: typeof fetch,
-): Promise<unknown> {
-  const url = `${base}/${path}.json?auth=${encodeURIComponent(token)}`;
-  const res = await fetchImpl(url, { method: "GET" }).catch(() => null);
-  if (!res) throw new ApiError(502, "Realtime Database-এ সংযোগ করা যায়নি।");
-  if (res.status === 401 || res.status === 403) {
-    throw new ApiError(403, "Realtime Database rules অনুযায়ী অনুমতি নেই (শুধু অ্যাডমিন)।");
-  }
-  if (!res.ok) {
-    console.error(`[rtdb read] HTTP ${res.status}`);
-    throw new ApiError(502, "Realtime Database-এ পড়া যায়নি — আবার চেষ্টা করুন।");
-  }
-  return await res.json().catch(() => null);
-}
-
-
-async function restApply(
-  base: string,
-  token: string,
-  paths: Record<string, unknown>,
-  fetchImpl: typeof fetch,
-): Promise<boolean> {
-  const list = Object.keys(paths);
-  if (!list.length) return true;
-  const auth = `?auth=${encodeURIComponent(token)}`;
-  try {
-    const res = await fetchImpl(`${base}/.json${auth}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(paths),
-    }).catch(() => null);
-    if (res && res.ok) return true;
-    if (res && (res.status === 401 || res.status === 403)) {
-      throw new ApiError(403, "Realtime Database rules অনুযায়ী মুছতে অনুমতি নেই (শুধু অ্যাডমিন)।");
-    }
-  } catch (e) {
-    if (e instanceof ApiError) throw e;
-    
-  }
-  let allOk = true;
-  for (const path of list) {
-    const res = await fetchImpl(`${base}/${path}.json${auth}`, { method: "DELETE" }).catch(() => null);
-    if (!res || !res.ok) allOk = false;
-  }
-  return allOk;
-}
-
-
-export function makeHttpIo(env: HttpEnv, idToken: string, fetchImpl: typeof fetch = fetch): DeleteIo {
+/**
+ * IO for admin entity-delete / dedupe / config-check. Authorization runs in
+ * the handlers themselves (verified ID token + admins row); database access
+ * uses the server's service account — never the caller's token, so locked
+ * RTDB rules (".write": false) can never break these admin flows.
+ */
+export function makeHttpIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): DeleteIo {
   const apiKey = String(env.FIREBASE_API_KEY || DEFAULT_FIREBASE_API_KEY).trim();
-  const base = String(env.FIREBASE_DATABASE_URL || DEFAULT_FIREBASE_DATABASE_URL)
-    .trim()
-    .replace(/\/+$/, "");
+  const priv = makePrivilegedIo(env, undefined, fetchImpl) as ResolveLegacyIo & {
+    configured: boolean;
+    get(path: string): Promise<any>;
+    list(node: string): Promise<any>;
+    apply(paths: Record<string, unknown>): Promise<boolean>;
+  };
   return {
     verifyToken: (token: string) => verifyIdentityLookup(token, apiKey, fetchImpl),
-    get: (path: string) => restGet(base, idToken, path, fetchImpl),
-    list: (node: string) => restGet(base, idToken, node, fetchImpl),
-    apply: (paths: Record<string, unknown>) => restApply(base, idToken, paths, fetchImpl),
-    
+    get: (path: string) => {
+      if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
+      return priv.get(path);
+    },
+    list: (node: string) => {
+      if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
+      return priv.list(node);
+    },
+    apply: async (paths) => {
+      if (!priv.configured) return false;
+      return priv.apply(paths);
+    },
     deleteAuthUser: createAuthDeleter(env as Record<string, unknown>, DEFAULT_FIREBASE_PROJECT_ID, fetchImpl),
   };
 }

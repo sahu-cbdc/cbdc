@@ -72,7 +72,7 @@ test("Server + dev middleware expose /api/donor/apply (settings-OFF direct proce
   const server = read("server/index.ts");
   assert.match(server, /import \{ handleDonorApply \} from "\.\/applyApi\.ts";/);
   assert.match(server, /import \{ makeApplyIo/);
-  assert.match(server, /isApply = path\.endsWith\("\/api\/donor\/apply"\)/);
+  assert.ok(server.includes('apply: /\\/api\\/donor\\/apply$/i.test(path)'), "apply route registered in apiPaths");
   assert.match(server, /handleDonorApply\([\s\S]*?\.\.\.body, idToken \},[\s\S]*?makeApplyIo/);
   const vite = read("vite.config.ts");
   assert.match(vite, /import \{ handleDonorApply \} from "\.\/server\/applyApi";/);

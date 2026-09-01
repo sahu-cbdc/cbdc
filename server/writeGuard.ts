@@ -589,7 +589,7 @@ export async function authorizeDataWrite(
     switch (node) {
       case "users": {
         const current = ctx.recordCache.get(`users/${id}`) ?? null;
-        guardUsersSubtree(ctx, id, segs.slice(1), authorizedValue, current);
+        guardUsersSubtree(ctx, id, sub, authorizedValue, current);
         break;
       }
       case "donors":

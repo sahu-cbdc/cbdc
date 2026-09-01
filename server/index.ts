@@ -145,9 +145,7 @@ export default {
     const path = url.pathname.replace(/\/+$/, "");
     const apis = apiPaths(url);
 
-    const isApply = path.endsWith("/api/donor/apply");
     const isApiPath = /^\/api\//i.test(path);
-    void isApply;
     const allowedOrigins = parseAllowedOrigins(env && env.ALLOWED_ORIGINS);
 
     if (!isApiPath) {
@@ -249,21 +247,21 @@ export default {
       if (apis.delete) {
         const result: ServerDeleteResult = await handleAdminEntityDelete(
           { ...body, idToken },
-          makeHttpIo(env, idToken),
+          makeHttpIo(env),
         );
         return jsonResponse(result, { corsHeaders: cors.headers });
       }
       if (apis.dedupe) {
         const result = await handleAdminDedupe(
           { apply: body.apply === true, idToken },
-          makeHttpIo(env, idToken),
+          makeHttpIo(env),
         );
         return jsonResponse(result, { corsHeaders: cors.headers });
       }
       if (apis.configCheck) {
         const result = await handleAdminConfigCheck(
           { idToken },
-          makeHttpIo(env, idToken),
+          makeHttpIo(env),
           {
             serviceAccountConfigured: serviceAccountConfigured(env),
             imgbbConfigured: await makeImagesIo(env).hasKey(),

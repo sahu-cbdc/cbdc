@@ -164,11 +164,17 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
         const isClaimLoginApi = apiPath.endsWith("/api/account/claim-login");
         const isDonorIdApi = apiPath.endsWith("/api/donor/id");
         const isPublicSubmitApi = apiPath.endsWith("/api/public/submit");
-        if (
-          !isDeleteApi && !isDedupeApi && !isConfigCheckApi && !isResolveApi && !isApplyApi &&
-          !isUploadApi && !isDataWriteApi && !isProfileApi && !isClaimEmailApi &&
-          !isClaimLoginApi && !isDonorIdApi && !isPublicSubmitApi
-        ) return next();
+        const isKnownApi =
+          isDeleteApi || isDedupeApi || isConfigCheckApi || isResolveApi || isApplyApi ||
+          isUploadApi || isDataWriteApi || isProfileApi || isClaimEmailApi ||
+          isClaimLoginApi || isDonorIdApi || isPublicSubmitApi;
+        if (!isKnownApi) {
+          if (/^\/api\//i.test(apiPath)) {
+            send(res, 404, { ok: false, error: "অনুরোধকৃত API রুটটি খুঁজে পাওয়া যায়নি।" });
+            return;
+          }
+          return next();
+        }
         
         const host = String(req.headers.host || "").split(":")[0];
         const origin = String(req.headers.origin || req.headers.referer || "");
@@ -239,7 +245,7 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
                 
                 result = await handleAdminConfigCheck(
                   { idToken },
-                  makeHttpIo(serverEnv, idToken),
+                  makeHttpIo(serverEnv),
                   {
                     serviceAccountConfigured: serviceAccountConfigured(serverEnv),
                     imgbbConfigured: await makeImagesIo(serverEnv).hasKey(),
@@ -248,7 +254,7 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
               } else if (isDedupeApi) {
                 result = await handleAdminDedupe(
                   { apply: payload.apply === true, idToken },
-                  makeHttpIo(serverEnv, idToken),
+                  makeHttpIo(serverEnv),
                 );
               } else if (isResolveApi) {
                 result = await handleResolveLegacy(
@@ -263,7 +269,7 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
               } else {
                 result = await handleAdminEntityDelete(
                   { ...payload, idToken },
-                  makeHttpIo(serverEnv, idToken),
+                  makeHttpIo(serverEnv),
                 );
               }
               send(res, 200, result);
