@@ -228,7 +228,7 @@ async function deleteAccountEntity(
       503,
       "সার্ভারে service-account secret (FIREBASE_SERVICE_ACCOUNT) কনফিগার করা নেই, তাই লগইন " +
         "অ্যাকাউন্টটি মোছা সম্ভব নয়। নিরাপত্তার জন্য **কিছুই মোছা হয়নি** (আংশিক ডিলিট প্রতিরোধ)। " +
-        "ডিপ্লয়ে `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT` (বা dev-এ `.env`-এ) সেট করে আবার চেষ্টা করুন।",
+        "ডিপ্লয়ে `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT` (dev-এ environment variable সেট করে) আবার চেষ্টা করুন।",
     );
   }
   steps.push(
@@ -379,7 +379,7 @@ async function deleteDonorIdEntity(
           503,
           "সার্ভারে service-account secret (FIREBASE_SERVICE_ACCOUNT) কনফিগার করা নেই, তাই সংশ্লিষ্ট " +
             "লগইন অ্যাকাউন্টটি মোছা সম্ভব নয়। নিরাপত্তার জন্য **কিছুই মোছা হয়নি** (আংশিক ডিলিট প্রতিরোধ)। " +
-            "ডিপ্লয়ে `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT` (বা dev-এ `.env`-এ) সেট করে আবার চেষ্টা করুন।",
+            "ডিপ্লয়ে `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT` (dev-এ environment variable সেট করে) আবার চেষ্টা করুন।",
         );
       }
       steps.push(

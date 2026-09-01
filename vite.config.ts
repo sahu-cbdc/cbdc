@@ -1,15 +1,29 @@
-import { defineConfig, loadEnv, type Plugin } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { handleAdminEntityDelete, handleAdminConfigCheck } from "./server/deleteApi";
+import { handleAdminEntityDelete, handleAdminConfigCheck, ApiError } from "./server/deleteApi";
+import { toUserSafeMessage } from "./server/index";
+import { IMGBB_UPLOAD_MAX_BYTES } from "./server/config/imgbb";
 import { handleAdminDedupe } from "./server/dedupeApi";
 import { handleDonorApply } from "./server/applyApi";
 import { handleResolveLegacy } from "./server/resolveLegacy";
 import { handleImageUpload } from "./server/imagesApi";
-import { makeApplyIo, makeHttpIo, makeImagesIo, makePrivilegedIo } from "./server/httpIo";
+import {
+  makeApplyIo,
+  makeHttpIo,
+  makeImagesIo,
+  makePrivilegedIo,
+  makeDataIo,
+  makePublicIo,
+  makeDonorIdIo,
+} from "./server/httpIo";
 import { serviceAccountConfigured } from "./server/authAdmin";
+import { handleDataWrite } from "./server/dataApi";
+import { handleProfileUpsert, handleClaimEmail, handleClaimLogin } from "./server/profileApi";
+import { handleDonorIdAction } from "./server/donorIdApi";
+import { handlePublicSubmit } from "./server/publicApi";
 
 
 
@@ -139,14 +153,18 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
       server.middlewares.use((req, res, next) => {
         const url = (req.url || "").split("?")[0];
         const apiPath = url.replace(/\/+$/, "");
-        const isDeleteApi = apiPath.endsWith("/api/admin/delete");
-        const isDedupeApi = apiPath.endsWith("/api/admin/dedupe");
-        const isConfigCheckApi = apiPath.endsWith("/api/admin/config-check");
-        const isResolveApi = apiPath.endsWith("/api/account/resolve-legacy");
-        const isApplyApi = apiPath.endsWith("/api/donor/apply");
-        const isUploadApi = apiPath.endsWith("/api/images/upload");
-        if (!isDeleteApi && !isDedupeApi && !isConfigCheckApi && !isResolveApi && !isApplyApi && !isUploadApi) return next();
-        
+        const isAuthApi = apiPath.endsWith("/api/auth");
+        const isDataApi = apiPath.endsWith("/api/data");
+        const isAdminApi = apiPath.endsWith("/api/admin");
+        const isMediaApi = apiPath.endsWith("/api/media");
+        const gateway = isAuthApi ? "auth" : isDataApi ? "data" : isAdminApi ? "admin" : isMediaApi ? "media" : null;
+        if (!gateway) {
+          if (/^\/api\//i.test(apiPath)) {
+            send(res, 404, { ok: false, error: "অনুরোধকৃত API রুটটি খুঁজে পাওয়া যায়নি।" });
+            return;
+          }
+          return next();
+        }
         const host = String(req.headers.host || "").split(":")[0];
         const origin = String(req.headers.origin || req.headers.referer || "");
         let originHost = "";
@@ -164,7 +182,7 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
           return;
         }
         const idToken = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
-        if (!idToken) {
+        if (!idToken && gateway !== "data") {
           send(res, 401, { ok: false, error: "অনুমোদন প্রয়োজন — লগইন করে আবার চেষ্টা করুন।" });
           return;
         }
@@ -175,15 +193,15 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
         req.on("data", (chunk: Buffer) => {
           chunks.push(chunk);
           bodySize += chunk.length;
-          const limit = isUploadApi ? 8 * 1024 * 1024 : 64 * 1024;
+          const limit = gateway === "media" ? IMGBB_UPLOAD_MAX_BYTES : 64 * 1024;
           if (bodySize > limit) oversized = true;
         });
         req.on("end", () => {
           void (async () => {
             try {
-              if (oversized) throw new Error(isUploadApi ? "ছবির আকার ৮ MB-র বেশি — ছোট ছবি দিন।" : "payload too large");
+              if (oversized) throw new ApiError(413, gateway === "media" ? "ছবিটি খুব বড় — ছোট ছবি দিন।" : "payload too large");
               const raw = Buffer.concat(chunks);
-              const payload = isUploadApi ? {} : (JSON.parse(raw.toString("utf8") || "{}") as Record<string, unknown>);
+              const payload = gateway === "media" ? {} : (JSON.parse(raw.toString("utf8") || "{}") as Record<string, unknown>);
               
               const serverEnv = {
                 FIREBASE_SERVICE_ACCOUNT: devEnv.FIREBASE_SERVICE_ACCOUNT || "",
@@ -192,7 +210,19 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
                 IMGBB_API_KEY: devEnv.IMGBB_API_KEY || "",
               };
               let result: unknown;
-              if (isUploadApi) {
+              const op = String(payload.op ?? "").trim();
+              if (gateway === "auth") {
+                if (op === "profile") result = await handleProfileUpsert({ ...payload, idToken }, makeDataIo(serverEnv));
+                else if (op === "claim-email") result = await handleClaimEmail({ ...payload, idToken }, makeDataIo(serverEnv));
+                else if (op === "claim-login") result = await handleClaimLogin({ ...payload, idToken }, makeDataIo(serverEnv));
+                else if (op === "resolve-legacy") result = await handleResolveLegacy({ idToken }, makePrivilegedIo(serverEnv, ""));
+                else throw new ApiError(400, "অনুরোধকৃত কাজটি খুঁজে পাওয়া যায়নি।");
+              } else if (gateway === "data") {
+                if (op === "write") result = await handleDataWrite({ ...payload, idToken }, makeDataIo(serverEnv));
+                else if (op === "apply") result = await handleDonorApply({ ...payload, idToken }, makeApplyIo(serverEnv, idToken));
+                else if (op === "public-submit") result = await handlePublicSubmit(payload, makePublicIo(serverEnv), idToken);
+                else throw new ApiError(400, "অনুরোধকৃত কাজটি খুঁজে পাওয়া যায়নি।");
+              } else if (gateway === "media") {
                 result = await handleImageUpload(
                   { idToken },
                   new Uint8Array(raw),
@@ -200,41 +230,25 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
                   String(req.headers["x-filename"] || "image.jpg"),
                   makeImagesIo(serverEnv),
                 );
-              } else if (isConfigCheckApi) {
-                
-                result = await handleAdminConfigCheck(
-                  { idToken },
-                  makeHttpIo(serverEnv, idToken),
-                  {
-                    serviceAccountConfigured: serviceAccountConfigured(serverEnv),
-                    imgbbConfigured: await makeImagesIo(serverEnv).hasKey(),
-                  },
-                );
-              } else if (isDedupeApi) {
-                result = await handleAdminDedupe(
-                  { apply: payload.apply === true, idToken },
-                  makeHttpIo(serverEnv, idToken),
-                );
-              } else if (isResolveApi) {
-                result = await handleResolveLegacy(
-                  { idToken },
-                  makePrivilegedIo(serverEnv, ""),
-                );
-              } else if (isApplyApi) {
-                result = await handleDonorApply(
-                  { ...payload, idToken },
-                  makeApplyIo(serverEnv, idToken),
-                );
               } else {
-                result = await handleAdminEntityDelete(
-                  { ...payload, idToken },
-                  makeHttpIo(serverEnv, idToken),
-                );
+                if (op === "delete") result = await handleAdminEntityDelete({ ...payload, idToken }, makeHttpIo(serverEnv));
+                else if (op === "dedupe") result = await handleAdminDedupe({ apply: payload.apply === true, idToken }, makeHttpIo(serverEnv));
+                else if (op === "config-check") {
+                  result = await handleAdminConfigCheck(
+                    { idToken },
+                    makeHttpIo(serverEnv),
+                    {
+                      serviceAccountConfigured: serviceAccountConfigured(serverEnv),
+                      imgbbConfigured: await makeImagesIo(serverEnv).hasKey(),
+                    },
+                  );
+                } else if (op === "donor-id") result = await handleDonorIdAction({ ...payload, idToken }, makeDonorIdIo(serverEnv));
+                else throw new ApiError(400, "অনুরোধকৃত কাজটি খুঁজে পাওয়া যায়নি।");
               }
               send(res, 200, result);
             } catch (e) {
-              const status = Number((e as any)?.status) || 500;
-              send(res, status, { ok: false, error: (e as Error)?.message || "সার্ভার সমস্যা" });
+              const status = e instanceof ApiError ? e.status : 500;
+              send(res, status, { ok: false, error: toUserSafeMessage(e) });
             }
           })();
         });
@@ -257,28 +271,24 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
 
 const BASE = process.env.VITE_BASE || "/";
 
-export default defineConfig(({ mode }) => {
-  
-  const env = loadEnv(mode, process.cwd(), "");
-  const devServerEnv: Record<string, string> = {
-    FIREBASE_SERVICE_ACCOUNT: env.FIREBASE_SERVICE_ACCOUNT || process.env.FIREBASE_SERVICE_ACCOUNT || "",
-    FIREBASE_PROJECT_ID: env.FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || "",
-    IMGBB_API_KEY: env.IMGBB_API_KEY || process.env.IMGBB_API_KEY || "",
-  };
-  return {
-    plugins: [react(), cbdcSiteConfig(), cbdcDeleteApi(devServerEnv)],
-    base: BASE,
-    server: {
-      host: "0.0.0.0",
-      port: 5173,
-      strictPort: false,
-      
-      allowedHosts: true,
-    },
-    preview: {
-      host: "0.0.0.0",
-      port: 4173,
-      allowedHosts: true,
-    },
-  };
+const devServerEnv: Record<string, string> = {
+  FIREBASE_SERVICE_ACCOUNT: process.env.FIREBASE_SERVICE_ACCOUNT || "",
+  FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID || "",
+  IMGBB_API_KEY: process.env.IMGBB_API_KEY || "",
+};
+
+export default defineConfig({
+  plugins: [react(), cbdcSiteConfig(), cbdcDeleteApi(devServerEnv)],
+  base: BASE,
+  server: {
+    host: "0.0.0.0",
+    port: 5173,
+    strictPort: false,
+    allowedHosts: true,
+  },
+  preview: {
+    host: "0.0.0.0",
+    port: 4173,
+    allowedHosts: true,
+  },
 });

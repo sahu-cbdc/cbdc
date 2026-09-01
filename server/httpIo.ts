@@ -5,25 +5,11 @@ import type { ResolveLegacyIo } from "./resolveLegacy.ts";
 import type { ApplyIo } from "./applyApi.ts";
 import type { ImagesIo } from "./imagesApi.ts";
 import { createAuthDeleter, parseServiceAccount, fetchGoogleAccessToken, type ServiceAccount } from "./authAdmin.ts";
+import { serverConfig, UNCONFIGURED_MSG } from "./config.ts";
 
 const IDENTITY_TOOLKIT = "https://identitytoolkit.googleapis.com/v1/accounts:lookup";
 
-
-const DEFAULT_FIREBASE_API_KEY = "AIzaSyBxUlGig2NtQLf6tZMRwK6xxzjScNIqbrM";
-const DEFAULT_FIREBASE_DATABASE_URL =
-  "https://chokbazarbloodclub-69d5f-default-rtdb.firebaseio.com";
-
-const DEFAULT_FIREBASE_PROJECT_ID = "chokbazarbloodclub-69d5f";
-
-type HttpEnv = {
-  FIREBASE_API_KEY?: string;
-  FIREBASE_DATABASE_URL?: string;
-  
-  FIREBASE_SERVICE_ACCOUNT?: string;
-  FIREBASE_PROJECT_ID?: string;
-  
-  IMGBB_API_KEY?: string;
-};
+type HttpEnv = Record<string, unknown>;
 
 async function verifyIdentityLookup(
   idToken: string,
@@ -44,70 +30,35 @@ async function verifyIdentityLookup(
 }
 
 
-async function restGet(
-  base: string,
-  token: string,
-  path: string,
-  fetchImpl: typeof fetch,
-): Promise<unknown> {
-  const url = `${base}/${path}.json?auth=${encodeURIComponent(token)}`;
-  const res = await fetchImpl(url, { method: "GET" }).catch(() => null);
-  if (!res) throw new ApiError(502, "Realtime Database-এ সংযোগ করা যায়নি।");
-  if (res.status === 401 || res.status === 403) {
-    throw new ApiError(403, "Realtime Database rules অনুযায়ী অনুমতি নেই (শুধু অ্যাডমিন)।");
-  }
-  if (!res.ok) {
-    console.error(`[rtdb read] HTTP ${res.status}`);
-    throw new ApiError(502, "Realtime Database-এ পড়া যায়নি — আবার চেষ্টা করুন।");
-  }
-  return await res.json().catch(() => null);
-}
-
-
-async function restApply(
-  base: string,
-  token: string,
-  paths: Record<string, unknown>,
-  fetchImpl: typeof fetch,
-): Promise<boolean> {
-  const list = Object.keys(paths);
-  if (!list.length) return true;
-  const auth = `?auth=${encodeURIComponent(token)}`;
-  try {
-    const res = await fetchImpl(`${base}/.json${auth}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(paths),
-    }).catch(() => null);
-    if (res && res.ok) return true;
-    if (res && (res.status === 401 || res.status === 403)) {
-      throw new ApiError(403, "Realtime Database rules অনুযায়ী মুছতে অনুমতি নেই (শুধু অ্যাডমিন)।");
-    }
-  } catch (e) {
-    if (e instanceof ApiError) throw e;
-    
-  }
-  let allOk = true;
-  for (const path of list) {
-    const res = await fetchImpl(`${base}/${path}.json${auth}`, { method: "DELETE" }).catch(() => null);
-    if (!res || !res.ok) allOk = false;
-  }
-  return allOk;
-}
-
-
-export function makeHttpIo(env: HttpEnv, idToken: string, fetchImpl: typeof fetch = fetch): DeleteIo {
-  const apiKey = String(env.FIREBASE_API_KEY || DEFAULT_FIREBASE_API_KEY).trim();
-  const base = String(env.FIREBASE_DATABASE_URL || DEFAULT_FIREBASE_DATABASE_URL)
-    .trim()
-    .replace(/\/+$/, "");
+/**
+ * IO for admin entity-delete / dedupe / config-check. Authorization runs in
+ * the handlers themselves (verified ID token + admins row); database access
+ * uses the server's service account — never the caller's token, so locked
+ * RTDB rules (".write": false) can never break these admin flows.
+ */
+export function makeHttpIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): DeleteIo {
+  const cfg = serverConfig(env);
+  const priv = makePrivilegedIo(env, undefined, fetchImpl) as ResolveLegacyIo & {
+    configured: boolean;
+    get(path: string): Promise<any>;
+    list(node: string): Promise<any>;
+    apply(paths: Record<string, unknown>): Promise<boolean>;
+  };
   return {
-    verifyToken: (token: string) => verifyIdentityLookup(token, apiKey, fetchImpl),
-    get: (path: string) => restGet(base, idToken, path, fetchImpl),
-    list: (node: string) => restGet(base, idToken, node, fetchImpl),
-    apply: (paths: Record<string, unknown>) => restApply(base, idToken, paths, fetchImpl),
-    
-    deleteAuthUser: createAuthDeleter(env as Record<string, unknown>, DEFAULT_FIREBASE_PROJECT_ID, fetchImpl),
+    verifyToken: (token: string) => verifyIdentityLookup(token, cfg.firebaseWebApiKey, fetchImpl),
+    get: (path: string) => {
+      if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
+      return priv.get(path);
+    },
+    list: (node: string) => {
+      if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
+      return priv.list(node);
+    },
+    apply: async (paths) => {
+      if (!priv.configured) return false;
+      return priv.apply(paths);
+    },
+    deleteAuthUser: createAuthDeleter(env as Record<string, unknown>, cfg.firebaseProjectId, fetchImpl),
   };
 }
 
@@ -121,14 +72,12 @@ function privUrl(base: string, path: string, sa: ServiceAccount, fetchImpl: type
 
 
 export function makePrivilegedIo(env: HttpEnv, apiKey?: string, fetchImpl: typeof fetch = fetch) {
-  
-  const webKey = String(apiKey || env.FIREBASE_API_KEY || DEFAULT_FIREBASE_API_KEY).trim();
-  const base = String(env.FIREBASE_DATABASE_URL || DEFAULT_FIREBASE_DATABASE_URL)
-    .trim()
-    .replace(/\/+$/, "");
-  const sa = parseServiceAccount((env as Record<string, unknown>).FIREBASE_SERVICE_ACCOUNT);
+  const cfg = serverConfig(env);
+  const webKey = String(apiKey || cfg.firebaseWebApiKey).trim();
+  const base = cfg.firebaseDatabaseUrl.trim().replace(/\/+$/, "");
+  const sa = parseServiceAccount(cfg.serviceAccount);
 
-  const io: ResolveLegacyIo & { configured: boolean } = {
+  const io: ResolveLegacyIo & { configured: boolean; patch(paths: Record<string, any>): Promise<void> } = {
     configured: !!sa,
     verifyCaller: (token) => verifyIdentityLookup(token, webKey, fetchImpl),
     get: async (path) => {
@@ -156,40 +105,133 @@ export function makePrivilegedIo(env: HttpEnv, apiKey?: string, fetchImpl: typeo
         return false;
       }
     },
+    patch: async (paths) => {
+      if (!sa) throw new ApiError(503, UNCONFIGURED_MSG);
+      const list = Object.keys(paths);
+      if (!list.length) return;
+      const url = await privUrl(base, "", sa, fetchImpl);
+      const res = await fetchImpl(url, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(paths),
+      }).catch(() => null);
+      if (!res) throw new ApiError(502, "Realtime Database-এ সংযোগ করা যায়নি।");
+      if (!res.ok) {
+        throw new ApiError(502, "Realtime Database-এ সংরক্ষণ করা যায়নি — আবার চেষ্টা করুন।");
+      }
+    },
   };
   return io;
 }
 
-const UNCONFIGURED_MSG =
-  "সার্ভারে service-account secret (FIREBASE_SERVICE_ACCOUNT) কনফিগার করা নেই — " +
-  "পুরোনো রেকর্ড স্বয়ংক্রিয়ভাবে মেলানো সম্ভব নয়। অ্যাডমিন প্যানেলের " +
-  "'ডুপ্লিকেট যাচাই ও পরিষ্কার' ব্যবহার করুন।";
+/**
+ * IO for the guarded data-write API: verifies the caller's ID token with the
+ * web API key, then reads/writes with the service account (rules-bypassing,
+ * server-only). Everything the write guard needs runs through here.
+ */
+export type DataIo = {
+  verifyToken(idToken: string): Promise<{ uid: string; email: string } | null>;
+  getAdminRow(uid: string): Promise<any>;
+  get(path: string): Promise<any>;
+  patch(paths: Record<string, any>): Promise<void>;
+};
 
+export type PublicIo = {
+  verifyToken(idToken: string): Promise<{ uid: string; email: string } | null>;
+  get(path: string): Promise<any>;
+  list(node: string): Promise<any>;
+  patch(paths: Record<string, any>): Promise<void>;
+};
+
+/** Privileged IO for anonymous-capable public submissions. */
+export function makePublicIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): PublicIo {
+  const apiKey = serverConfig(env).firebaseWebApiKey;
+  const priv = makePrivilegedIo(env, undefined, fetchImpl) as ResolveLegacyIo & {
+    configured: boolean;
+    get(path: string): Promise<any>;
+    list(node: string): Promise<any>;
+    patch(paths: Record<string, any>): Promise<void>;
+  };
+  return {
+    verifyToken: (token) => verifyIdentityLookup(token, apiKey, fetchImpl),
+    get: async (path) => {
+      if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
+      return await priv.get(path).catch(() => null);
+    },
+    list: async (node) => {
+      if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
+      return await priv.list(node).catch(() => null);
+    },
+    patch: (paths) => priv.patch(paths),
+  };
+}
+
+export type DonorIdIo = {
+  verifyToken(idToken: string): Promise<{ uid: string; email: string } | null>;
+  getAdminRow(uid: string): Promise<any>;
+  get(path: string): Promise<any>;
+  list(node: string): Promise<any>;
+  patch(paths: Record<string, any>): Promise<void>;
+};
+
+/** Privileged IO for staff donor-id allocation. */
+export function makeDonorIdIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): DonorIdIo {
+  const apiKey = serverConfig(env).firebaseWebApiKey;
+  const priv = makePrivilegedIo(env, undefined, fetchImpl) as ResolveLegacyIo & {
+    configured: boolean;
+    get(path: string): Promise<any>;
+    list(node: string): Promise<any>;
+    patch(paths: Record<string, any>): Promise<void>;
+  };
+  return {
+    verifyToken: (token) => verifyIdentityLookup(token, apiKey, fetchImpl),
+    getAdminRow: async (uid) => {
+      if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
+      return await priv.get(`admins/${uid}`).catch(() => null);
+    },
+    get: async (path) => {
+      if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
+      return await priv.get(path).catch(() => null);
+    },
+    list: async (node) => {
+      if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
+      return await priv.list(node).catch(() => null);
+    },
+    patch: (paths) => priv.patch(paths),
+  };
+}
+
+export function makeDataIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): DataIo {
+  const apiKey = serverConfig(env).firebaseWebApiKey;
+  const priv = makePrivilegedIo(env, undefined, fetchImpl) as ResolveLegacyIo & {
+    configured: boolean;
+    get(path: string): Promise<any>;
+    patch(paths: Record<string, any>): Promise<void>;
+  };
+  return {
+    verifyToken: (token) => verifyIdentityLookup(token, apiKey, fetchImpl),
+    getAdminRow: async (uid) => {
+      if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
+      return await priv.get(`admins/${uid}`).catch(() => null);
+    },
+    get: async (path) => {
+      if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
+      return await priv.get(path).catch(() => null);
+    },
+    patch: (paths) => priv.patch(paths),
+  };
+}
 
 export function makeImagesIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): ImagesIo {
-  const apiKey = String(env.FIREBASE_API_KEY || DEFAULT_FIREBASE_API_KEY).trim();
-  const priv = makePrivilegedIo(env, undefined, fetchImpl);
-  const hasKey = async (): Promise<boolean> => {
-    if (String((env as Record<string, unknown>).IMGBB_API_KEY ?? "").trim()) return true;
-    if (!priv.configured) return false;
-    const row = (await priv.get("settings/imgbb").catch(() => null)) as any;
-    return !!String(row?.key ?? "").trim();
-  };
+  const cfg = serverConfig(env);
+  const apiKey = cfg.firebaseWebApiKey;
   return {
     verifyToken: (token: string) => verifyIdentityLookup(token, apiKey, fetchImpl),
     getImgbbKey: async () => {
-      const envKey = String((env as Record<string, unknown>).IMGBB_API_KEY ?? "").trim();
-      if (envKey) return envKey;
-      if (!priv.configured) {
-        
-        throw new ApiError(503, UNCONFIGURED_MSG);
-      }
-      const row = (await priv.get("settings/imgbb").catch(() => null)) as any;
-      const k = String(row?.key ?? "").trim();
-      if (!k) throw new ApiError(503, "সার্ভারে ImgBB API key কনফিগার করা নেই।");
-      return k;
+      if (cfg.imgbbApiKey) return cfg.imgbbApiKey;
+      throw new ApiError(503, "সার্ভারে ImgBB API key কনফিগার করা নেই।");
     },
-    hasKey,
+    hasKey: async () => !!cfg.imgbbApiKey,
   };
 }
 

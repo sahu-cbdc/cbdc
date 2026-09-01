@@ -1,8 +1,8 @@
 # 🔐 Firebase Password Reset Email — CBDC ব্র্যান্ডিং
 
 পাসওয়ার্ড রিসেটের পুরো ব্যবস্থাটি **Firebase Authentication-এর built-in
-password reset link** দিয়ে চলে। কোনো custom OTP backend, কোনো নিজস্ব SMTP
-সার্ভার বা কোনো তৃতীয় পক্ষের সেবা লাগে না।
+password reset link** দিয়ে চলে। কোনো নিজস্ব SMTP সার্ভার বা
+কোনো তৃতীয় পক্ষের সেবা লাগে না।
 
 ```
 ব্যবহারকারী → /forgot-password (ওয়েবসাইটের সুন্দর full-page UI)

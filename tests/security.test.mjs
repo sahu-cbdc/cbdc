@@ -10,12 +10,12 @@
  *                        flooding 429 দেয়; legitimate usage unlimited।
  *   4. Server-side authentication & authorization (401/403) — delete / dedupe /
  *                        apply / images-upload; IDOR (client-পাঠানো uid) দমন।
- *   5. Firebase Rules consistency — settings/imgbb আর public-readable নয়;
+ *   5. Firebase Rules consistency — legacy settings/imgbb নোড সম্পূর্ণ removed;
  *                        settings/app পাবলিক; server-এ সব protected API token দাবি।
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -50,7 +50,7 @@ function apiErrorStatus(fn) {
 
 test("secret: ImgBB key never read/bundled client-side (imgbb.ts)", () => {
   const src = read("src/lib/imgbb.ts");
-  assert.match(src, /api\/images\/upload/);
+  assert.match(src, /API_GATEWAYS\.media/);
   /* key আর client-এ পড়া হয় না — upload server-এ যায়; শুধু boolean status server থেকে */
   assert.match(src, /getImgbbStatus/);
   assert.match(src, /imgbbConfigured/); // status is a boolean only
@@ -62,22 +62,21 @@ test("secret: ImgBB key never read/bundled client-side (imgbb.ts)", () => {
   assert.doesNotMatch(src, /fetch\(.["']https:\/\/api\.imgbb/);
 });
 
-test("secret: .env has no committed ImgBB key value", () => {
-  // .env is gitignored and legitimately absent in fresh checkouts/CI — then
-  // there is nothing committed to leak, so the guard passes vacuously.
-  let env = "";
-  try { env = read(".env"); } catch { return; }
-  assert.doesNotMatch(env, /8a5458f04438f111f2150bb73ee7499d/);
-  assert.doesNotMatch(env, /VITE_IMGBB_API_KEY\s*=\s*[A-Za-z0-9]/);
-  assert.match(env, /IMGBB_API_KEY=/);
+test("secret: no .env files exist — secrets are process-env/Worker-secrets only", () => {
+  for (const f of [".env", ".env.example", ".env.local"]) {
+    assert.equal(existsSync(f), false, `${f} must not exist`);
+  }
+  const vite = read("vite.config.ts");
+  assert.doesNotMatch(vite, /loadEnv/);
 });
 
-test("secret: wrangler vars are public-only (no secret value)", () => {
+test("secret: wrangler.jsonc carries no config values at all (config lives in src/config)", () => {
   const w = read("wrangler.jsonc");
-  assert.doesNotMatch(w, /IMGBB_API_KEY"\s*:\s*"/);
-  assert.doesNotMatch(w, /FIREBASE_SERVICE_ACCOUNT"\s*:\s*"/);
+  assert.doesNotMatch(w, /"vars"/, "no vars block — public config is not duplicated here");
+  assert.doesNotMatch(w, /IMGBB_API_KEY"\s*:\s*"/, "no ImgBB key value");
+  assert.doesNotMatch(w, /FIREBASE_SERVICE_ACCOUNT"\s*:\s*"/, "no service-account value");
   assert.doesNotMatch(w, /BEGIN PRIVATE KEY/);
-  assert.match(w, /"FIREBASE_API_KEY"\s*:\s*"AIza/);
+  assert.doesNotMatch(w, /AIza/, "no Firebase key value");
 });
 
 test("secret: no service-account/private-key in client source", () => {
@@ -375,13 +374,11 @@ test("images upload: valid token + key → uploads, returns sanitized URL only",
    5. FIREBASE RULES + API WIRING
    ═══════════════════════════════════════════════════════════════════════ */
 
-test("rules: settings/imgbb not public-read; settings/app stays public; no naked '*' CORS", () => {
+test("rules: legacy settings/imgbb key node fully removed; settings/app stays public; no naked '*' CORS", () => {
   const rules = read("database.rules.json");
-  /* imgbb block (নেস্টেড ব্রেস ছাড়া) — .read অবশ্যই admin-শর্ত */
-  const imgbbBlock = (rules.match(/"imgbb":\s*\{[^}]*\}/) || [""])[0];
-  assert.ok(imgbbBlock, "imgbb rules block present");
-  assert.match(imgbbBlock, /"\.read": "auth != null/);
-  assert.doesNotMatch(imgbbBlock, /"\.read": true/);
+  /* key এখন শুধু server-side — RTDB-তে imgbb নোডই নেই */
+  assert.doesNotMatch(rules, /"imgbb"/, "settings/imgbb node must not exist");
+  assert.doesNotMatch(rules, /imgbb/i, "no imgbb trace left in rules");
   /* app block — public read */
   const appBlock = (rules.match(/"app":\s*\{[^}]*\}/) || [""])[0];
   assert.ok(appBlock, "app rules block present");
@@ -390,9 +387,9 @@ test("rules: settings/imgbb not public-read; settings/app stays public; no naked
   assert.doesNotMatch(index, /Access-Control-Allow-Origin"\s*:\s*"\*/);
 });
 
-test("server: protected endpoints share Bearer-token auth + images endpoint present", () => {
+test("server: protected gateways share Bearer-token auth + media endpoint present", () => {
   const index = read("server/index.ts");
-  assert.match(index, /api[\\\/]+images[\\\/]+upload/);
+  assert.match(index, /api[\\\/]+media/);
   assert.match(index, /headers\.get\("Authorization"\)/);
   assert.match(index, /Bearer\\s\+/);
   assert.match(index, /handleImageUpload/);
@@ -414,14 +411,18 @@ test("server: no raw secret in response payloads (sanitized error paths)", () =>
 
 test("rules: horizontal access blocked — User A cannot read/write User B's record", () => {
   const rules = read("database.rules.json");
+  /* all client writes are denied; writes go through the secure API only */
+  assert.match(rules, /"\.write": false/);
   /* members/$id: read only if staff OR data.uid===auth.uid OR data.ownerUid===auth.uid */
   assert.match(rules, /data\.child\('uid'\)\.val\(\) === auth\.uid \|\| data\.child\('ownerUid'\)\.val\(\) === auth\.uid/);
-  /* requests/$id: write only staff OR own ownerUid */
-  assert.match(rules, /\(data\.exists\(\) && data\.child\('ownerUid'\)\.val\(\) === auth\.uid\)/);
-  /* users/$uid: read/write only self OR admin */
-  assert.match(rules, /"\.write": "auth != null && \(\$uid === auth\.uid \|\| root\.child\('admins'\)/);
   /* reports/$id: read only staff OR owner */
   assert.match(rules, /data\.child\('ownerUid'\)\.val\(\) === auth\.uid/);
+  /* server-side guard: requests writes only staff OR own ownerUid */
+  const guard = read("server/writeGuard.ts");
+  const req = guard.slice(guard.indexOf("function guardRequests"), guard.indexOf("function guardMembers"));
+  assert.match(req, /ownerUidOf\(current\) === caller\.uid/);
+  /* server-side guard: users rows writable only by self OR staff */
+  assert.match(guard, /uid === caller\.uid \|\| caller\.staff/);
 });
 
 test("API response leakage: server results never contain the ImgBB secret / service-account", async () => {
@@ -452,7 +453,7 @@ test("raw error: curated ApiError message is preserved (user-friendly, not techn
 
 test("upload: no Authorization token → 401 before any body is processed", async () => {
   const res = await apiHandler.fetch(
-    new Request("https://x/api/images/upload", { method: "POST", body: new Uint8Array(10) }),
+    new Request("https://x/api/media", { method: "POST", body: new Uint8Array(10) }),
     {},
   );
   assert.equal(res.status, 401);
@@ -464,7 +465,7 @@ test("upload: no Authorization token → 401 before any body is processed", asyn
 test("upload: oversized payload via Content-Length → 413 without uploading", async () => {
   const big = String(MAX_UPLOAD_BYTES + 1);
   const res = await apiHandler.fetch(
-    new Request("https://x/api/images/upload", {
+    new Request("https://x/api/media", {
       method: "POST",
       headers: { Authorization: "Bearer t", "Content-Length": big },
       body: new Uint8Array(10),
@@ -484,7 +485,7 @@ test("upload: oversized streamed body (no Content-Length) → 413, capped during
     },
   });
   const res = await apiHandler.fetch(
-    new Request("https://x/api/images/upload", {
+    new Request("https://x/api/media", {
       method: "POST",
       headers: { Authorization: "Bearer t" },
       body: stream,
