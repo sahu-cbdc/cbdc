@@ -57,8 +57,8 @@ async function restGet(
     throw new ApiError(403, "Realtime Database rules অনুযায়ী অনুমতি নেই (শুধু অ্যাডমিন)।");
   }
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new ApiError(502, `Realtime Database read ব্যর্থ (${res.status}) ${text.slice(0, 200)}`);
+    console.error(`[rtdb read] HTTP ${res.status}`);
+    throw new ApiError(502, "Realtime Database-এ পড়া যায়নি — আবার চেষ্টা করুন।");
   }
   return await res.json().catch(() => null);
 }

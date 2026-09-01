@@ -1,35 +1,7 @@
 {
-  // Cloudflare (Workers/Pages) deploy configuration.
-  // `npx wrangler versions upload` এই ফাইল থেকে assets directory পড়ে —
-  // এখানে বলে দেওয়া হয়েছে যে build output হলো ./dist (Vite build output).
-  //
-  // অ্যাপটি এখন single-page index.html (সব পেজ .tsx থেকে বুট হয় —
-  // src/lib/router.ts দেখুন)। legacy URL গুলো (যেমন /doner.html) যেন না ভাঙে
-  // "single-page-application" not-found handling রাখা হয়েছে — যেকোনো অচেনা পাথ
-  // index.html-ই পরিবেশন করবে।
-  //
-  // ⚙️ Secure server-side delete (Admin panel → ডোনার/অ্যাকাউন্ট + লগইন মুছা):
-  // `main`-এ Worker entry আছে (server/index.ts)। শুধুমাত্র একটি endpoint —
-//   POST <base>api/admin/delete
-//   client-এর Firebase ID token (Bearer header) Identity Toolkit দিয়ে যাচাই
-//   হয়, অ্যাডমিন role যাচাই হয়, তারপর RTDB Security Rules-এর অধীনেই (admin
-//   token) সংশ্লিষ্ট node মোছা হয়। এবং **সংশ্লিষ্ট Firebase Authentication
-//   (লগইন) অ্যাকাউন্ট** মোছা হয় Google-এর admin Identity Toolkit দিয়ে
-//   (server/authAdmin.ts) — তার জন্য প্রয়োজন:
-//
-//   🔐 একটি **server secret** (ক্লায়েন্টে কখনো যায় না, repo-তে কখনো লিখবেন না):
-//      npx wrangler secret put FIREBASE_SERVICE_ACCOUNT
-//      (Firebase Console → Project settings → Service accounts →
-//       "Generate new private key" → পুরো JSON-টি paste করুন; চাইলে base64)
-//    ঐচ্ছিক: wrangler secret put FIREBASE_PROJECT_ID (ডিফল্ট নিচের প্রজেক্টই)
-//
-//   বাকি শুধু public মানগুলোর `vars` — client bundle-এ থাকা হুবহু একই মান।
-//   ⚠️ secret না দেওয়া থাকলে লিংকড-লগইন ডোনার/অ্যাকাউন্টের ডিলিট **শুরুই হয় না**
-//   (atomic — কোনো আংশিক ডিলিট নয়); Admin panel-এ স্পষ্ট বাংলা error দেখানো হয়
-//   এবং `POST <base>api/admin/config-check` দিয়ে অ্যাডমিন কনফিগারেশনের অবস্থা
-//   যাচাই করতে পারেন। তাই deploy-র পর secret সেট করা বাধ্যতামূলক:
-//      npm run build && npx wrangler deploy
-//      npx wrangler secret put FIREBASE_SERVICE_ACCOUNT
+  // Worker entry (server/index.ts) hosts the secure /api/... handlers.
+  // Deploy secrets (never commit): `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT`
+  // and `IMGBB_API_KEY` (see .env.example). Public values are the `vars` below.
   "name": "cbdc",
   "compatibility_date": "2026-08-16",
   "main": "server/index.ts",

@@ -1,10 +1,9 @@
 
-
-import { handleAdminEntityDelete, handleAdminConfigCheck, type ServerDeleteResult } from "./deleteApi.ts";
+import { handleAdminEntityDelete, handleAdminConfigCheck, ApiError, type ServerDeleteResult } from "./deleteApi.ts";
 import { handleAdminDedupe } from "./dedupeApi.ts";
 import { handleDonorApply } from "./applyApi.ts";
 import { handleResolveLegacy } from "./resolveLegacy.ts";
-import { handleImageUpload } from "./imagesApi.ts";
+import { handleImageUpload, MAX_UPLOAD_BYTES } from "./imagesApi.ts";
 import { makeApplyIo, makeHttpIo, makeImagesIo, makePrivilegedIo } from "./httpIo.ts";
 import { serviceAccountConfigured } from "./authAdmin.ts";
 import { corsForRequest, parseAllowedOrigins } from "./cors.ts";
@@ -41,6 +40,15 @@ function jsonResponse(payload: unknown, opts: JsonOptions = {}): Response {
 }
 
 const AUTH_MSG = "অনুমোদন প্রয়োজন — লগইন করে আবার চেষ্টা করুন।";
+const GENERIC_ERROR_MSG = "সার্ভারে সাময়িক সমস্যা হয়েছে — একটু পর আবার চেষ্টা করুন।";
+
+
+
+export function toUserSafeMessage(e: unknown): string {
+  if (e instanceof ApiError) return e.message;
+  console.error("[api] unexpected error:", e);
+  return GENERIC_ERROR_MSG;
+}
 
 
 function apiPaths(requestUrl: URL): Record<string, boolean> {
@@ -65,35 +73,52 @@ function clientKey(request: Request): string {
   return origin && origin.trim() ? origin.trim() : "unknown";
 }
 
-function readRequestBody(request: Request, api: Record<string, boolean>): Promise<{
-  body: Record<string, unknown>;
-  raw: Uint8Array;
-  mime: string;
-  filename: string;
-}> {
-  
-  if (api.upload) {
-    return request
-      .arrayBuffer()
-      .then((buf) => new Uint8Array(buf))
-      .then((raw) => ({
-        body: {},
-        raw,
-        mime: String(request.headers.get("Content-Type") || "image/jpeg"),
-        filename: String(request.headers.get("X-Filename") || "image.jpg"),
-      }));
+
+async function readJsonBody(request: Request): Promise<Record<string, unknown>> {
+  try {
+    const body = await request.json();
+    return (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+  } catch {
+    throw new ApiError(400, "ভুল অনুরোধ — JSON body দিন।");
   }
-  return request
-    .json()
-    .then((body) => ({
-      body: (body && typeof body === "object" ? body : {}) as Record<string, unknown>,
-      raw: new Uint8Array(0),
-      mime: "",
-      filename: "",
-    }))
-    .catch(() => {
-      throw new Error("ভুল অনুরোধ — JSON body দিন।");
-    });
+}
+
+
+async function readUploadBody(request: Request, maxBytes: number): Promise<Uint8Array> {
+  const reader = request.body && typeof request.body.getReader === "function" ? request.body.getReader() : null;
+  if (!reader) return new Uint8Array(0);
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = new Uint8Array(value);
+      total += chunk.length;
+      if (total > maxBytes) {
+        throw new ApiError(413, "ছবির আকার ৮ MB-র বেশি — ছোট ছবি দিন।");
+      }
+      chunks.push(chunk);
+    }
+  } catch (e) {
+    await reader.cancel().catch(() => undefined);
+    throw e;
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.length;
+  }
+  return out;
+}
+
+
+function contentLength(request: Request): number {
+  const raw = String(request.headers.get("Content-Length") || "").trim();
+  if (!raw) return 0;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
 export default {
@@ -141,27 +166,22 @@ export default {
     const auth = String(request.headers.get("Authorization") || "");
     const idToken = auth.replace(/^Bearer\s+/i, "").trim();
 
-    let body: Record<string, unknown> = {};
-    let raw: Uint8Array = new Uint8Array(0);
-    let mime = "";
-    let filename = "";
-    try {
-      const r = await readRequestBody(request, apis);
-      body = r.body;
-      raw = r.raw;
-      mime = r.mime;
-      filename = r.filename;
-    } catch (e) {
-      return jsonResponse(
-        { ok: false, error: (e as Error)?.message || "ভুল অনুরোধ।" },
-        { status: 400, corsHeaders: cors.headers },
-      );
-    }
+    
+    if (!idToken) return jsonResponse({ ok: false, error: AUTH_MSG }, { status: 401, corsHeaders: cors.headers });
 
     try {
       
       if (apis.upload) {
-        if (!idToken) return jsonResponse({ ok: false, error: AUTH_MSG }, { status: 401, corsHeaders: cors.headers });
+        const len = contentLength(request);
+        if (len > MAX_UPLOAD_BYTES) {
+          return jsonResponse(
+            { ok: false, error: "ছবির আকার ৮ MB-র বেশি — ছোট ছবি দিন।" },
+            { status: 413, corsHeaders: cors.headers },
+          );
+        }
+        const raw = await readUploadBody(request, MAX_UPLOAD_BYTES);
+        const mime = String(request.headers.get("Content-Type") || "image/jpeg");
+        const filename = String(request.headers.get("X-Filename") || "image.jpg");
         const result = await handleImageUpload(
           { idToken },
           raw,
@@ -173,7 +193,7 @@ export default {
       }
 
       
-      if (!idToken) return jsonResponse({ ok: false, error: AUTH_MSG }, { status: 401, corsHeaders: cors.headers });
+      const body = await readJsonBody(request);
 
       if (apis.delete) {
         const result: ServerDeleteResult = await handleAdminEntityDelete(
@@ -209,8 +229,8 @@ export default {
       const result = await handleResolveLegacy({ idToken }, privileged);
       return jsonResponse(result, { corsHeaders: cors.headers });
     } catch (e) {
-      const status = Number((e as any)?.status) || 500;
-      const message = (e as Error)?.message || "সার্ভার সমস্যা — আবার চেষ্টা করুন।";
+      const status = e instanceof ApiError ? e.status : 500;
+      const message = toUserSafeMessage(e);
       return jsonResponse(
         { ok: false, error: message },
         { status, corsHeaders: cors.headers },

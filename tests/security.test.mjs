@@ -23,7 +23,8 @@ import { ApiError } from "../server/deleteApi.ts";
 import { handleAdminEntityDelete, handleAdminConfigCheck } from "../server/deleteApi.ts";
 import { handleAdminDedupe } from "../server/dedupeApi.ts";
 import { handleDonorApply } from "../server/applyApi.ts";
-import { handleImageUpload } from "../server/imagesApi.ts";
+import { handleImageUpload, MAX_UPLOAD_BYTES } from "../server/imagesApi.ts";
+import apiHandler, { toUserSafeMessage } from "../server/index.ts";
 import {
   corsForRequest,
   parseAllowedOrigins,
@@ -428,4 +429,75 @@ test("API response leakage: server results never contain the ImgBB secret / serv
   assert.equal(JSON.stringify(cfg).includes("private_key"), false);
   assert.equal(JSON.stringify(cfg).includes("AIzaSy"), false);
   assert.equal(JSON.stringify(cfg).includes("8a5458"), false);
+});
+
+/* ═══════════════════════════════════════════════════════════════════════
+   6. SERVER ENTRY-POINT HARDENING (index.ts) — error sanitization & upload
+      ═══════════════════════════════════════════════════════════════════════ */
+
+test("raw error: unexpected non-ApiError is never surfaced; generic Bangla instead", () => {
+  const raw = toUserSafeMessage(new Error("ENOENT db path / private_key = REDACTED"));
+  assert.equal(raw.includes("ENOENT"), false);
+  assert.equal(raw.includes("REDACTED"), false);
+  assert.match(raw, /সার্ভারে সাময়িক সমস্যা|আবার চেষ্টা করুন/);
+});
+
+test("raw error: curated ApiError message is preserved (user-friendly, not technical)", () => {
+  const msg = toUserSafeMessage(new ApiError(403, "শুধু অ্যাডমিন এই কাজ করতে পারেন।"));
+  assert.equal(msg, "শুধু অ্যাডমিন এই কাজ করতে পারেন।");
+});
+
+test("upload: no Authorization token → 401 before any body is processed", async () => {
+  const res = await apiHandler.fetch(
+    new Request("https://x/api/images/upload", { method: "POST", body: new Uint8Array(10) }),
+    {},
+  );
+  assert.equal(res.status, 401);
+  const data = await res.json();
+  assert.equal(data.ok, false);
+  assert.match(data.error, /অনুমোদন প্রয়োজন/);
+});
+
+test("upload: oversized payload via Content-Length → 413 without uploading", async () => {
+  const big = String(MAX_UPLOAD_BYTES + 1);
+  const res = await apiHandler.fetch(
+    new Request("https://x/api/images/upload", {
+      method: "POST",
+      headers: { Authorization: "Bearer t", "Content-Length": big },
+      body: new Uint8Array(10),
+    }),
+    {},
+  );
+  assert.equal(res.status, 413);
+  const data = await res.json();
+  assert.match(data.error, /৮ MB|ছোট ছবি/);
+});
+
+test("upload: oversized streamed body (no Content-Length) → 413, capped during read", async () => {
+  const stream = new ReadableStream({
+    start(c) {
+      c.enqueue(new Uint8Array(MAX_UPLOAD_BYTES + 1));
+      c.close();
+    },
+  });
+  const res = await apiHandler.fetch(
+    new Request("https://x/api/images/upload", {
+      method: "POST",
+      headers: { Authorization: "Bearer t" },
+      body: stream,
+      duplex: "half",
+    }),
+    {},
+  );
+  assert.equal(res.status, 413);
+  const data = await res.json();
+  assert.match(data.error, /৮ MB|ছোট ছবি/);
+});
+
+test("server: response never echoes the raw thrown error string", () => {
+  const index = read("server/index.ts");
+  /* the catch path must use the sanitizer / generic message, not raw e.message */
+  assert.match(index, /toUserSafeMessage/);
+  assert.doesNotMatch(index, /error:\s*\(e\s*as\s*Error\)\?\.message/);
+  assert.doesNotMatch(index, /error:\s*e\.message/);
 });

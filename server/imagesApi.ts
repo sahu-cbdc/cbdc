@@ -23,7 +23,9 @@ export type ImageUploadResult = {
 
 const IMGBB_URL = "https://api.imgbb.com/1/upload";
 
-const MAX_BYTES = 8 * 1024 * 1024;
+export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+
+const MAX_BYTES = MAX_UPLOAD_BYTES;
 
 const MAX_MIME_LEN = 80;
 
