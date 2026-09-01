@@ -1746,7 +1746,7 @@ function StaticShell() {
                 <div className="about-copy">
                   {" "}
                   <p className="about-subtitle" style={{ fontSize: "1.12rem", marginBottom: "16px" }}>
-                    {"মানবতার সেবায় আমরা রক্তদাতা🩸 “রক্তদানে নেই কোনো ভয়, সৃষ্টি হয় নতুন সম্পর্কের বন্ধন।”"}
+                    {"মানবতার সেবায় আমরা রক্তদাতা🩸 রক্তদানে নেই কোনো ভয়, সৃষ্টি হয় নতুন সম্পর্কের বন্ধন।"}
                   </p>
                   {" "}
                   <p style={{ marginBottom: "6px" }}>
