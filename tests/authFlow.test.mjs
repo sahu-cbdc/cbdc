@@ -175,6 +175,20 @@ test("loginIndex failure is best-effort (non-fatal), signup still ok", async () 
   assert.ok(io.state.users["uid-1234567890abcdef1234"], "profile written despite index failure");
 });
 
+test("knownProfile skips a second getProfile read", async () => {
+  let gets = 0;
+  const io = makeIo({
+    getProfile: async (uid) => {
+      gets += 1;
+      return io.state.users[uid] || null;
+    },
+  });
+  const out = await finalizeEmailSignup(io, { ...signupInput("a@b.c"), knownProfile: null });
+  assert.equal(out.ok, true);
+  assert.equal(gets, 0);
+  assert.equal(out.existing, false);
+});
+
 test("Google signup path: existing profile update, email + index claimed", async () => {
   const io = makeIo();
   const uid = "uid-google1234567890abcd";

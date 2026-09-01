@@ -73,6 +73,7 @@ export interface FinalizeSignupInput {
   provider: string;
   newData: Record<string, any>;
   existingData: Record<string, any>;
+  knownProfile?: Record<string, any> | null;
   resolveConflict?: () => Promise<boolean>;
 }
 
@@ -96,7 +97,8 @@ export async function finalizeEmailSignup(
     return { ok: false, reason: "email-claim-unavailable", message: EMAIL_CLAIM_UNAVAILABLE_MESSAGE };
   }
 
-  const existing = await io.getProfile(input.uid);
+  const existing =
+    input.knownProfile !== undefined ? input.knownProfile : await io.getProfile(input.uid);
   try {
     if (existing) {
       await io.updateProfile(

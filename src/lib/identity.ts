@@ -65,13 +65,15 @@ export async function claimEmailIdentity(email: unknown, uid: string): Promise<E
   let last: EmailClaim = { claimed: false, ownerUid: "", reason: "unavailable" };
   for (let i = 0; i < 3; i++) {
     try {
-      last = await attempt();
-      if (last.claimed || last.reason === "conflict") return last;
+      const result = await attempt();
+      last = result;
+      if ("reason" in result && result.reason === "conflict") return result;
+      if (result.claimed) return result;
     } catch (e) {
       console.warn("identity claim:", (e as Error)?.message);
       last = { claimed: false, ownerUid: "", reason: "unavailable" };
     }
-    if (i < 2) await sleep(180 * (i + 1));
+    if (i < 2) await sleep(80 * (i + 1));
   }
   return last;
 }
@@ -184,8 +186,10 @@ export async function claimLoginEntries(
 ): Promise<void> {
   const mail = String(email ?? "").trim().toLowerCase();
   if (!mail) return;
-  await claimLoginKey("username", username, mail);
-  await claimLoginKey("phone", phone, mail);
+  await Promise.all([
+    claimLoginKey("username", username, mail),
+    claimLoginKey("phone", phone, mail),
+  ]);
 }
 
 
