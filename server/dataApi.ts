@@ -1,7 +1,11 @@
 /**
  * Guarded multi-path write endpoint.
  *
+<<<<<<< HEAD
  *   POST /api/data/write {writes: {"users/<uid>/name": "...", ...}}
+=======
+ *   POST /api/data {op:"write", writes: {"users/<uid>/name": "...", ...}}
+>>>>>>> 69f665ef3c08d211cb53736a98d026fb8416fdf2
  *
  * Auth: Firebase ID token required. Every path is authorized by the write
  * guard (role + ownership + protected fields) against current data; one

@@ -1,7 +1,11 @@
 /**
  * Server-side write authorization engine.
  *
+<<<<<<< HEAD
  * Every /api/data/write path is checked here BEFORE anything reaches the
+=======
+ * Every /api/data op=write path is checked here BEFORE anything reaches the
+>>>>>>> 69f665ef3c08d211cb53736a98d026fb8416fdf2
  * database: caller role comes from the verified ID token + the server-side
  * `admins/{uid}` row (never from the request body), and ownership is proven
  * against the CURRENT database record. This is a faithful — and in a few
