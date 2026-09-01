@@ -7,7 +7,7 @@
  * this file, so the key can never enter the browser bundle, a page, or
  * src/config — browsers upload through /api/media only.
  */
-export const IMGBB_API_KEY = "8a5458f04438f111f2150bb73ee7499d";
+export const IMGBB_API_KEY = "3c3dc9b98e063feb28ce6e1931582d51";
 
 export const IMGBB_UPLOAD_ENDPOINT = "https://api.imgbb.com/1/upload";
 

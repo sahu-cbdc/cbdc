@@ -383,7 +383,7 @@ test("imgbb: key/endpoint/limit ONLY in server/config/imgbb.ts; src/config/imgbb
     assert.doesNotMatch(page, /config\/imgbb|IMGBB_API_KEY|api\.imgbb\.com/, `${f}.tsx must stay imgbb-clean`);
   }
   /* the key VALUE exists in exactly one repo file and never under src/ */
-  const hits = execFileSync("grep", ["-rl", "8a5458f04438f111f2150bb73ee7499d", "src", "server", "vite.config.ts", "wrangler.jsonc", "database.rules.json"]).toString().trim().split("\n").filter(Boolean);
+  const hits = execFileSync("grep", ["-rl", "3c3dc9b98e063feb28ce6e1931582d51", "src", "server", "vite.config.ts", "wrangler.jsonc", "database.rules.json"]).toString().trim().split("\n").filter(Boolean);
   assert.deepEqual(hits, ["server/config/imgbb.ts"], "key value only in server/config/imgbb.ts");
   /* /api/media resolves key + endpoint + limit from the central file only */
   const cfg = read("server/config.ts");
