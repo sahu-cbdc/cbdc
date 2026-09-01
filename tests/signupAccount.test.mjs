@@ -60,14 +60,24 @@ test("guest donor register always writes ownerUid so queue rules allow pending",
   assert.match(home, /ownerUid: registrationUid \|\| ""/);
 });
 
-test("identity claim re-claims own uid, retries, and does not apply locally", () => {
+test("identity claim re-claims own uid, retries, and defers writes to the server", () => {
   assert.match(identity, /export function nextIdentityUid/);
   assert.match(identity, /current !== cleanUid/);
-  assert.match(identity, /applyLocally:\s*false/);
   assert.match(identity, /for \(let i = 0; i < 3; i\+\+\)/);
+  /* ক্লেইম এখন সার্ভারে CAS দিয়ে হয় — ক্লায়েন্ট আর লোকালি apply করে না */
+  assert.match(identity, /apiClaimEmail\(address\)/);
+  const profile = read("server/profileApi.ts");
+  const claim = profile.slice(profile.indexOf("export async function handleClaimEmail"));
+  assert.match(claim, /cur === uid\) return \{ ok: true, status: "claimed" \}/);
+  assert.match(claim, /const verify = await io\.get\(path\)/);
 });
 
-test("identityIndex claim may re-claim own uid; validate allows delete", () => {
-  assert.match(rules, /newData\.val\(\) === auth\.uid/);
-  assert.match(rules, /!newData\.exists\(\) \|\| \(newData\.isString\(\)/);
+test("identityIndex claim may re-claim own uid; release deletes own entry (server-side)", () => {
+  assert.match(rules, /"\.write": false/);
+  const profile = read("server/profileApi.ts");
+  const claim = profile.slice(profile.indexOf("export async function handleClaimEmail"));
+  /* নিজের uid হলে re-claim ok; অন্যের uid হলে conflict */
+  assert.match(claim, /cur !== uid\) \{[\s\S]*?status: "conflict"/);
+  /* release শুধু নিজের entry-ই মুছে */
+  assert.match(claim, /cur === uid\) \{[\s\S]*?await io\.patch\(\{ \[path\]: null \}\)/);
 });

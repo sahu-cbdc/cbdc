@@ -414,14 +414,18 @@ test("server: no raw secret in response payloads (sanitized error paths)", () =>
 
 test("rules: horizontal access blocked — User A cannot read/write User B's record", () => {
   const rules = read("database.rules.json");
+  /* all client writes are denied; writes go through the secure API only */
+  assert.match(rules, /"\.write": false/);
   /* members/$id: read only if staff OR data.uid===auth.uid OR data.ownerUid===auth.uid */
   assert.match(rules, /data\.child\('uid'\)\.val\(\) === auth\.uid \|\| data\.child\('ownerUid'\)\.val\(\) === auth\.uid/);
-  /* requests/$id: write only staff OR own ownerUid */
-  assert.match(rules, /\(data\.exists\(\) && data\.child\('ownerUid'\)\.val\(\) === auth\.uid\)/);
-  /* users/$uid: read/write only self OR admin */
-  assert.match(rules, /"\.write": "auth != null && \(\$uid === auth\.uid \|\| root\.child\('admins'\)/);
   /* reports/$id: read only staff OR owner */
   assert.match(rules, /data\.child\('ownerUid'\)\.val\(\) === auth\.uid/);
+  /* server-side guard: requests writes only staff OR own ownerUid */
+  const guard = read("server/writeGuard.ts");
+  const req = guard.slice(guard.indexOf("function guardRequests"), guard.indexOf("function guardMembers"));
+  assert.match(req, /ownerUidOf\(current\) === caller\.uid/);
+  /* server-side guard: users rows writable only by self OR staff */
+  assert.match(guard, /uid === caller\.uid \|\| caller\.staff/);
 });
 
 test("API response leakage: server results never contain the ImgBB secret / service-account", async () => {

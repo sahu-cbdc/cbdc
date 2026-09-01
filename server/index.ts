@@ -1,14 +1,16 @@
-
 import { handleAdminEntityDelete, handleAdminConfigCheck, ApiError, type ServerDeleteResult } from "./deleteApi.ts";
 import { handleAdminDedupe } from "./dedupeApi.ts";
 import { handleDonorApply } from "./applyApi.ts";
 import { handleResolveLegacy } from "./resolveLegacy.ts";
 import { handleImageUpload, MAX_UPLOAD_BYTES } from "./imagesApi.ts";
-import { makeApplyIo, makeHttpIo, makeImagesIo, makePrivilegedIo } from "./httpIo.ts";
+import { makeApplyIo, makeHttpIo, makeImagesIo, makePrivilegedIo, makeDataIo, makePublicIo, makeDonorIdIo } from "./httpIo.ts";
 import { serviceAccountConfigured } from "./authAdmin.ts";
 import { corsForRequest, parseAllowedOrigins } from "./cors.ts";
 import { createAbuseGuard, guardKey } from "./abuseGuard.ts";
-
+import { handleDataWrite } from "./dataApi.ts";
+import { handleProfileUpsert, handleClaimEmail, handleClaimLogin } from "./profileApi.ts";
+import { handleDonorIdAction } from "./donorIdApi.ts";
+import { handlePublicSubmit } from "./publicApi.ts";
 
 function makeGuard(env: any) {
   const max = Number(env && env.ABUSE_GUARD_MAX) || 600;
@@ -19,6 +21,16 @@ let abuseGuard: ReturnType<typeof createAbuseGuard> | null = null;
 function getGuard(env: any) {
   if (!abuseGuard) abuseGuard = makeGuard(env);
   return abuseGuard;
+}
+
+let publicGuard: ReturnType<typeof createAbuseGuard> | null = null;
+function getPublicGuard(env: any) {
+  if (!publicGuard) {
+    const max = Number(env && env.PUBLIC_SUBMIT_GUARD_MAX) || 60;
+    const windowMs = Number(env && env.ABUSE_GUARD_WINDOW_MS) || 60_000;
+    publicGuard = createAbuseGuard({ max, windowMs });
+  }
+  return publicGuard;
 }
 
 interface JsonOptions {
@@ -42,14 +54,13 @@ function jsonResponse(payload: unknown, opts: JsonOptions = {}): Response {
 const AUTH_MSG = "অনুমোদন প্রয়োজন — লগইন করে আবার চেষ্টা করুন।";
 const GENERIC_ERROR_MSG = "সার্ভারে সাময়িক সমস্যা হয়েছে — একটু পর আবার চেষ্টা করুন।";
 
-
+const MAX_JSON_BYTES = 262144;
 
 export function toUserSafeMessage(e: unknown): string {
   if (e instanceof ApiError) return e.message;
   console.error("[api] unexpected error:", e);
   return GENERIC_ERROR_MSG;
 }
-
 
 function apiPaths(requestUrl: URL): Record<string, boolean> {
   const path = requestUrl.pathname.replace(/\/+$/, "");
@@ -60,11 +71,16 @@ function apiPaths(requestUrl: URL): Record<string, boolean> {
     resolve: /\/api\/account\/resolve-legacy$/i.test(path),
     apply: /\/api\/donor\/apply$/i.test(path),
     upload: /\/api\/images\/upload$/i.test(path),
+    dataWrite: /\/api\/data\/write$/i.test(path),
+    profile: /\/api\/account\/profile$/i.test(path),
+    claimEmail: /\/api\/account\/claim-email$/i.test(path),
+    claimLogin: /\/api\/account\/claim-login$/i.test(path),
+    donorId: /\/api\/donor\/id$/i.test(path),
+    publicSubmit: /\/api\/public\/submit$/i.test(path),
   };
 }
 
 const isApi = (p: Record<string, boolean>): boolean => Object.values(p).some(Boolean);
-
 
 function clientKey(request: Request): string {
   const ip = request.headers.get("CF-Connecting-IP");
@@ -73,16 +89,19 @@ function clientKey(request: Request): string {
   return origin && origin.trim() ? origin.trim() : "unknown";
 }
 
-
-async function readJsonBody(request: Request): Promise<Record<string, unknown>> {
+async function readJsonBody(request: Request, maxBytes: number = MAX_JSON_BYTES): Promise<Record<string, unknown>> {
   try {
-    const body = await request.json();
+    const text = await request.text();
+    if (text.length > maxBytes) {
+      throw new ApiError(413, "অনুরোধটি খুব বড় — একটু ছোট করে আবার পাঠান।");
+    }
+    const body = JSON.parse(text || "{}");
     return (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
-  } catch {
+  } catch (e) {
+    if (e instanceof ApiError) throw e;
     throw new ApiError(400, "ভুল অনুরোধ — JSON body দিন।");
   }
 }
-
 
 async function readUploadBody(request: Request, maxBytes: number): Promise<Uint8Array> {
   const reader = request.body && typeof request.body.getReader === "function" ? request.body.getReader() : null;
@@ -113,7 +132,6 @@ async function readUploadBody(request: Request, maxBytes: number): Promise<Uint8
   return out;
 }
 
-
 function contentLength(request: Request): number {
   const raw = String(request.headers.get("Content-Length") || "").trim();
   if (!raw) return 0;
@@ -126,33 +144,32 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "");
     const apis = apiPaths(url);
-    
+
     const isApply = path.endsWith("/api/donor/apply");
     const isApiPath = /^\/api\//i.test(path);
+    void isApply;
     const allowedOrigins = parseAllowedOrigins(env && env.ALLOWED_ORIGINS);
 
-    
     if (!isApiPath) {
       return env.ASSETS && typeof env.ASSETS.fetch === "function"
         ? env.ASSETS.fetch(request)
         : new Response("Not found", { status: 404 });
     }
 
-    
     const cors = corsForRequest(
       request.headers.get("Origin"),
       request.method,
       allowedOrigins,
       request.headers.get("Access-Control-Request-Method"),
     );
-    
+
     if (request.method === "OPTIONS") {
       if (cors.preflight) {
         return new Response(null, { status: 204, headers: cors.headers });
       }
       return jsonResponse({ ok: false, error: "CORS preflight অনুমোদিত নয়।" }, { status: 403 });
     }
-    
+
     if (!isApi(apis)) {
       return jsonResponse(
         { ok: false, error: "অনুরোধকৃত API রুটটি খুঁজে পাওয়া যায়নি।" },
@@ -162,9 +179,12 @@ export default {
 
     if (request.method !== "POST") return jsonResponse({ ok: false, error: "POST only" }, { status: 405 });
 
-    
-    const guardKeyStr = guardKey(clientKey(request), apis.upload ? "images/upload" : "api");
-    if (!getGuard(env).check(guardKeyStr)) {
+    const guardKeyStr = guardKey(
+      clientKey(request),
+      apis.upload ? "images/upload" : apis.publicSubmit ? "public/submit" : "api",
+    );
+    const guard = apis.publicSubmit ? getPublicGuard(env) : getGuard(env);
+    if (!guard.check(guardKeyStr)) {
       return jsonResponse(
         { ok: false, error: "খুব দ্রুত অনেকগুলো অনুরোধ এসেছে — একটু পর আবার চেষ্টা করুন।" },
         { status: 429, corsHeaders: cors.headers },
@@ -174,11 +194,15 @@ export default {
     const auth = String(request.headers.get("Authorization") || "");
     const idToken = auth.replace(/^Bearer\s+/i, "").trim();
 
-    
-    if (!idToken) return jsonResponse({ ok: false, error: AUTH_MSG }, { status: 401, corsHeaders: cors.headers });
-
     try {
-      
+      if (apis.publicSubmit) {
+        const body = await readJsonBody(request);
+        const result = await handlePublicSubmit(body, makePublicIo(env), idToken);
+        return jsonResponse(result, { corsHeaders: cors.headers });
+      }
+
+      if (!idToken) return jsonResponse({ ok: false, error: AUTH_MSG }, { status: 401, corsHeaders: cors.headers });
+
       if (apis.upload) {
         const len = contentLength(request);
         if (len > MAX_UPLOAD_BYTES) {
@@ -200,9 +224,28 @@ export default {
         return jsonResponse(result, { corsHeaders: cors.headers });
       }
 
-      
       const body = await readJsonBody(request);
 
+      if (apis.dataWrite) {
+        const result = await handleDataWrite({ ...body, idToken }, makeDataIo(env));
+        return jsonResponse(result, { corsHeaders: cors.headers });
+      }
+      if (apis.profile) {
+        const result = await handleProfileUpsert({ ...body, idToken }, makeDataIo(env));
+        return jsonResponse(result, { corsHeaders: cors.headers });
+      }
+      if (apis.claimEmail) {
+        const result = await handleClaimEmail({ ...body, idToken }, makeDataIo(env));
+        return jsonResponse(result, { corsHeaders: cors.headers });
+      }
+      if (apis.claimLogin) {
+        const result = await handleClaimLogin({ ...body, idToken }, makeDataIo(env));
+        return jsonResponse(result, { corsHeaders: cors.headers });
+      }
+      if (apis.donorId) {
+        const result = await handleDonorIdAction({ ...body, idToken }, makeDonorIdIo(env));
+        return jsonResponse(result, { corsHeaders: cors.headers });
+      }
       if (apis.delete) {
         const result: ServerDeleteResult = await handleAdminEntityDelete(
           { ...body, idToken },
@@ -232,7 +275,7 @@ export default {
         const result = await handleDonorApply({ ...body, idToken }, makeApplyIo(env, idToken));
         return jsonResponse(result, { corsHeaders: cors.headers });
       }
-      
+
       const privileged = makePrivilegedIo(env);
       const result = await handleResolveLegacy({ idToken }, privileged);
       return jsonResponse(result, { corsHeaders: cors.headers });

@@ -6,6 +6,7 @@
 import { useEffect } from "react";
 import "../lib/store";
 import { claimEmailIdentity, lookupEmailOwner, claimLoginEntries, lookupLoginKey } from "../lib/identity";
+import { apiUpsertProfile, apiPublicSubmit } from "../lib/api";
 import { finalizeEmailSignup, backfillLoginIndex, resolveEmailForLogin, duplicateRowIsSelf } from "../lib/authFlow";
 import { resolveLegacyAccount } from "../lib/accountDelete";
 import { initFirebase as initSharedFirebase, isFirebaseReady } from "../lib/firebase";
@@ -32,7 +33,7 @@ import {
   verifyResetCode,
   completePasswordReset,
 } from "../lib/authx";
-import { addRow, setRow, updateRow, findBy, getRow, listOnce, nowIso, incrementField, watchRow } from "../lib/rtdb";
+import { findBy, getRow, listOnce, nowIso, watchRow } from "../lib/rtdb";
 import { NODES } from "../lib/firebase";
 import { DISTRICTS, DEFAULT_DISTRICT, areasForDistrict, districtOfArea, searchAreas, fillAreaSelect } from "../lib/locations";
 import { noticeVisibleTo, noticeTarget } from "../lib/notice";
@@ -3185,7 +3186,8 @@ function StaticShell() {
                 <li>
                   {"চাঁদগাঁও থানা"}
                 </li>
-                {" বান্দরবান সদর থানা"}
+                <li>
+                  {"বান্দরবান সদর থানা"}
                 </li>
               </ul>
             </div>
@@ -4132,46 +4134,19 @@ function initPage() {
 
         try{
           if(!fbReady) throw new Error("ডাটাবেস সংযোগ নেই। ইন্টারনেট সংযোগ পরীক্ষা করুন।");
-          
-          if(registrationUid){
-            const [existingDonors, existingMembers] = await Promise.all([
-              listOnce(NODES.donors),
-              listOnce(NODES.members)
-            ]);
-            const authEmail = String((auth && auth.currentUser && auth.currentUser.email) || "").trim().toLowerCase();
-            const sameAccount = (row) => {
-              if(!row) return false;
-              if(String(row.ownerUid || row.uid || row.userId || "").trim() === registrationUid) return true;
-              
-              return (!!authEmail && String(row.email || "").trim().toLowerCase() === authEmail)
-                || (!!o.phone && String(row.phone || "").replace(/\s+/g, "") === String(o.phone).replace(/\s+/g, ""));
-            };
-            const existing = existingDonors.find(sameAccount) || existingMembers.find(sameAccount);
-            if(existing){
-              hideAppModal();
-              showMessage(message, "এই অ্যাকাউন্টের ডোনার তথ্য আগে থেকেই সংরক্ষিত আছে। নতুন রেকর্ড তৈরি করা হয়নি।", "success");
-              return;
-            }
-          }
-          const newMember = {
+
+          const submitted = await apiPublicSubmit("donor-registration", {
             ...o,
-            ...(registrationUid ? {uid:registrationUid, ownerUid:registrationUid} : {}),
             dob: o.dob || "",
-            
-            district: String($("#district").value || o.district || DEFAULT_DISTRICT).trim(),
-            status: "pending",
-            createdAt: nowIso()
-          };
-          
-          const memberId = await addRow(NODES.members, newMember);
-          
-          if(registrationUid) await updateRow(NODES.users, registrationUid, {donorMemberId:memberId})
-            .catch(err=>console.warn("donor member key:", err && err.message));
-          await setRow(NODES.queue, memberId, {
-            kind:"donor", memberId, uid: registrationUid || "", ownerUid: registrationUid || "", name:o.name, group:o.bloodGroup, area:o.area,
-            dob:o.dob||"", gender:o.gender, health:o.healthNotes||"", last:o.lastDonationDate||"",
-            phone:o.phone, whatsapp:o.whatsapp||"", address:o.address||"", at:newMember.createdAt
+            uid: registrationUid || "",
+            ownerUid: registrationUid || "",
+            district: String($("#district").value || o.district || DEFAULT_DISTRICT).trim()
           });
+          if(submitted.duplicate){
+            hideAppModal();
+            showMessage(message, "এই অ্যাকাউন্টের ডোনার তথ্য আগে থেকেই সংরক্ষিত আছে। নতুন রেকর্ড তৈরি করা হয়নি।", "success");
+            return;
+          }
           form.reset();
           clearFormErrors(form);
           $("#district").value = DEFAULT_DISTRICT;
@@ -4308,28 +4283,19 @@ function initPage() {
 
         try{
           if(!fbReady) throw new Error("ডাটাবেস সংযোগ নেই।");
-          
+
           const memberUid = String((auth && auth.currentUser && auth.currentUser.uid)||"").trim();
-          const reqId = await addRow(NODES.requests, {
-            ...o, status:newStatus, createdAt, expiresAt: expiresAtDate.toISOString(),
-            ownerUid: memberUid||""
+          void memberUid;
+          const submittedReq = await apiPublicSubmit("emergency-request", {
+            ...o, durationHours: hours, expiresAt: expiresAtDate.toISOString()
           });
-          if(!autoApproved){
-            await setRow(NODES.queue, reqId, {
-              kind:"request", requestId:reqId, patient:o.patientName, group:o.bloodGroup, bags:o.bags,
-              urgency:o.urgency, hospital:o.hospitalName, area:o.hospitalAddress, phone:o.phone,
-              requester:o.requesterName, whatsapp:o.whatsapp||"", description:o.description||"",
-              at:createdAt, expiresAt:expiresAtDate.toISOString(), ownerUid:memberUid||""
-            });
-          }
-          if(memberUid)incrementField(NODES.users,memberUid,"applicationCount",1)
-            .catch(e=>console.warn("application count increment:",e&&e.message));
-          
+          const liveStatus = String(submittedReq.status || newStatus);
+          const liveApproved = liveStatus === "approved";
           form.reset();
           clearFormErrors(form);
           $("#requestAgree").checked = false;
           message.className = "hidden"; message.textContent = "";
-          if(autoApproved){
+          if(liveApproved){
             showAppMessage("আপনার জরুরি রক্তের আবেদনটি সরাসরি লাইভ সহায়তা বোর্ডে যুক্ত হয়েছে।", false, "আবেদন লাইভ হয়েছে!");
           } else {
             showAppMessage("আপনার জরুরি রক্তের আবেদনটি সফলভাবে জমা হয়েছে। বর্তমানে এটি অ্যাডমিনের অনুমোদনের অপেক্ষায় (Pending) রয়েছে। তথ্য যাচাই ও অনুমোদনের পর লাইভ সহায়তা বোর্ডে প্রকাশিত হবে।", false, "আবেদন গৃহীত হয়েছে");
@@ -4584,7 +4550,7 @@ function initPage() {
           return { status: "unavailable" };
         },
         getProfile: async (uid) => getRow(NODES.users, uid),
-        createProfile: async (uid, data) => { await setRow(NODES.users, uid, data); },
+        createProfile: async (uid, data) => { await apiUpsertProfile(data, { mode: "create" }); },
         updateProfile: async (uid, data, existing) => {
           await ensureUserProfile(data, { provider: data.provider, existing });
         },

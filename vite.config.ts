@@ -3,13 +3,26 @@ import react from "@vitejs/plugin-react";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { handleAdminEntityDelete, handleAdminConfigCheck } from "./server/deleteApi";
+import { handleAdminEntityDelete, handleAdminConfigCheck, ApiError } from "./server/deleteApi";
+import { toUserSafeMessage } from "./server/index";
 import { handleAdminDedupe } from "./server/dedupeApi";
 import { handleDonorApply } from "./server/applyApi";
 import { handleResolveLegacy } from "./server/resolveLegacy";
 import { handleImageUpload } from "./server/imagesApi";
-import { makeApplyIo, makeHttpIo, makeImagesIo, makePrivilegedIo } from "./server/httpIo";
+import {
+  makeApplyIo,
+  makeHttpIo,
+  makeImagesIo,
+  makePrivilegedIo,
+  makeDataIo,
+  makePublicIo,
+  makeDonorIdIo,
+} from "./server/httpIo";
 import { serviceAccountConfigured } from "./server/authAdmin";
+import { handleDataWrite } from "./server/dataApi";
+import { handleProfileUpsert, handleClaimEmail, handleClaimLogin } from "./server/profileApi";
+import { handleDonorIdAction } from "./server/donorIdApi";
+import { handlePublicSubmit } from "./server/publicApi";
 
 
 
@@ -145,7 +158,17 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
         const isResolveApi = apiPath.endsWith("/api/account/resolve-legacy");
         const isApplyApi = apiPath.endsWith("/api/donor/apply");
         const isUploadApi = apiPath.endsWith("/api/images/upload");
-        if (!isDeleteApi && !isDedupeApi && !isConfigCheckApi && !isResolveApi && !isApplyApi && !isUploadApi) return next();
+        const isDataWriteApi = apiPath.endsWith("/api/data/write");
+        const isProfileApi = apiPath.endsWith("/api/account/profile");
+        const isClaimEmailApi = apiPath.endsWith("/api/account/claim-email");
+        const isClaimLoginApi = apiPath.endsWith("/api/account/claim-login");
+        const isDonorIdApi = apiPath.endsWith("/api/donor/id");
+        const isPublicSubmitApi = apiPath.endsWith("/api/public/submit");
+        if (
+          !isDeleteApi && !isDedupeApi && !isConfigCheckApi && !isResolveApi && !isApplyApi &&
+          !isUploadApi && !isDataWriteApi && !isProfileApi && !isClaimEmailApi &&
+          !isClaimLoginApi && !isDonorIdApi && !isPublicSubmitApi
+        ) return next();
         
         const host = String(req.headers.host || "").split(":")[0];
         const origin = String(req.headers.origin || req.headers.referer || "");
@@ -164,7 +187,7 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
           return;
         }
         const idToken = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
-        if (!idToken) {
+        if (!idToken && !isPublicSubmitApi) {
           send(res, 401, { ok: false, error: "অনুমোদন প্রয়োজন — লগইন করে আবার চেষ্টা করুন।" });
           return;
         }
@@ -192,7 +215,19 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
                 IMGBB_API_KEY: devEnv.IMGBB_API_KEY || "",
               };
               let result: unknown;
-              if (isUploadApi) {
+              if (isPublicSubmitApi) {
+                result = await handlePublicSubmit(payload, makePublicIo(serverEnv), idToken);
+              } else if (isDataWriteApi) {
+                result = await handleDataWrite({ ...payload, idToken }, makeDataIo(serverEnv));
+              } else if (isProfileApi) {
+                result = await handleProfileUpsert({ ...payload, idToken }, makeDataIo(serverEnv));
+              } else if (isClaimEmailApi) {
+                result = await handleClaimEmail({ ...payload, idToken }, makeDataIo(serverEnv));
+              } else if (isClaimLoginApi) {
+                result = await handleClaimLogin({ ...payload, idToken }, makeDataIo(serverEnv));
+              } else if (isDonorIdApi) {
+                result = await handleDonorIdAction({ ...payload, idToken }, makeDonorIdIo(serverEnv));
+              } else if (isUploadApi) {
                 result = await handleImageUpload(
                   { idToken },
                   new Uint8Array(raw),
@@ -233,8 +268,8 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
               }
               send(res, 200, result);
             } catch (e) {
-              const status = Number((e as any)?.status) || 500;
-              send(res, status, { ok: false, error: (e as Error)?.message || "সার্ভার সমস্যা" });
+              const status = e instanceof ApiError ? e.status : 500;
+              send(res, status, { ok: false, error: toUserSafeMessage(e) });
             }
           })();
         });

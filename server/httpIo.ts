@@ -128,7 +128,7 @@ export function makePrivilegedIo(env: HttpEnv, apiKey?: string, fetchImpl: typeo
     .replace(/\/+$/, "");
   const sa = parseServiceAccount((env as Record<string, unknown>).FIREBASE_SERVICE_ACCOUNT);
 
-  const io: ResolveLegacyIo & { configured: boolean } = {
+  const io: ResolveLegacyIo & { configured: boolean; patch(paths: Record<string, any>): Promise<void> } = {
     configured: !!sa,
     verifyCaller: (token) => verifyIdentityLookup(token, webKey, fetchImpl),
     get: async (path) => {
@@ -156,8 +156,121 @@ export function makePrivilegedIo(env: HttpEnv, apiKey?: string, fetchImpl: typeo
         return false;
       }
     },
+    patch: async (paths) => {
+      if (!sa) throw new ApiError(503, UNCONFIGURED_MSG);
+      const list = Object.keys(paths);
+      if (!list.length) return;
+      const url = await privUrl(base, "", sa, fetchImpl);
+      const res = await fetchImpl(url, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(paths),
+      }).catch(() => null);
+      if (!res) throw new ApiError(502, "Realtime Database-এ সংযোগ করা যায়নি।");
+      if (!res.ok) {
+        throw new ApiError(502, "Realtime Database-এ সংরক্ষণ করা যায়নি — আবার চেষ্টা করুন।");
+      }
+    },
   };
   return io;
+}
+
+/**
+ * IO for the guarded data-write API: verifies the caller's ID token with the
+ * web API key, then reads/writes with the service account (rules-bypassing,
+ * server-only). Everything the write guard needs runs through here.
+ */
+export type DataIo = {
+  verifyToken(idToken: string): Promise<{ uid: string; email: string } | null>;
+  getAdminRow(uid: string): Promise<any>;
+  get(path: string): Promise<any>;
+  patch(paths: Record<string, any>): Promise<void>;
+};
+
+export type PublicIo = {
+  verifyToken(idToken: string): Promise<{ uid: string; email: string } | null>;
+  get(path: string): Promise<any>;
+  list(node: string): Promise<any>;
+  patch(paths: Record<string, any>): Promise<void>;
+};
+
+/** Privileged IO for anonymous-capable public submissions. */
+export function makePublicIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): PublicIo {
+  const apiKey = String(env.FIREBASE_API_KEY || DEFAULT_FIREBASE_API_KEY).trim();
+  const priv = makePrivilegedIo(env, undefined, fetchImpl) as ResolveLegacyIo & {
+    configured: boolean;
+    get(path: string): Promise<any>;
+    list(node: string): Promise<any>;
+    patch(paths: Record<string, any>): Promise<void>;
+  };
+  return {
+    verifyToken: (token) => verifyIdentityLookup(token, apiKey, fetchImpl),
+    get: async (path) => {
+      if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
+      return await priv.get(path).catch(() => null);
+    },
+    list: async (node) => {
+      if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
+      return await priv.list(node).catch(() => null);
+    },
+    patch: (paths) => priv.patch(paths),
+  };
+}
+
+export type DonorIdIo = {
+  verifyToken(idToken: string): Promise<{ uid: string; email: string } | null>;
+  getAdminRow(uid: string): Promise<any>;
+  get(path: string): Promise<any>;
+  list(node: string): Promise<any>;
+  patch(paths: Record<string, any>): Promise<void>;
+};
+
+/** Privileged IO for staff donor-id allocation. */
+export function makeDonorIdIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): DonorIdIo {
+  const apiKey = String(env.FIREBASE_API_KEY || DEFAULT_FIREBASE_API_KEY).trim();
+  const priv = makePrivilegedIo(env, undefined, fetchImpl) as ResolveLegacyIo & {
+    configured: boolean;
+    get(path: string): Promise<any>;
+    list(node: string): Promise<any>;
+    patch(paths: Record<string, any>): Promise<void>;
+  };
+  return {
+    verifyToken: (token) => verifyIdentityLookup(token, apiKey, fetchImpl),
+    getAdminRow: async (uid) => {
+      if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
+      return await priv.get(`admins/${uid}`).catch(() => null);
+    },
+    get: async (path) => {
+      if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
+      return await priv.get(path).catch(() => null);
+    },
+    list: async (node) => {
+      if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
+      return await priv.list(node).catch(() => null);
+    },
+    patch: (paths) => priv.patch(paths),
+  };
+}
+
+export function makeDataIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): DataIo {
+  const apiKey = String(env.FIREBASE_API_KEY || DEFAULT_FIREBASE_API_KEY).trim();
+  const priv = makePrivilegedIo(env, undefined, fetchImpl) as ResolveLegacyIo & {
+    configured: boolean;
+    get(path: string): Promise<any>;
+    patch(paths: Record<string, any>): Promise<void>;
+  };
+  return {
+    verifyToken: (token) => verifyIdentityLookup(token, apiKey, fetchImpl),
+    getAdminRow: async (uid) => {
+      if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
+      return await priv.get(`admins/${uid}`).catch(() => null);
+    },
+    get: async (path) => {
+      if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
+      return await priv.get(path).catch(() => null);
+    },
+    patch: (paths) => priv.patch(paths),
+  };
 }
 
 const UNCONFIGURED_MSG =
