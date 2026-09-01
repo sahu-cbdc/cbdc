@@ -128,10 +128,11 @@ export default {
     const apis = apiPaths(url);
     
     const isApply = path.endsWith("/api/donor/apply");
+    const isApiPath = /^\/api\//i.test(path);
     const allowedOrigins = parseAllowedOrigins(env && env.ALLOWED_ORIGINS);
 
     
-    if (!isApi(apis)) {
+    if (!isApiPath) {
       return env.ASSETS && typeof env.ASSETS.fetch === "function"
         ? env.ASSETS.fetch(request)
         : new Response("Not found", { status: 404 });
@@ -150,6 +151,13 @@ export default {
         return new Response(null, { status: 204, headers: cors.headers });
       }
       return jsonResponse({ ok: false, error: "CORS preflight অনুমোদিত নয়।" }, { status: 403 });
+    }
+    
+    if (!isApi(apis)) {
+      return jsonResponse(
+        { ok: false, error: "অনুরোধকৃত API রুটটি খুঁজে পাওয়া যায়নি।" },
+        { status: 404, corsHeaders: cors.headers },
+      );
     }
 
     if (request.method !== "POST") return jsonResponse({ ok: false, error: "POST only" }, { status: 405 });

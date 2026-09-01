@@ -63,7 +63,10 @@ test("secret: ImgBB key never read/bundled client-side (imgbb.ts)", () => {
 });
 
 test("secret: .env has no committed ImgBB key value", () => {
-  const env = read(".env");
+  // .env is gitignored and legitimately absent in fresh checkouts/CI — then
+  // there is nothing committed to leak, so the guard passes vacuously.
+  let env = "";
+  try { env = read(".env"); } catch { return; }
   assert.doesNotMatch(env, /8a5458f04438f111f2150bb73ee7499d/);
   assert.doesNotMatch(env, /VITE_IMGBB_API_KEY\s*=\s*[A-Za-z0-9]/);
   assert.match(env, /IMGBB_API_KEY=/);

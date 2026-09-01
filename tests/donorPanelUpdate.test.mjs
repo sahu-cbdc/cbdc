@@ -312,15 +312,17 @@ test("identity.ts: atomic claim-once login index helpers", () => {
   assert.match(identity, /export async function releaseLoginEntries/);
 });
 
-test("Login resolves username/phone via loginIndex first (works pre-auth)", () => {
-  const fn = fnSource(home, "async function resolveEmailByIdentifier(");
-  assert.match(fn, /lookupLoginKey\("username",q\)/);
-  assert.match(fn, /lookupLoginKey\("phone",dq\)/);
-  /* users-node query fallback নেই — লগইনের আগে (unauthenticated) `users` read
-     rules-এ সবসময় permission-denied, তাই সেসব query কখনো সফল হতো না; শুধু
-     দুইটি অপ্রয়োজনীয় denied round-trip-এ login ধীর করত (দ্রুত লগইন)। */
-  assert.doesNotMatch(fn, /findBy\(NODES\.users, "username", q\)/);
-  assert.doesNotMatch(fn, /findBy\(NODES\.users, "phone", digits\(q\)\)/);
+test("Login resolves username via loginIndex first (works pre-auth; no phone identifier)", () => {
+  const flow = read("src/lib/authFlow.ts");
+  assert.match(flow, /export async function resolveEmailForLogin/);
+  assert.match(flow, /lookupLoginKey\("username",/);
+  // phone is no longer a login identifier — resolution must not look it up
+  assert.doesNotMatch(flow, /lookupLoginKey\("phone",/);
+  assert.match(home, /resolveEmailForLogin\s*\(\s*authFlowIo\s*,\s*identifier\s*\)/);
+  // users-node query fallback নেই — লগইনের আগে (unauthenticated) `users` read
+  // rules-এ সবসময় permission-denied; authFlow শুধু loginIndex দিয়েই কাজ করে।
+  assert.doesNotMatch(flow, /findBy\(NODES\.users, "username", q\)/);
+  assert.doesNotMatch(flow, /findBy\(NODES\.users, "phone", digits\(q\)\)/);
 });
 
 test("Signup blocks a username already claimed in loginIndex", () => {

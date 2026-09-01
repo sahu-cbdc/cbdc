@@ -14,7 +14,7 @@ test("Login with email goes straight to signInWithEmailAndPassword (no fetchSign
 });
 
 test("Login still resolves email before signing in and reports auth errors", () => {
-  assert.match(home, /resolveEmailByIdentifier\s*\(\s*email\s*\)/);
+  assert.match(home, /resolveEmailForLogin\s*\(\s*authFlowIo\s*,\s*identifier\s*\)/);
   assert.match(home, /signInWithEmailAndPassword\s*\(\s*auth\s*,\s*email\s*,\s*password\s*\)/);
   assert.match(home, /auth\/user-not-found/);
   assert.match(home, /এই তথ্য দিয়ে কোনো অ্যাকাউন্ট পাওয়া যায়নি/);
@@ -31,12 +31,15 @@ test("Login normalizes identifier: trims surrounding whitespace and lowercases (
 });
 
 test("Username login resolves the account email via loginIndex then signs in", () => {
-  assert.match(home, /if\s*\(\s*!email\.includes\s*\(\s*"@"\s*\)\s*\)\s*\{[\s\S]*?resolveEmailByIdentifier/);
+  assert.match(home, /resolveEmailForLogin\s*\(\s*authFlowIo\s*,\s*identifier\s*\)/);
+  assert.doesNotMatch(home, /if\s*\(\s*!email\.includes\s*\(\s*"@"\s*\)\s*\)\s*\{[\s\S]*?resolveEmailByIdentifier/);
 });
 
 test("loginIndex entries are claimed at signup and backfilled at login", () => {
   // signup path: index the username/phone so username login works immediately
-  assert.match(home, /claimLoginEntries\s*\(\s*o\.email\s*,\s*o\.username\s*,\s*o\.phone\s*\)/);
+  assert.match(home, /finalizeEmailSignup\s*\(\s*authFlowIo\s*,\s*\{/);
+  // signup path: authFlowIo.claimLogin calls claimLoginEntries so loginIndex is indexed
+  assert.match(home, /claimLogin:\s*\(\s*email\s*,\s*username\s*,\s*phone\s*\)\s*=>\s*claimLoginEntries\s*\(\s*email\s*,\s*username\s*,\s*phone\s*\)/);
   // login path: backfill the index for accounts created before it existed
-  assert.match(home, /claimLoginEntries\s*\(\s*email\s*,\s*profile\.username\s*,\s*profile\.phone\s*\)/);
+  assert.match(home, /backfillLoginIndex\s*\(\s*authFlowIo\s*,\s*email\s*,\s*profile\.username\s*,\s*profile\.phone\s*\)/);
 });
