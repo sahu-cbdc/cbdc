@@ -13,6 +13,7 @@
  *     and future Android/iOS clients from the same origin/CDN edge.
  */
 import { getAuthInstance } from "./firebase";
+import { API_GATEWAYS } from "../config/api";
 import { appBase } from "./router";
 
 export const API_TIMEOUT_MS = 30000;
@@ -127,7 +128,7 @@ export type DataWriteResult = {
  * (role + ownership + protected-field checks) before anything is applied.
  */
 export async function apiWritePaths(paths: Record<string, any>): Promise<DataWriteResult> {
-  const out = await apiPost<DataWriteResult>("api/data/write", { writes: paths });
+  const out = await apiPost<DataWriteResult>(API_GATEWAYS.data, { op: "write", writes: paths });
   return {
     ok: true,
     applied: Number(out?.applied) || 0,
@@ -165,7 +166,7 @@ export type EmailClaimStatus =
   | { status: "unavailable" };
 
 export async function apiClaimEmail(email: string): Promise<EmailClaimStatus> {
-  return apiPost<EmailClaimStatus>("api/account/claim-email", { email });
+  return apiPost<EmailClaimStatus>(API_GATEWAYS.auth, { op: "claim-email", email });
 }
 
 export type ClaimLoginResponse = { ok: true; results: Record<string, string> };
@@ -175,7 +176,7 @@ export async function apiClaimLogin(
   username: string,
   phone: string
 ): Promise<ClaimLoginResponse> {
-  return apiPost<ClaimLoginResponse>("api/account/claim-login", { email, username, phone });
+  return apiPost<ClaimLoginResponse>(API_GATEWAYS.auth, { op: "claim-login", email, username, phone });
 }
 
 export async function apiReleaseLogin(
@@ -183,7 +184,8 @@ export async function apiReleaseLogin(
   username: string,
   phone: string
 ): Promise<{ ok: true }> {
-  return apiPost<{ ok: true }>("api/account/claim-login", {
+  return apiPost<{ ok: true }>(API_GATEWAYS.auth, {
+    op: "claim-login",
     email,
     username,
     phone,
@@ -192,7 +194,7 @@ export async function apiReleaseLogin(
 }
 
 export async function apiReleaseEmailIdentity(email: string): Promise<{ ok: true }> {
-  return apiPost<{ ok: true }>("api/account/claim-email", { email, release: true });
+  return apiPost<{ ok: true }>(API_GATEWAYS.auth, { op: "claim-email", email, release: true });
 }
 
 export type ProfileUpsertResult = { ok: true; created: boolean; profile: Record<string, any> };
@@ -202,7 +204,8 @@ export async function apiUpsertProfile(
   user: Record<string, any>,
   opts: { provider?: string; mode?: "create" | "update" | "upsert" } = {}
 ): Promise<ProfileUpsertResult> {
-  return apiPost<ProfileUpsertResult>("api/account/profile", {
+  return apiPost<ProfileUpsertResult>(API_GATEWAYS.auth, {
+    op: "profile",
     user,
     provider: opts.provider || "",
     mode: opts.mode || "upsert",
@@ -210,14 +213,14 @@ export async function apiUpsertProfile(
 }
 
 export async function apiNextDonorId(): Promise<string> {
-  const res = await apiPost<{ donorId: string }>("api/donor/id", { action: "next" });
+  const res = await apiPost<{ donorId: string }>(API_GATEWAYS.admin, { op: "donor-id", action: "next" });
   const id = String(res?.donorId || "").trim();
   if (!id) throw new Error("Donor UID তৈরি করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।");
   return id;
 }
 
 export async function apiReleaseDonorSerial(donorId: string): Promise<void> {
-  await apiPost("api/donor/id", { action: "release", donorId });
+  await apiPost(API_GATEWAYS.admin, { op: "donor-id", action: "release", donorId });
 }
 
 export type PublicSubmitResult = {
@@ -238,7 +241,7 @@ export async function apiPublicSubmit(
   payload: Record<string, unknown>
 ): Promise<PublicSubmitResult> {
   const token = await getAuthToken();
-  return apiPost<PublicSubmitResult>("api/public/submit", { kind, payload }, {
+  return apiPost<PublicSubmitResult>(API_GATEWAYS.data, { op: "public-submit", kind, payload }, {
     token,
     allowEmptyToken: true,
   });

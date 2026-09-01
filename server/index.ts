@@ -1,3 +1,16 @@
+/**
+ * Central API gateway — exactly four endpoints, each dispatching on `op`:
+ *
+ *   POST /api/auth   → op: profile | claim-email | claim-login | resolve-legacy
+ *   POST /api/data   → op: write | apply | public-submit   (public-submit
+ *                      may be anonymous; everything else needs a Bearer token)
+ *   POST /api/admin  → op: delete | dedupe | config-check | donor-id
+ *   POST /api/media  → image upload (binary body, no op)
+ *
+ * Every request verifies the caller's Firebase ID token server-side and
+ * resolves uid/role/ownership from verified data only. Errors are sanitized
+ * (Bangla, no internals); unknown /api routes get a JSON 404 — never the SPA.
+ */
 import { handleAdminEntityDelete, handleAdminConfigCheck, ApiError, type ServerDeleteResult } from "./deleteApi.ts";
 import { handleAdminDedupe } from "./dedupeApi.ts";
 import { handleDonorApply } from "./applyApi.ts";
@@ -5,32 +18,28 @@ import { handleResolveLegacy } from "./resolveLegacy.ts";
 import { handleImageUpload, MAX_UPLOAD_BYTES } from "./imagesApi.ts";
 import { makeApplyIo, makeHttpIo, makeImagesIo, makePrivilegedIo, makeDataIo, makePublicIo, makeDonorIdIo } from "./httpIo.ts";
 import { serviceAccountConfigured } from "./authAdmin.ts";
-import { corsForRequest, parseAllowedOrigins } from "./cors.ts";
+import { corsForRequest } from "./cors.ts";
 import { createAbuseGuard, guardKey } from "./abuseGuard.ts";
+import { serverConfig } from "./config.ts";
 import { handleDataWrite } from "./dataApi.ts";
 import { handleProfileUpsert, handleClaimEmail, handleClaimLogin } from "./profileApi.ts";
 import { handleDonorIdAction } from "./donorIdApi.ts";
 import { handlePublicSubmit } from "./publicApi.ts";
 
-function makeGuard(env: any) {
-  const max = Number(env && env.ABUSE_GUARD_MAX) || 600;
-  const windowMs = Number(env && env.ABUSE_GUARD_WINDOW_MS) || 60_000;
-  return createAbuseGuard({ max, windowMs });
-}
-let abuseGuard: ReturnType<typeof createAbuseGuard> | null = null;
-function getGuard(env: any) {
-  if (!abuseGuard) abuseGuard = makeGuard(env);
-  return abuseGuard;
-}
+type Gateway = "auth" | "data" | "admin" | "media";
 
-let publicGuard: ReturnType<typeof createAbuseGuard> | null = null;
-function getPublicGuard(env: any) {
-  if (!publicGuard) {
-    const max = Number(env && env.PUBLIC_SUBMIT_GUARD_MAX) || 60;
-    const windowMs = Number(env && env.ABUSE_GUARD_WINDOW_MS) || 60_000;
-    publicGuard = createAbuseGuard({ max, windowMs });
+const GATEWAY_RE: Record<Gateway, RegExp> = {
+  auth: /\/api\/auth$/i,
+  data: /\/api\/data$/i,
+  admin: /\/api\/admin$/i,
+  media: /\/api\/media$/i,
+};
+
+function gatewayOf(pathname: string): Gateway | null {
+  for (const key of Object.keys(GATEWAY_RE) as Gateway[]) {
+    if (GATEWAY_RE[key].test(pathname)) return key;
   }
-  return publicGuard;
+  return null;
 }
 
 interface JsonOptions {
@@ -53,34 +62,14 @@ function jsonResponse(payload: unknown, opts: JsonOptions = {}): Response {
 
 const AUTH_MSG = "অনুমোদন প্রয়োজন — লগইন করে আবার চেষ্টা করুন।";
 const GENERIC_ERROR_MSG = "সার্ভারে সাময়িক সমস্যা হয়েছে — একটু পর আবার চেষ্টা করুন।";
-
-const MAX_JSON_BYTES = 262144;
+const UNKNOWN_OP_MSG = "অনুরোধকৃত কাজটি খুঁজে পাওয়া যায়নি।";
+const FLOOD_MSG = "খুব দ্রুত অনেকগুলো অনুরোধ এসেছে — একটু পর আবার চেষ্টা করুন।";
 
 export function toUserSafeMessage(e: unknown): string {
   if (e instanceof ApiError) return e.message;
   console.error("[api] unexpected error:", e);
   return GENERIC_ERROR_MSG;
 }
-
-function apiPaths(requestUrl: URL): Record<string, boolean> {
-  const path = requestUrl.pathname.replace(/\/+$/, "");
-  return {
-    delete: /\/api\/admin\/delete$/i.test(path),
-    dedupe: /\/api\/admin\/dedupe$/i.test(path),
-    configCheck: /\/api\/admin\/config-check$/i.test(path),
-    resolve: /\/api\/account\/resolve-legacy$/i.test(path),
-    apply: /\/api\/donor\/apply$/i.test(path),
-    upload: /\/api\/images\/upload$/i.test(path),
-    dataWrite: /\/api\/data\/write$/i.test(path),
-    profile: /\/api\/account\/profile$/i.test(path),
-    claimEmail: /\/api\/account\/claim-email$/i.test(path),
-    claimLogin: /\/api\/account\/claim-login$/i.test(path),
-    donorId: /\/api\/donor\/id$/i.test(path),
-    publicSubmit: /\/api\/public\/submit$/i.test(path),
-  };
-}
-
-const isApi = (p: Record<string, boolean>): boolean => Object.values(p).some(Boolean);
 
 function clientKey(request: Request): string {
   const ip = request.headers.get("CF-Connecting-IP");
@@ -89,7 +78,7 @@ function clientKey(request: Request): string {
   return origin && origin.trim() ? origin.trim() : "unknown";
 }
 
-async function readJsonBody(request: Request, maxBytes: number = MAX_JSON_BYTES): Promise<Record<string, unknown>> {
+async function readJsonBody(request: Request, maxBytes: number): Promise<Record<string, unknown>> {
   try {
     const text = await request.text();
     if (text.length > maxBytes) {
@@ -139,14 +128,24 @@ function contentLength(request: Request): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+const guards = new Map<string, ReturnType<typeof createAbuseGuard>>();
+function guardFor(env: any, bucket: string, max: number, windowMs: number) {
+  const key = `${bucket}:${max}:${windowMs}`;
+  let guard = guards.get(key);
+  if (!guard) {
+    guard = createAbuseGuard({ max, windowMs });
+    guards.set(key, guard);
+  }
+  return guard;
+}
+
 export default {
   async fetch(request: Request, env: any): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "");
-    const apis = apiPaths(url);
-
+    const cfg = serverConfig(env);
     const isApiPath = /^\/api\//i.test(path);
-    const allowedOrigins = parseAllowedOrigins(env && env.ALLOWED_ORIGINS);
+    const gateway = gatewayOf(path);
 
     if (!isApiPath) {
       return env.ASSETS && typeof env.ASSETS.fetch === "function"
@@ -157,7 +156,7 @@ export default {
     const cors = corsForRequest(
       request.headers.get("Origin"),
       request.method,
-      allowedOrigins,
+      cfg.allowedOrigins,
       request.headers.get("Access-Control-Request-Method"),
     );
 
@@ -168,7 +167,7 @@ export default {
       return jsonResponse({ ok: false, error: "CORS preflight অনুমোদিত নয়।" }, { status: 403 });
     }
 
-    if (!isApi(apis)) {
+    if (!gateway) {
       return jsonResponse(
         { ok: false, error: "অনুরোধকৃত API রুটটি খুঁজে পাওয়া যায়নি।" },
         { status: 404, corsHeaders: cors.headers },
@@ -177,31 +176,15 @@ export default {
 
     if (request.method !== "POST") return jsonResponse({ ok: false, error: "POST only" }, { status: 405 });
 
-    const guardKeyStr = guardKey(
-      clientKey(request),
-      apis.upload ? "images/upload" : apis.publicSubmit ? "public/submit" : "api",
-    );
-    const guard = apis.publicSubmit ? getPublicGuard(env) : getGuard(env);
-    if (!guard.check(guardKeyStr)) {
-      return jsonResponse(
-        { ok: false, error: "খুব দ্রুত অনেকগুলো অনুরোধ এসেছে — একটু পর আবার চেষ্টা করুন।" },
-        { status: 429, corsHeaders: cors.headers },
-      );
-    }
-
     const auth = String(request.headers.get("Authorization") || "");
     const idToken = auth.replace(/^Bearer\s+/i, "").trim();
 
     try {
-      if (apis.publicSubmit) {
-        const body = await readJsonBody(request);
-        const result = await handlePublicSubmit(body, makePublicIo(env), idToken);
-        return jsonResponse(result, { corsHeaders: cors.headers });
-      }
-
-      if (!idToken) return jsonResponse({ ok: false, error: AUTH_MSG }, { status: 401, corsHeaders: cors.headers });
-
-      if (apis.upload) {
+      if (gateway === "media") {
+        if (!guardFor(env, "media", cfg.abuseGuardMax, cfg.abuseGuardWindowMs).check(guardKey(clientKey(request), "media"))) {
+          return jsonResponse({ ok: false, error: FLOOD_MSG }, { status: 429, corsHeaders: cors.headers });
+        }
+        if (!idToken) return jsonResponse({ ok: false, error: AUTH_MSG }, { status: 401, corsHeaders: cors.headers });
         const len = contentLength(request);
         if (len > MAX_UPLOAD_BYTES) {
           return jsonResponse(
@@ -212,70 +195,52 @@ export default {
         const raw = await readUploadBody(request, MAX_UPLOAD_BYTES);
         const mime = String(request.headers.get("Content-Type") || "image/jpeg");
         const filename = String(request.headers.get("X-Filename") || "image.jpg");
-        const result = await handleImageUpload(
-          { idToken },
-          raw,
-          mime,
-          filename,
-          makeImagesIo(env),
-        );
+        const result = await handleImageUpload({ idToken }, raw, mime, filename, makeImagesIo(env));
         return jsonResponse(result, { corsHeaders: cors.headers });
       }
 
-      const body = await readJsonBody(request);
+      const body = await readJsonBody(request, cfg.maxJsonBytes);
+      const op = String(body.op ?? "").trim();
 
-      if (apis.dataWrite) {
-        const result = await handleDataWrite({ ...body, idToken }, makeDataIo(env));
-        return jsonResponse(result, { corsHeaders: cors.headers });
+      const isPublicSubmit = gateway === "data" && op === "public-submit";
+      if (isPublicSubmit) {
+        if (!guardFor(env, "public/submit", cfg.publicSubmitGuardMax, cfg.abuseGuardWindowMs).check(guardKey(clientKey(request), "public/submit"))) {
+          return jsonResponse({ ok: false, error: FLOOD_MSG }, { status: 429, corsHeaders: cors.headers });
+        }
+      } else {
+        if (!guardFor(env, "api", cfg.abuseGuardMax, cfg.abuseGuardWindowMs).check(guardKey(clientKey(request), gateway))) {
+          return jsonResponse({ ok: false, error: FLOOD_MSG }, { status: 429, corsHeaders: cors.headers });
+        }
+        if (!idToken) return jsonResponse({ ok: false, error: AUTH_MSG }, { status: 401, corsHeaders: cors.headers });
       }
-      if (apis.profile) {
-        const result = await handleProfileUpsert({ ...body, idToken }, makeDataIo(env));
-        return jsonResponse(result, { corsHeaders: cors.headers });
-      }
-      if (apis.claimEmail) {
-        const result = await handleClaimEmail({ ...body, idToken }, makeDataIo(env));
-        return jsonResponse(result, { corsHeaders: cors.headers });
-      }
-      if (apis.claimLogin) {
-        const result = await handleClaimLogin({ ...body, idToken }, makeDataIo(env));
-        return jsonResponse(result, { corsHeaders: cors.headers });
-      }
-      if (apis.donorId) {
-        const result = await handleDonorIdAction({ ...body, idToken }, makeDonorIdIo(env));
-        return jsonResponse(result, { corsHeaders: cors.headers });
-      }
-      if (apis.delete) {
-        const result: ServerDeleteResult = await handleAdminEntityDelete(
-          { ...body, idToken },
-          makeHttpIo(env),
-        );
-        return jsonResponse(result, { corsHeaders: cors.headers });
-      }
-      if (apis.dedupe) {
-        const result = await handleAdminDedupe(
-          { apply: body.apply === true, idToken },
-          makeHttpIo(env),
-        );
-        return jsonResponse(result, { corsHeaders: cors.headers });
-      }
-      if (apis.configCheck) {
-        const result = await handleAdminConfigCheck(
-          { idToken },
-          makeHttpIo(env),
-          {
+
+      let result: unknown;
+      if (gateway === "auth") {
+        if (op === "profile") result = await handleProfileUpsert({ ...body, idToken }, makeDataIo(env));
+        else if (op === "claim-email") result = await handleClaimEmail({ ...body, idToken }, makeDataIo(env));
+        else if (op === "claim-login") result = await handleClaimLogin({ ...body, idToken }, makeDataIo(env));
+        else if (op === "resolve-legacy") result = await handleResolveLegacy({ idToken }, makePrivilegedIo(env));
+        else throw new ApiError(400, UNKNOWN_OP_MSG);
+      } else if (gateway === "data") {
+        if (op === "write") result = await handleDataWrite({ ...body, idToken }, makeDataIo(env));
+        else if (op === "apply") result = await handleDonorApply({ ...body, idToken }, makeApplyIo(env, idToken));
+        else if (op === "public-submit") result = await handlePublicSubmit(body, makePublicIo(env), idToken);
+        else throw new ApiError(400, UNKNOWN_OP_MSG);
+      } else {
+        if (op === "delete") {
+          const deleted: ServerDeleteResult = await handleAdminEntityDelete({ ...body, idToken }, makeHttpIo(env));
+          result = deleted;
+        } else if (op === "dedupe") {
+          result = await handleAdminDedupe({ apply: body.apply === true, idToken }, makeHttpIo(env));
+        } else if (op === "config-check") {
+          result = await handleAdminConfigCheck({ idToken }, makeHttpIo(env), {
             serviceAccountConfigured: serviceAccountConfigured(env),
             imgbbConfigured: await makeImagesIo(env).hasKey(),
-          },
-        );
-        return jsonResponse(result, { corsHeaders: cors.headers });
+          });
+        } else if (op === "donor-id") {
+          result = await handleDonorIdAction({ ...body, idToken }, makeDonorIdIo(env));
+        } else throw new ApiError(400, UNKNOWN_OP_MSG);
       }
-      if (apis.apply) {
-        const result = await handleDonorApply({ ...body, idToken }, makeApplyIo(env, idToken));
-        return jsonResponse(result, { corsHeaders: cors.headers });
-      }
-
-      const privileged = makePrivilegedIo(env);
-      const result = await handleResolveLegacy({ idToken }, privileged);
       return jsonResponse(result, { corsHeaders: cors.headers });
     } catch (e) {
       const status = e instanceof ApiError ? e.status : 500;

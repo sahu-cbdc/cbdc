@@ -2,7 +2,7 @@
  * Data layer — realtime READS stay on the Firebase SDK (listeners keep the
  * live UI), while every WRITE goes through the secure API:
  *
- *   UI → rtdb.ts write helpers → /api/data/write (server-side authz) → RTDB
+ *   UI → rtdb.ts write helpers → /api/data op=write (server-side authz) → RTDB
  *
  * The browser never performs privileged writes against Firebase directly;
  * role/ownership checks run on the server for each requested path.

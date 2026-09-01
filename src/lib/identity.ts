@@ -4,7 +4,7 @@
  * Lookups stay as direct reads (loginIndex is public by design for
  * username→email login resolution; identityIndex is auth-read).
  * CLAIMS and RELEASES are compare-and-set operations and now run on the
- * server (POST /api/account/claim-email, /api/account/claim-login) so the
+ * server (POST /api/auth — op claim-email / claim-login) so the
  * browser no longer needs write access to the index nodes at all.
  */
 import { child, get, ref } from "firebase/database";

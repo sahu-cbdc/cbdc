@@ -2,9 +2,10 @@
 
 import { getAuthInstance } from "./firebase";
 import { appBase } from "./router";
+import { API_GATEWAYS } from "../config/api";
 
-const ENDPOINT = "api/images/upload";
-const CONFIG_ENDPOINT = "api/admin/config-check";
+const ENDPOINT = API_GATEWAYS.media;
+const CONFIG_ENDPOINT = API_GATEWAYS.admin;
 const TIMEOUT_MS = 25000;
 
 
@@ -21,7 +22,7 @@ export async function getImgbbStatus(): Promise<boolean> {
       res = await fetch(`${appBase()}${CONFIG_ENDPOINT}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ op: "config-check" }),
         signal: controller.signal,
       });
     } finally {

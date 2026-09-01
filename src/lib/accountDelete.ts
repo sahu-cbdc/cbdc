@@ -2,6 +2,7 @@
 
 import { getAuthInstance } from "./firebase";
 import { appBase } from "./router";
+import { API_GATEWAYS } from "../config/api";
 import { toBanglaDigits } from "./age";
 
 
@@ -29,10 +30,10 @@ export async function resolveLegacyAccount(): Promise<{
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     let res: Response | null = null;
     try {
-      res = await fetch(`${appBase()}api/account/resolve-legacy`, {
+      res = await fetch(`${appBase()}${API_GATEWAYS.auth}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ op: "resolve-legacy" }),
         signal: controller.signal,
       });
     } finally {
@@ -98,10 +99,10 @@ export async function runDedupeScan(apply: boolean): Promise<DedupeReportInfo> {
     const timer = setTimeout(() => controller.abort(), 30000);
     let res: Response | null = null;
     try {
-      res = await fetch(`${appBase()}api/admin/dedupe`, {
+      res = await fetch(`${appBase()}${API_GATEWAYS.admin}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ apply }),
+        body: JSON.stringify({ op: "dedupe", apply }),
         signal: controller.signal,
       });
     } finally {
@@ -174,8 +175,8 @@ export function isAuthUid(value: unknown): boolean {
   return AUTH_UID_RE.test(String(value ?? "").trim());
 }
 
-const ENDPOINT = "api/admin/delete";
-const CONFIG_ENDPOINT = "api/admin/config-check";
+const ENDPOINT = API_GATEWAYS.admin;
+const CONFIG_ENDPOINT = API_GATEWAYS.admin;
 const TIMEOUT_MS = 20000;
 
 
@@ -192,7 +193,7 @@ export async function checkDeleteServerConfig(): Promise<{ configured: boolean |
       res = await fetch(`${appBase()}${CONFIG_ENDPOINT}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ op: "config-check" }),
         signal: controller.signal,
       });
     } finally {
@@ -242,7 +243,7 @@ export async function serverDeleteEntity(req: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ scope, donorId, uid, name }),
+        body: JSON.stringify({ op: "delete", scope, donorId, uid, name }),
         signal: controller.signal,
       });
     } finally {

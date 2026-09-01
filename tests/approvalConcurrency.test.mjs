@@ -68,16 +68,18 @@ test("Doner panel routes settings-OFF actions through the server apply endpoint"
   assert.match(doner, /await isStaffUser\(uid\)\)\{/);
 });
 
-test("Server + dev middleware expose /api/donor/apply (settings-OFF direct processing)", () => {
+test("Server + dev middleware expose donor-apply on the /api/data gateway (settings-OFF direct processing)", () => {
   const server = read("server/index.ts");
-  assert.match(server, /import \{ handleDonorApply \} from "\.\/applyApi\.ts";/);
+  assert.match(server, /import \{ handleDonorApply \} from ".\/applyApi.ts";/);
   assert.match(server, /import \{ makeApplyIo/);
-  assert.ok(server.includes('apply: /\\/api\\/donor\\/apply$/i.test(path)'), "apply route registered in apiPaths");
-  assert.match(server, /handleDonorApply\([\s\S]*?\.\.\.body, idToken \},[\s\S]*?makeApplyIo/);
+  assert.match(server, /data: \/\\\/api\\\/data\$\/i/);
+  assert.match(server, /op === "apply"/);
+  assert.match(server, /handleDonorApply\([\s\S]*?\.\.\.body, idToken },[\s\S]*?makeApplyIo/);
   const vite = read("vite.config.ts");
-  assert.match(vite, /import \{ handleDonorApply \} from "\.\/server\/applyApi";/);
-  assert.match(vite, /isApplyApi = apiPath\.endsWith\("\/api\/donor\/apply"\)/);
-  assert.match(vite, /handleDonorApply\([\s\S]*?\.\.\.payload, idToken \},[\s\S]*?makeApplyIo/);
+  assert.match(vite, /import \{ handleDonorApply \} from ".\/server\/applyApi";/);
+  assert.match(vite, /apiPath\.endsWith\("\/api\/data"\)/);
+  assert.match(vite, /op === "apply"/);
+  assert.match(vite, /handleDonorApply\([\s\S]*?\.\.\.payload, idToken },[\s\S]*?makeApplyIo/);
 });
 
 test("Approval-settings single source stays consistent (settings/app.rules)", () => {

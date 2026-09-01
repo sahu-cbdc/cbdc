@@ -5,25 +5,11 @@ import type { ResolveLegacyIo } from "./resolveLegacy.ts";
 import type { ApplyIo } from "./applyApi.ts";
 import type { ImagesIo } from "./imagesApi.ts";
 import { createAuthDeleter, parseServiceAccount, fetchGoogleAccessToken, type ServiceAccount } from "./authAdmin.ts";
+import { serverConfig, UNCONFIGURED_MSG } from "./config.ts";
 
 const IDENTITY_TOOLKIT = "https://identitytoolkit.googleapis.com/v1/accounts:lookup";
 
-
-const DEFAULT_FIREBASE_API_KEY = "AIzaSyBxUlGig2NtQLf6tZMRwK6xxzjScNIqbrM";
-const DEFAULT_FIREBASE_DATABASE_URL =
-  "https://chokbazarbloodclub-69d5f-default-rtdb.firebaseio.com";
-
-const DEFAULT_FIREBASE_PROJECT_ID = "chokbazarbloodclub-69d5f";
-
-type HttpEnv = {
-  FIREBASE_API_KEY?: string;
-  FIREBASE_DATABASE_URL?: string;
-  
-  FIREBASE_SERVICE_ACCOUNT?: string;
-  FIREBASE_PROJECT_ID?: string;
-  
-  IMGBB_API_KEY?: string;
-};
+type HttpEnv = Record<string, unknown>;
 
 async function verifyIdentityLookup(
   idToken: string,
@@ -51,7 +37,7 @@ async function verifyIdentityLookup(
  * RTDB rules (".write": false) can never break these admin flows.
  */
 export function makeHttpIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): DeleteIo {
-  const apiKey = String(env.FIREBASE_API_KEY || DEFAULT_FIREBASE_API_KEY).trim();
+  const cfg = serverConfig(env);
   const priv = makePrivilegedIo(env, undefined, fetchImpl) as ResolveLegacyIo & {
     configured: boolean;
     get(path: string): Promise<any>;
@@ -59,7 +45,7 @@ export function makeHttpIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): Delet
     apply(paths: Record<string, unknown>): Promise<boolean>;
   };
   return {
-    verifyToken: (token: string) => verifyIdentityLookup(token, apiKey, fetchImpl),
+    verifyToken: (token: string) => verifyIdentityLookup(token, cfg.firebaseWebApiKey, fetchImpl),
     get: (path: string) => {
       if (!priv.configured) throw new ApiError(503, UNCONFIGURED_MSG);
       return priv.get(path);
@@ -72,7 +58,7 @@ export function makeHttpIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): Delet
       if (!priv.configured) return false;
       return priv.apply(paths);
     },
-    deleteAuthUser: createAuthDeleter(env as Record<string, unknown>, DEFAULT_FIREBASE_PROJECT_ID, fetchImpl),
+    deleteAuthUser: createAuthDeleter(env as Record<string, unknown>, cfg.firebaseProjectId, fetchImpl),
   };
 }
 
@@ -86,12 +72,10 @@ function privUrl(base: string, path: string, sa: ServiceAccount, fetchImpl: type
 
 
 export function makePrivilegedIo(env: HttpEnv, apiKey?: string, fetchImpl: typeof fetch = fetch) {
-  
-  const webKey = String(apiKey || env.FIREBASE_API_KEY || DEFAULT_FIREBASE_API_KEY).trim();
-  const base = String(env.FIREBASE_DATABASE_URL || DEFAULT_FIREBASE_DATABASE_URL)
-    .trim()
-    .replace(/\/+$/, "");
-  const sa = parseServiceAccount((env as Record<string, unknown>).FIREBASE_SERVICE_ACCOUNT);
+  const cfg = serverConfig(env);
+  const webKey = String(apiKey || cfg.firebaseWebApiKey).trim();
+  const base = cfg.firebaseDatabaseUrl.trim().replace(/\/+$/, "");
+  const sa = parseServiceAccount(cfg.serviceAccount);
 
   const io: ResolveLegacyIo & { configured: boolean; patch(paths: Record<string, any>): Promise<void> } = {
     configured: !!sa,
@@ -161,7 +145,7 @@ export type PublicIo = {
 
 /** Privileged IO for anonymous-capable public submissions. */
 export function makePublicIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): PublicIo {
-  const apiKey = String(env.FIREBASE_API_KEY || DEFAULT_FIREBASE_API_KEY).trim();
+  const apiKey = serverConfig(env).firebaseWebApiKey;
   const priv = makePrivilegedIo(env, undefined, fetchImpl) as ResolveLegacyIo & {
     configured: boolean;
     get(path: string): Promise<any>;
@@ -192,7 +176,7 @@ export type DonorIdIo = {
 
 /** Privileged IO for staff donor-id allocation. */
 export function makeDonorIdIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): DonorIdIo {
-  const apiKey = String(env.FIREBASE_API_KEY || DEFAULT_FIREBASE_API_KEY).trim();
+  const apiKey = serverConfig(env).firebaseWebApiKey;
   const priv = makePrivilegedIo(env, undefined, fetchImpl) as ResolveLegacyIo & {
     configured: boolean;
     get(path: string): Promise<any>;
@@ -218,7 +202,7 @@ export function makeDonorIdIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): Do
 }
 
 export function makeDataIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): DataIo {
-  const apiKey = String(env.FIREBASE_API_KEY || DEFAULT_FIREBASE_API_KEY).trim();
+  const apiKey = serverConfig(env).firebaseWebApiKey;
   const priv = makePrivilegedIo(env, undefined, fetchImpl) as ResolveLegacyIo & {
     configured: boolean;
     get(path: string): Promise<any>;
@@ -238,17 +222,12 @@ export function makeDataIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): DataI
   };
 }
 
-const UNCONFIGURED_MSG =
-  "সার্ভারে service-account secret (FIREBASE_SERVICE_ACCOUNT) কনফিগার করা নেই — " +
-  "পুরোনো রেকর্ড স্বয়ংক্রিয়ভাবে মেলানো সম্ভব নয়। অ্যাডমিন প্যানেলের " +
-  "'ডুপ্লিকেট যাচাই ও পরিষ্কার' ব্যবহার করুন।";
-
-
 export function makeImagesIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): ImagesIo {
-  const apiKey = String(env.FIREBASE_API_KEY || DEFAULT_FIREBASE_API_KEY).trim();
+  const cfg = serverConfig(env);
+  const apiKey = cfg.firebaseWebApiKey;
   const priv = makePrivilegedIo(env, undefined, fetchImpl);
   const hasKey = async (): Promise<boolean> => {
-    if (String((env as Record<string, unknown>).IMGBB_API_KEY ?? "").trim()) return true;
+    if (cfg.imgbbApiKey) return true;
     if (!priv.configured) return false;
     const row = (await priv.get("settings/imgbb").catch(() => null)) as any;
     return !!String(row?.key ?? "").trim();
@@ -256,8 +235,7 @@ export function makeImagesIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): Ima
   return {
     verifyToken: (token: string) => verifyIdentityLookup(token, apiKey, fetchImpl),
     getImgbbKey: async () => {
-      const envKey = String((env as Record<string, unknown>).IMGBB_API_KEY ?? "").trim();
-      if (envKey) return envKey;
+      if (cfg.imgbbApiKey) return cfg.imgbbApiKey;
       if (!priv.configured) {
         
         throw new ApiError(503, UNCONFIGURED_MSG);

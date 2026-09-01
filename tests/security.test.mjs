@@ -50,7 +50,7 @@ function apiErrorStatus(fn) {
 
 test("secret: ImgBB key never read/bundled client-side (imgbb.ts)", () => {
   const src = read("src/lib/imgbb.ts");
-  assert.match(src, /api\/images\/upload/);
+  assert.match(src, /API_GATEWAYS\.media/);
   /* key আর client-এ পড়া হয় না — upload server-এ যায়; শুধু boolean status server থেকে */
   assert.match(src, /getImgbbStatus/);
   assert.match(src, /imgbbConfigured/); // status is a boolean only
@@ -390,9 +390,9 @@ test("rules: settings/imgbb not public-read; settings/app stays public; no naked
   assert.doesNotMatch(index, /Access-Control-Allow-Origin"\s*:\s*"\*/);
 });
 
-test("server: protected endpoints share Bearer-token auth + images endpoint present", () => {
+test("server: protected gateways share Bearer-token auth + media endpoint present", () => {
   const index = read("server/index.ts");
-  assert.match(index, /api[\\\/]+images[\\\/]+upload/);
+  assert.match(index, /api[\\\/]+media/);
   assert.match(index, /headers\.get\("Authorization"\)/);
   assert.match(index, /Bearer\\s\+/);
   assert.match(index, /handleImageUpload/);
@@ -456,7 +456,7 @@ test("raw error: curated ApiError message is preserved (user-friendly, not techn
 
 test("upload: no Authorization token → 401 before any body is processed", async () => {
   const res = await apiHandler.fetch(
-    new Request("https://x/api/images/upload", { method: "POST", body: new Uint8Array(10) }),
+    new Request("https://x/api/media", { method: "POST", body: new Uint8Array(10) }),
     {},
   );
   assert.equal(res.status, 401);
@@ -468,7 +468,7 @@ test("upload: no Authorization token → 401 before any body is processed", asyn
 test("upload: oversized payload via Content-Length → 413 without uploading", async () => {
   const big = String(MAX_UPLOAD_BYTES + 1);
   const res = await apiHandler.fetch(
-    new Request("https://x/api/images/upload", {
+    new Request("https://x/api/media", {
       method: "POST",
       headers: { Authorization: "Bearer t", "Content-Length": big },
       body: new Uint8Array(10),
@@ -488,7 +488,7 @@ test("upload: oversized streamed body (no Content-Length) → 413, capped during
     },
   });
   const res = await apiHandler.fetch(
-    new Request("https://x/api/images/upload", {
+    new Request("https://x/api/media", {
       method: "POST",
       headers: { Authorization: "Bearer t" },
       body: stream,

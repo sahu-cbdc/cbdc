@@ -15,6 +15,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import handlePublicSubmit from "../server/publicApi.ts";
+import apiHandler from "../server/index.ts";
 import { ApiError } from "../server/deleteApi.ts";
 import { authorizeDataWrite, callerRoleFromAdminRow } from "../server/writeGuard.ts";
 
@@ -217,6 +218,98 @@ test("dev middleware: unknown /api routes return the same JSON 404 as the Worker
   );
   const server = read("server/index.ts");
   assert.match(server, /status: 404, corsHeaders/);
+});
+
+test("gateway: exactly four central API endpoints — auth/data/admin/media", () => {
+  const index = read("server/index.ts");
+  const client = read("src/config/api.ts");
+  for (const gw of ["auth", "data", "admin", "media"]) {
+    assert.ok(index.includes(String.raw`${gw}: /\/api\/${gw}$/i`), `server gateway ${gw} registered`);
+    assert.ok(client.includes(`${gw}: "api/${gw}"`), `client gateway ${gw}`);
+  }
+});
+
+test("gateway: legacy one-off endpoint routes are gone (server + client)", () => {
+  const server = read("server/index.ts");
+  for (const legacy of [
+    "api/data/write",
+    "api/account/profile",
+    "api/account/claim-",
+    "api/donor/apply",
+    "api/donor/id",
+    "api/public/submit",
+    "api/images/upload",
+    "api/admin/delete",
+    "api/admin/dedupe",
+    "api/admin/config-check",
+  ]) {
+    assert.ok(!server.includes(legacy), `server must not reference legacy route ${legacy}`);
+  }
+  for (const f of ["api", "imgbb", "applyRequest", "accountDelete", "rtdb", "identity"]) {
+    const lib = read(`src/lib/${f}.ts`);
+    for (const legacy of [
+      "api/data/write",
+      "api/account/",
+      "api/donor/apply",
+      "api/donor/id",
+      "api/public/submit",
+      "api/images/upload",
+      "api/admin/",
+    ]) {
+      assert.ok(!lib.includes(legacy), `${f}.ts must use API_GATEWAYS, not ${legacy}`);
+    }
+  }
+});
+
+
+test("gateway: ops dispatch — protected ops need a token, public-submit stays anonymous", async () => {
+  const anon = await apiHandler.fetch(
+    new Request("https://x/api/data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ op: "write", writes: {} }),
+    }),
+    {},
+  );
+  assert.equal(anon.status, 401, "op=write without a token must 401");
+
+  const publicSubmit = await apiHandler.fetch(
+    new Request("https://x/api/data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ op: "public-submit", kind: "donor-registration", payload: {} }),
+    }),
+    {},
+  );
+  assert.notEqual(publicSubmit.status, 401, "anonymous public-submit must pass the gateway (validation decides)");
+  assert.equal((await publicSubmit.json()).ok, false, "empty payload fails validation, not auth");
+
+  const unknownOp = await apiHandler.fetch(
+    new Request("https://x/api/auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer t" },
+      body: JSON.stringify({ op: "nope" }),
+    }),
+    {},
+  );
+  assert.equal(unknownOp.status, 400, "unknown op → 400 JSON, never a fall-through");
+});
+
+test("config: service configuration is centralized and split public/secret", () => {
+  const serverCfg = read("server/config.ts");
+  assert.match(serverCfg, /firebaseWebApiKey/, "server config resolves the public web key");
+  for (const secret of ["FIREBASE_SERVICE_ACCOUNT", "IMGBB_API_KEY"]) {
+    assert.match(serverCfg, new RegExp(secret), `server config reads ${secret} from env`);
+  }
+  assert.doesNotMatch(serverCfg, /BEGIN PRIVATE KEY/);
+  const index = read("server/index.ts");
+  assert.match(index, /serverConfig\(env\)/, "router resolves config centrally");
+  const httpIo = read("server/httpIo.ts");
+  assert.match(httpIo, /from ".\/config.ts"/, "httpIo uses the central config");
+  const fbCfg = read("src/config/firebase.ts");
+  assert.match(fbCfg, /FIREBASE_PUBLIC_CONFIG/, "client firebase config lives in src/config");
+  assert.match(fbCfg, /safe to bundle/, "documented as safe-to-bundle public config");
+  assert.doesNotMatch(fbCfg, /SERVICE_ACCOUNT|IMGBB/, "no server secrets in the public config");
 });
 
 test("secrets: no service-account material in client sources", () => {

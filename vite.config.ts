@@ -152,30 +152,18 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
       server.middlewares.use((req, res, next) => {
         const url = (req.url || "").split("?")[0];
         const apiPath = url.replace(/\/+$/, "");
-        const isDeleteApi = apiPath.endsWith("/api/admin/delete");
-        const isDedupeApi = apiPath.endsWith("/api/admin/dedupe");
-        const isConfigCheckApi = apiPath.endsWith("/api/admin/config-check");
-        const isResolveApi = apiPath.endsWith("/api/account/resolve-legacy");
-        const isApplyApi = apiPath.endsWith("/api/donor/apply");
-        const isUploadApi = apiPath.endsWith("/api/images/upload");
-        const isDataWriteApi = apiPath.endsWith("/api/data/write");
-        const isProfileApi = apiPath.endsWith("/api/account/profile");
-        const isClaimEmailApi = apiPath.endsWith("/api/account/claim-email");
-        const isClaimLoginApi = apiPath.endsWith("/api/account/claim-login");
-        const isDonorIdApi = apiPath.endsWith("/api/donor/id");
-        const isPublicSubmitApi = apiPath.endsWith("/api/public/submit");
-        const isKnownApi =
-          isDeleteApi || isDedupeApi || isConfigCheckApi || isResolveApi || isApplyApi ||
-          isUploadApi || isDataWriteApi || isProfileApi || isClaimEmailApi ||
-          isClaimLoginApi || isDonorIdApi || isPublicSubmitApi;
-        if (!isKnownApi) {
+        const isAuthApi = apiPath.endsWith("/api/auth");
+        const isDataApi = apiPath.endsWith("/api/data");
+        const isAdminApi = apiPath.endsWith("/api/admin");
+        const isMediaApi = apiPath.endsWith("/api/media");
+        const gateway = isAuthApi ? "auth" : isDataApi ? "data" : isAdminApi ? "admin" : isMediaApi ? "media" : null;
+        if (!gateway) {
           if (/^\/api\//i.test(apiPath)) {
             send(res, 404, { ok: false, error: "অনুরোধকৃত API রুটটি খুঁজে পাওয়া যায়নি।" });
             return;
           }
           return next();
         }
-        
         const host = String(req.headers.host || "").split(":")[0];
         const origin = String(req.headers.origin || req.headers.referer || "");
         let originHost = "";
@@ -193,7 +181,7 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
           return;
         }
         const idToken = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
-        if (!idToken && !isPublicSubmitApi) {
+        if (!idToken && gateway !== "data") {
           send(res, 401, { ok: false, error: "অনুমোদন প্রয়োজন — লগইন করে আবার চেষ্টা করুন।" });
           return;
         }
@@ -204,15 +192,15 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
         req.on("data", (chunk: Buffer) => {
           chunks.push(chunk);
           bodySize += chunk.length;
-          const limit = isUploadApi ? 8 * 1024 * 1024 : 64 * 1024;
+          const limit = gateway === "media" ? 8 * 1024 * 1024 : 64 * 1024;
           if (bodySize > limit) oversized = true;
         });
         req.on("end", () => {
           void (async () => {
             try {
-              if (oversized) throw new Error(isUploadApi ? "ছবির আকার ৮ MB-র বেশি — ছোট ছবি দিন।" : "payload too large");
+              if (oversized) throw new Error(gateway === "media" ? "ছবির আকার ৮ MB-র বেশি — ছোট ছবি দিন।" : "payload too large");
               const raw = Buffer.concat(chunks);
-              const payload = isUploadApi ? {} : (JSON.parse(raw.toString("utf8") || "{}") as Record<string, unknown>);
+              const payload = gateway === "media" ? {} : (JSON.parse(raw.toString("utf8") || "{}") as Record<string, unknown>);
               
               const serverEnv = {
                 FIREBASE_SERVICE_ACCOUNT: devEnv.FIREBASE_SERVICE_ACCOUNT || "",
@@ -221,19 +209,19 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
                 IMGBB_API_KEY: devEnv.IMGBB_API_KEY || "",
               };
               let result: unknown;
-              if (isPublicSubmitApi) {
-                result = await handlePublicSubmit(payload, makePublicIo(serverEnv), idToken);
-              } else if (isDataWriteApi) {
-                result = await handleDataWrite({ ...payload, idToken }, makeDataIo(serverEnv));
-              } else if (isProfileApi) {
-                result = await handleProfileUpsert({ ...payload, idToken }, makeDataIo(serverEnv));
-              } else if (isClaimEmailApi) {
-                result = await handleClaimEmail({ ...payload, idToken }, makeDataIo(serverEnv));
-              } else if (isClaimLoginApi) {
-                result = await handleClaimLogin({ ...payload, idToken }, makeDataIo(serverEnv));
-              } else if (isDonorIdApi) {
-                result = await handleDonorIdAction({ ...payload, idToken }, makeDonorIdIo(serverEnv));
-              } else if (isUploadApi) {
+              const op = String(payload.op ?? "").trim();
+              if (gateway === "auth") {
+                if (op === "profile") result = await handleProfileUpsert({ ...payload, idToken }, makeDataIo(serverEnv));
+                else if (op === "claim-email") result = await handleClaimEmail({ ...payload, idToken }, makeDataIo(serverEnv));
+                else if (op === "claim-login") result = await handleClaimLogin({ ...payload, idToken }, makeDataIo(serverEnv));
+                else if (op === "resolve-legacy") result = await handleResolveLegacy({ idToken }, makePrivilegedIo(serverEnv, ""));
+                else throw new ApiError(400, "অনুরোধকৃত কাজটি খুঁজে পাওয়া যায়নি।");
+              } else if (gateway === "data") {
+                if (op === "write") result = await handleDataWrite({ ...payload, idToken }, makeDataIo(serverEnv));
+                else if (op === "apply") result = await handleDonorApply({ ...payload, idToken }, makeApplyIo(serverEnv, idToken));
+                else if (op === "public-submit") result = await handlePublicSubmit(payload, makePublicIo(serverEnv), idToken);
+                else throw new ApiError(400, "অনুরোধকৃত কাজটি খুঁজে পাওয়া যায়নি।");
+              } else if (gateway === "media") {
                 result = await handleImageUpload(
                   { idToken },
                   new Uint8Array(raw),
@@ -241,36 +229,20 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
                   String(req.headers["x-filename"] || "image.jpg"),
                   makeImagesIo(serverEnv),
                 );
-              } else if (isConfigCheckApi) {
-                
-                result = await handleAdminConfigCheck(
-                  { idToken },
-                  makeHttpIo(serverEnv),
-                  {
-                    serviceAccountConfigured: serviceAccountConfigured(serverEnv),
-                    imgbbConfigured: await makeImagesIo(serverEnv).hasKey(),
-                  },
-                );
-              } else if (isDedupeApi) {
-                result = await handleAdminDedupe(
-                  { apply: payload.apply === true, idToken },
-                  makeHttpIo(serverEnv),
-                );
-              } else if (isResolveApi) {
-                result = await handleResolveLegacy(
-                  { idToken },
-                  makePrivilegedIo(serverEnv, ""),
-                );
-              } else if (isApplyApi) {
-                result = await handleDonorApply(
-                  { ...payload, idToken },
-                  makeApplyIo(serverEnv, idToken),
-                );
               } else {
-                result = await handleAdminEntityDelete(
-                  { ...payload, idToken },
-                  makeHttpIo(serverEnv),
-                );
+                if (op === "delete") result = await handleAdminEntityDelete({ ...payload, idToken }, makeHttpIo(serverEnv));
+                else if (op === "dedupe") result = await handleAdminDedupe({ apply: payload.apply === true, idToken }, makeHttpIo(serverEnv));
+                else if (op === "config-check") {
+                  result = await handleAdminConfigCheck(
+                    { idToken },
+                    makeHttpIo(serverEnv),
+                    {
+                      serviceAccountConfigured: serviceAccountConfigured(serverEnv),
+                      imgbbConfigured: await makeImagesIo(serverEnv).hasKey(),
+                    },
+                  );
+                } else if (op === "donor-id") result = await handleDonorIdAction({ ...payload, idToken }, makeDonorIdIo(serverEnv));
+                else throw new ApiError(400, "অনুরোধকৃত কাজটি খুঁজে পাওয়া যায়নি।");
               }
               send(res, 200, result);
             } catch (e) {
