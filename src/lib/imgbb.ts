@@ -3,6 +3,7 @@
 import { getAuthInstance } from "./firebase";
 import { appBase } from "./router";
 import { API_GATEWAYS, API_TIMEOUTS } from "../config/api";
+import { IMGBB_PUBLIC_CONFIG } from "../config/imgbb";
 
 const ENDPOINT = API_GATEWAYS.media;
 const CONFIG_ENDPOINT = API_GATEWAYS.admin;
@@ -44,7 +45,11 @@ export interface ImgbbResult {
 }
 
 
-function compressImage(file: File, maxDim = 1600, quality = 0.85): Promise<Blob> {
+function compressImage(
+  file: File,
+  maxDim: number = IMGBB_PUBLIC_CONFIG.compression.maxDimension,
+  quality: number = IMGBB_PUBLIC_CONFIG.compression.quality
+): Promise<Blob> {
   return new Promise((resolve) => {
     let objectUrl = "";
     try {
@@ -73,7 +78,7 @@ function compressImage(file: File, maxDim = 1600, quality = 0.85): Promise<Blob>
         ctx.drawImage(img, 0, 0, width, height);
         canvas.toBlob(
           (blob) => resolve(blob || file),
-          "image/jpeg",
+          IMGBB_PUBLIC_CONFIG.compression.mimeType,
           quality
         );
       } catch {

@@ -335,6 +335,23 @@ test("pages: no direct Firebase SDK, ImgBB, or raw endpoint fetch in components"
   assert.match(siteCfg, /INTERNAL_ENDPOINTS\.siteConfigSource/, "site-config channel lives in a helper");
 });
 
+test("imgbb: public config single-sourced in src/config/imgbb.ts; key stays server-side", () => {
+  const cfg = read("src/config/imgbb.ts");
+  assert.match(cfg, /IMGBB_PUBLIC_CONFIG/, "dedicated imgbb config file");
+  assert.match(cfg, /uploadMaxBytes/, "upload ceiling defined here");
+  assert.doesNotMatch(cfg, /[keyKey]\s*[:=]\s*["'][A-Za-z0-9]{10,}/, "no key VALUE in the public config");
+  assert.doesNotMatch(cfg, /api\.imgbb\.com\/1\/upload\?key=/, "no keyed ImgBB URL");
+  const lib = read("src/lib/imgbb.ts");
+  assert.match(lib, /IMGBB_PUBLIC_CONFIG\.compression\.maxDimension/, "client compression uses the config");
+  const api = read("server/imagesApi.ts");
+  assert.match(api, /MAX_UPLOAD_BYTES = IMGBB_PUBLIC_CONFIG\.uploadMaxBytes/, "server limit single-sourced");
+  const vite = read("vite.config.ts");
+  assert.match(vite, /gateway === "media" \? IMGBB_PUBLIC_CONFIG\.uploadMaxBytes/, "dev middleware limit single-sourced");
+  const dup = read("server/imagesApi.ts") + read("vite.config.ts") + read("src/lib/imgbb.ts");
+  assert.doesNotMatch(dup, /8 \* 1024 \* 1024/, "no duplicated 8MB literal");
+  assert.doesNotMatch(dup, /maxDim = 1600/, "no duplicated compression default");
+});
+
 test("secrets: no service-account material in client sources", () => {
   const src = read("src/lib/firebase.ts") + read("src/lib/api.ts") + read("src/lib/imgbb.ts");
   assert.doesNotMatch(src, /BEGIN PRIVATE KEY/);

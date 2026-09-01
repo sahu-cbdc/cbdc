@@ -1,6 +1,7 @@
 
 
 import { ApiError } from "./deleteApi.ts";
+import { IMGBB_PUBLIC_CONFIG } from "../src/config/imgbb.ts";
 
 
 export type ImagesIo = {
@@ -23,7 +24,7 @@ export type ImageUploadResult = {
 
 const IMGBB_URL = "https://api.imgbb.com/1/upload";
 
-export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+export const MAX_UPLOAD_BYTES = IMGBB_PUBLIC_CONFIG.uploadMaxBytes;
 
 const MAX_BYTES = MAX_UPLOAD_BYTES;
 
