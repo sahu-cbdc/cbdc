@@ -128,10 +128,14 @@ export default {
     const apis = apiPaths(url);
     
     const isApply = path.endsWith("/api/donor/apply");
+    const isApiPath = /^\/api\//i.test(path);
     const allowedOrigins = parseAllowedOrigins(env && env.ALLOWED_ORIGINS);
 
     
-    if (!isApi(apis)) {
+    // Every /api/... route is owned by the Worker and MUST be intercepted here
+    // — never handed to env.ASSETS (SPA fallback). Only non-API paths fall
+    // through to the static Website.
+    if (!isApiPath) {
       return env.ASSETS && typeof env.ASSETS.fetch === "function"
         ? env.ASSETS.fetch(request)
         : new Response("Not found", { status: 404 });
@@ -150,6 +154,15 @@ export default {
         return new Response(null, { status: 204, headers: cors.headers });
       }
       return jsonResponse({ ok: false, error: "CORS preflight অনুমোদিত নয়।" }, { status: 403 });
+    }
+
+    // Reserved /api/ namespace but no matching handler → API-style JSON 404,
+    // never the Website homepage/SPA fallback.
+    if (!isApi(apis)) {
+      return jsonResponse(
+        { ok: false, error: "অনুরোধকৃত API রুটটি খুঁজে পাওয়া যায়নি।" },
+        { status: 404, corsHeaders: cors.headers },
+      );
     }
 
     if (request.method !== "POST") return jsonResponse({ ok: false, error: "POST only" }, { status: 405 });
