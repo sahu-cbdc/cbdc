@@ -53,7 +53,7 @@ Hosting-এর জন্য `firebase.json`-এ rewrite (`** → /index.html`) �
 
 > 🔒 **নিরাপদ সার্ভার-সাইড ডিলিট** — Admin panel-এর ডোনার/অ্যাকাউন্ট ডিলিট
 > আর ব্রাউজার থেকে হয় না: client শুধু লগইন করা অ্যাডমিনের Firebase ID token-সহ
-> `POST api/admin/delete`-এ অনুরোধ পাঠায়। এই endpoint-টি **Cloudflare Worker**
+> `POST /api/admin` (op: `delete`) গেটওয়েতে অনুরোধ পাঠায়। এই গেটওয়েটি **Cloudflare Worker**
 > (`server/index.ts`; `wrangler.jsonc`-এর `main`) অথবা `vite dev`-এ থাকে।
 > ডিলিটে RTDB রেকর্ডের পাশাপাশি **সংশ্লিষ্ট Firebase Authentication (লগইন)
 > অ্যাকাউন্টও** মোছা হয় — তার জন্য একটি **server secret** লাগে (client-এ কোনো
@@ -67,7 +67,7 @@ Hosting-এর জন্য `firebase.json`-এ rewrite (`** → /index.html`) �
 > নিরাপত্তা: লগইন অ্যাকাউন্ট মোছা হয় **ঠিক যাচাইকৃত লিংকড uid-টিই** — Donor ID
 > ও Account আলাদা/অমিল হলে সার্ভার কিছুই মোছে না। **secret না দেওয়া থাকলে
 > লিংকড-লগইন ডিলিট শুরুই হয় না (atomic — কোনো আংশিক ডিলিট নয়):** Admin panel
-> ডিলিটের আগে `POST api/admin/config-check` দিয়ে preflight করে; secret
+> ডিলিটের আগে `POST /api/admin` (op: `config-check`) দিয়ে preflight করে; secret
 > অনুপস্থিত হলে একটিই স্পষ্ট বাংলা error দেখায় এবং **কিছুই মোছা হয় না**।
 > শুধু static host (Firebase Hosting, Netlify, GitHub Pages …)-এ ডিলিট করলে
 > স্পষ্ট ত্রুটি বার্তা দেখানো হয় এবং কোনো ডেটা মোছা হয় না।
@@ -81,14 +81,14 @@ Hosting-এর জন্য `firebase.json`-এ rewrite (`** → /index.html`) �
 > - **Signup** — auth account তৈরির পর, RTDB লেখার **আগে** claim; অন্য UID-এর
 >   দাবি থাকলে নতুন প্রোফাইল তৈরিই বন্ধ (স্পষ্ট বাংলা বার্তা)।
 > - **Google লগইন** — ইমেইলের পুরোনো (legacy) রেকর্ড অন্য UID-এ থাকলে
->   duplicate না বানিয়ে `POST api/account/resolve-legacy` (server-secure,
+>   duplicate না বানিয়ে `POST /api/auth` (op: `resolve-legacy`) দিয়ে (server-secure,
 >   service-account secret লাগে) রেকর্ডটি বর্তমান UID-এ মিলিয়ে দেয়।
 > - **Donor তৈরি** — Admin/Moderator approval ও staff fast-path-এ আগে
 >   `donors`-এ একই `ownerUid` খোঁজা হয়; থাকলে সেই ডোনার আইডিই পুনর্ব্যবহৃত হয়।
 > - **Delete** — Account/Donor মুছলে ইমেইলের দাবিও মুক্ত হয় (ইমেইল আবার
 >   ব্যবহারযোগ্য)।
 > - **পুরোনো duplicate পরিষ্কার** — Admin panel-এর "ডুপ্লিকেট যাচাই" বাটন
->   (`POST api/admin/dedupe`, শুধু অ্যাডমিন) একই ইমেইলের একাধিক users রেকর্ড /
+>   (`POST /api/admin` op: `dedupe`, শুধু অ্যাডমিন) একই ইমেইলের একাধিক users রেকর্ড /
 >   একই অ্যাকাউন্টের একাধিক ডোনার আইডি খুঁজে preview দেখায়; নিশ্চিত করলে এক
 >   atomic write-এ নিরাপদে মিলিয়ে দেয় ও সূচি backfill করে। ফল live
 >   listener-এই realtime দেখা যায়।
@@ -249,7 +249,8 @@ RTDB-এর পুরোনো URL/reference-ও update/remove হয়।
 - client-এ শুধু Firebase-এর publicly-safe web config (Rules-ই আসল নিরাপত্তা)
 - `VITE_*` env bundle-এ inline হয় — তাই কোনো secret সেখানে রাখা হয় না; `import.meta.env`
   পুরো অবজেক্ট না পড়ে শুধু নির্দিষ্ট public key পড়া হয়
-- ImgBB key মূলত RTDB `settings/imgbb`-এ (admin লেখে); source/bundle-এ কোনো literal নেই
+- ImgBB-র private API key কেবল এক জায়গায় — সার্ভার-সাইড `server/config/imgbb.ts` (env `IMGBB_API_KEY` দিয়ে override হয়); `/api/media` ছাড়া কেউ ছুঁতে পারে না, client/source/bundle-এ কখনোই নেই
+- Client পায় শুধু public সেটিংস (`src/config/imgbb.ts` — ছবির কম্প্রেশন); upload সরাসরি client→ImgBB নয়, লগইন-verify করা `/api/media` gateway দিয়ে
 - RTDB Security Rules: `users`/`admins`/`accounts`/`queue`/`audit`/`messages`/`reports`/`members`
   — সব private node-এ auth + staff/owner check; public read শুধু `donors`/`requests`/`gallery`/
   `notices`/`settings` (পাবলিক ওয়েবসাইটের জন্য)

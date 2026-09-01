@@ -4,7 +4,7 @@
  * Regression tests: reserved /api/ endpoints and unknown /api/ routes must
  * NEVER fall through to env.ASSETS.fetch() / the Website SPA fallback.
  *
- *   • A browser GET to a POST-only protected endpoint (`/api/donor/apply`)
+ *   • A browser GET to a POST-only protected endpoint (`/api/data`)
  *     must return a proper JSON 405 Method Not Allowed — not the Website HTML.
  *   • Unknown / nonexistent `/api/...` routes must return an API-style JSON
  *     404 — not the Website homepage.
@@ -43,9 +43,9 @@ async function fetchRaw(env, path, method, init = {}) {
   return apiHandler.fetch(new Request("https://example.test" + path, { method, ...init }), env);
 }
 
-test("GET /api/donor/apply → 405 JSON, never reaches Website SPA fallback", async () => {
+test("GET /api/data → 405 JSON, never reaches Website SPA fallback", async () => {
   const env = makeEnv();
-  const res = await fetchRaw(env, "/api/donor/apply", "GET");
+  const res = await fetchRaw(env, "/api/data", "GET");
   assert.equal(res.status, 405, "POST-only endpoint must return 405");
   const contentType = res.headers.get("content-type") || "";
   assert.match(contentType, /application\/json/, "must be a JSON response");
@@ -55,10 +55,10 @@ test("GET /api/donor/apply → 405 JSON, never reaches Website SPA fallback", as
   assert.equal(env.calls.length, 0, "env.ASSETS.fetch() must never be called for an /api path");
 });
 
-test("GET /api/donor/apply with ASSETS present → 405 JSON, never SPA HTML", async () => {
+test("GET /api/data with ASSETS present → 405 JSON, never SPA HTML", async () => {
   /* Same request but explicitly with a working ASSETS (SPA) environment. */
   const env = makeEnv();
-  const res = await fetchRaw(env, "/api/donor/apply", "GET");
+  const res = await fetchRaw(env, "/api/data", "GET");
   const text = await res.text();
   assert.equal(res.status, 405);
   assert.match(text, /"error":"POST only"/);
@@ -102,10 +102,10 @@ test("non-API deep path (client-side route) still serves the Website SPA", async
   assert.deepEqual(env.calls, ["/donor/dashboard"], "non-API SPA fallback preserved");
 });
 
-test("POST-only endpoint rejects other verbs too (PUT/DELETE → 405 JSON)", async () => {
+test("gateway rejects other verbs too (PUT/DELETE → 405 JSON)", async () => {
   for (const method of ["PUT", "DELETE", "PATCH", "GET"]) {
     const env = makeEnv();
-    const res = await fetchRaw(env, "/api/donor/apply", method);
+    const res = await fetchRaw(env, "/api/data", method);
     assert.equal(res.status, 405, `${method} must be rejected`);
     assert.match(res.headers.get("content-type") || "", /application\/json/);
     assert.equal(env.calls.length, 0);
@@ -114,16 +114,16 @@ test("POST-only endpoint rejects other verbs too (PUT/DELETE → 405 JSON)", asy
 
 test("OPTIONS preflight on /api path is still handled by the Worker (not SPA)", async () => {
   const env = makeEnv();
-  const res = await fetchRaw(env, "/api/donor/apply", "OPTIONS", {
+  const res = await fetchRaw(env, "/api/data", "OPTIONS", {
     headers: { Origin: "https://chawkbazarbloodclub.com", "Access-Control-Request-Method": "POST" },
   });
   assert.ok([204, 403].includes(res.status));
   assert.equal(env.calls.length, 0, "preflight must not fall through to SPA");
 });
 
-test("GET /api/donor/apply with browser navigate header → still 405 JSON, never SPA", async () => {
+test("GET /api/data with browser navigate header → still 405 JSON, never SPA", async () => {
   const env = makeEnv();
-  const res = await fetchRaw(env, "/api/donor/apply", "GET", {
+  const res = await fetchRaw(env, "/api/data", "GET", {
     headers: { "Sec-Fetch-Mode": "navigate" },
   });
   assert.equal(res.status, 405);

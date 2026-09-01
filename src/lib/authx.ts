@@ -22,9 +22,9 @@ import {
   confirmPasswordReset,
   type ActionCodeSettings,
 } from "firebase/auth";
-import { claimLoginEntries } from "./identity";
 import { NODES } from "./firebase";
-import { getRow, updateRow, setRow, findBy, nowIso, probeRow, type Row } from "./rtdb";
+import { apiUpsertProfile } from "./api";
+import { getRow, findBy, probeRow, type Row } from "./rtdb";
 import { isValidDob, toEnglishDigits } from "./age";
 
 
@@ -486,88 +486,10 @@ export async function ensureUserProfile(
   extra: { provider?: string; existing?: Record<string, any> | null } = {}
 ): Promise<void> {
   if (!user || !user.uid) return;
-  
-  const existing =
-    extra.existing !== undefined ? extra.existing || null : await getRow(NODES.users, user.uid);
-  
-  const photoURL = String(existing?.photoURL || user.photo || "").trim();
-  const base: Record<string, unknown> = {
-    uid: user.uid,
-    email: String(user.email || existing?.email || "").toLowerCase(),
-    name: user.name || existing?.name || "",
-    photoURL,
-    updatedAt: nowIso(),
-  };
-  const keep = (incoming: unknown, prev: unknown) => {
-    const v = String(incoming || "").trim();
-    if (v) return v;
-    const p = String(prev || "").trim();
-    return p || undefined;
-  };
-  const dob = keep(user.dob, existing?.dob);
-  const phone = keep(user.phone, existing?.phone);
-  const gender = keep(user.gender, existing?.gender);
-  const area = keep(user.area, existing?.area);
-  const district = keep(user.district, existing?.district);
-  const username = keep(user.username, existing?.username);
-  const address = keep(user.address, existing?.address);
-  if (dob) base.dob = dob;
-  if (phone) base.phone = phone;
-  if (gender) base.gender = gender;
-  if (area) base.area = area;
-  if (district) base.district = district;
-  if (username) base.username = username;
-  if (address) base.address = address;
-  
-  const bloodGroup = keep((user as any).bloodGroup, (existing as any)?.bloodGroup);
-  const donorId = keep((user as any).donorId, (existing as any)?.donorId);
-  const donorStatus = keep((user as any).donorStatus, (existing as any)?.donorStatus);
-  const lastDonation = keep((user as any).lastDonation, (existing as any)?.lastDonation);
-  const whatsapp = keep((user as any).whatsapp, (existing as any)?.whatsapp);
-  const health = keep((user as any).health, (existing as any)?.health);
-  const appliedAt = keep((user as any).appliedAt, (existing as any)?.appliedAt);
-  const cardTheme = keep((user as any).cardTheme, (existing as any)?.cardTheme);
-  if (bloodGroup) base.bloodGroup = bloodGroup;
-  if (donorId) base.donorId = donorId;
-  if (donorStatus) base.donorStatus = donorStatus;
-  if (lastDonation !== undefined) {
-    if (lastDonation) base.lastDonation = lastDonation;
-    else if (String((user as any).lastDonation ?? "") === "" && String((existing as any)?.lastDonation ?? "") === "" && (user as any).lastDonation === "") {
-      base.lastDonation = "";
-    }
-  }
-  if (whatsapp !== undefined) {
-    if (whatsapp) base.whatsapp = whatsapp;
-    else if ((user as any).whatsapp === "") base.whatsapp = "";
-  }
-  if (health !== undefined) {
-    if (health) base.health = health;
-    else if ((user as any).health === "") base.health = "";
-  }
-  if (appliedAt) base.appliedAt = appliedAt;
-  if (cardTheme) base.cardTheme = cardTheme;
-  if ((user as any).available !== undefined) base.available = !!(user as any).available;
-  else if ((existing as any)?.available !== undefined) base.available = !!(existing as any).available;
-  if (extra.provider) base.provider = extra.provider;
-  if (!existing) {
-    base.role = "donor";
-    base.status = "active";
-    base.createdAt = nowIso();
-    if (!base.donorStatus && bloodGroup) base.donorStatus = "pending";
-    
-    await setRow(NODES.users, user.uid, base);
-    return;
-  }
-  
-  if (!existing.donorStatus && bloodGroup && !base.donorStatus) base.donorStatus = "pending";
-  
-  await updateRow(NODES.users, user.uid, base);
-  
-  try {
-    await claimLoginEntries(base.email, username, phone);
-  } catch (e) {
-    console.warn("loginIndex claim:", (e as Error)?.message);
-  }
+  await apiUpsertProfile(user as Record<string, any>, {
+    provider: extra.provider,
+    mode: extra.existing === null ? "create" : "upsert",
+  });
 }
 
 

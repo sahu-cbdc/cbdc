@@ -2,6 +2,7 @@
 
 import { getAuthInstance } from "./firebase";
 import { appBase } from "./router";
+import { API_GATEWAYS, API_TIMEOUTS } from "../config/api";
 
 export type ApplyAction = "donor" | "bloodGroup" | "donation";
 
@@ -13,8 +14,8 @@ export type ApplyOutcome = {
   error?: string;
 };
 
-const ENDPOINT = "api/donor/apply";
-const TIMEOUT_MS = 20000;
+const ENDPOINT = API_GATEWAYS.data;
+const TIMEOUT_MS = API_TIMEOUTS.apply;
 
 export async function requestDirectApply(
   action: ApplyAction,
@@ -39,7 +40,7 @@ export async function requestDirectApply(
       res = await fetch(`${appBase()}${ENDPOINT}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ action, ...payload }),
+        body: JSON.stringify({ op: "apply", action, ...payload }),
         signal: controller.signal,
       });
     } finally {

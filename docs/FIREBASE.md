@@ -136,14 +136,11 @@ metadata** সেভ হয়।
 - Admin/Moderator → প্রোফাইল ছবি
 - Doner → প্রোফাইল ছবি
 
-**ImgBB API key-এর উৎস (priority ক্রমে):**
-1. localStorage cache (`cbdc.imgbb.key`)
-2. RTDB `settings/imgbb` (Admin Settings থেকে save — সব পেজ/browser-এ শেয়ার)
-3. build-time env `VITE_IMGBB_API_KEY` (fallback)
+**ImgBB API key-এর উৎস:** শুধু server-side `server/config/imgbb.ts` (env `IMGBB_API_KEY`
+দিয়ে override — Worker-এ `npx wrangler secret put IMGBB_API_KEY`)। ব্রাউজার সরাসরি ImgBB
+ডাকে না; সব ছবি লগইন-verify করা `POST /api/media` গেটওয়ে দিয়ে যায়, সার্ভার link ফেরত দেয়।
 
-> ⚠️ ImgBB key client-side (public) থাকে — এটা ImgBB-র স্বাভাবিক মডেল। key লিক হলে
-> কেউ আপনার ImgBB quota ব্যবহার করতে পারে; তাই প্রোডাকশনে ImgBB account-এর
-> monthly quota খেয়াল রাখুন।
+> 🔒 key কখনো client bundle, panel বা RTDB-তে থাকে না।
 
 ## ৫. Realtime Database Structure
 
@@ -212,7 +209,7 @@ listener-এর মাধ্যমে সব প্যানেল/ওয়ে�
 | ডোনার আইডি ব্যবস্থাপনা | **সব** ডোনার আইডি (`donors/{donorId}`) — অ্যাকাউন্ট ছাড়াও | `donor` | `donors/{donorId}` · `members/*` · `queue/*` — **অ্যাকাউন্ট অক্ষত** |
 
 Flow: **Select (checkbox → শুধু নির্বাচন) → Confirmation → POST
-`<base>api/admin/delete` (Bearer Firebase ID token) → server: token verify →
+`POST /api/admin` (op `delete`) (Bearer Firebase ID token) → server: token verify →
 admin role verify → identity verify → RTDB delete → Success → Realtime UI Update**
 
 **১. কেন সার্ভার-সাইড (ব্রাউজার আর কিছু মোছে না)**
@@ -228,9 +225,9 @@ engine `server/deleteApi.ts` — ওই একই logic চলে:
   Rules-ই** দ্বিতীয় স্তরের সুরক্ষা,
 - নিজের অ্যাকাউন্ট delete → 400; ভুল UID → 400; অজানা Donor ID → 404;
   ভুল/অমিল identity → কিছুই মোছা হয় না,
-- **Firebase Authentication (লগইন) account মোছা যায় না** — Admin SDK/private key
-  ছাড়া সম্ভব নয়; তাই success-এর সাথে স্পষ্ট warning দেওয়া হয়
-  (Console → Authentication থেকে মুছতে হবে)। কোনো মিথ্যে সাফল্য নয়।
+- **Firebase Authentication (লগইন) account-ও মুছে যায়** — Worker-ের
+  `FIREBASE_SERVICE_ACCOUNT` secret দিয়ে সার্ভার নিজেই verified লিংকড অ্যাকাউন্ট মুছে;
+  secret না থাকলে ডিলিট শুরুই হয় না (atomic — কোনো আংশিক ডিলিট/মিথ্যে সাফল্য নয়)।
 
 **৩. Realtime** — server-এর multi-path delete-এর পর existing listener-ই donor list,
 donor count, dashboard পরিসংখ্যান ও উভয় ব্যবস্থাপনা স্ক্রিন সাথে সাথে আপডেট করে;
@@ -244,16 +241,16 @@ donor count, dashboard পরিসংখ্যান ও উভয় ব্য
 
 Deploy: `npm run build` → `npx wrangler deploy` (Worker + assets) অথবা শুধু
 `firebase deploy --only database` (rules)। Authorization delete-এর জন্য কোনো
-Admin SDK নেই — তাই লগইন account মুছতে হলে Firebase Console → Authentication।
+ডিলিটে Auth অ্যাকাউন্টও মুছতে Worker-এ `FIREBASE_SERVICE_ACCOUNT` secret দিন।
 
 ### নিরাপত্তা স্থাপত্য (কোনো secret frontend-এ নেই)
 
 | বিষয় | কীভাবে |
 | --- | --- |
 | Firebase service | শুধু Realtime Database + Authentication (Firestore/Storage নয়) |
-| Admin SDK / service account | কোথাও নেই — client-এও না, সার্ভারেও না (Worker শুধু public API key + client token) |
-| অন্য user-এর Auth delete | ব্রাউজার থেকে সম্ভব নয় (Firebase নিরাপত্তা) → RTDB মোছা হয় + স্পষ্ট warning; Firebase Console থেকে Auth account মুছতে হয় |
-| ছবি আপলোড (ImgBB) | সরাসরি ImgBB API — key মূলত RTDB `settings/imgbb`-এ (admin লেখে), source/bundle-এ কোনো literal নেই |
+| Admin SDK / service account | শুধু **server-side** (Worker secret `FIREBASE_SERVICE_ACCOUNT`) — client bundle-এ কখনো না |
+| অন্য user-এর Auth delete | সার্ভার-সাইড (`POST /api/admin` op `delete`) — admin রোল verify হলে RTDB + Auth অ্যাকাউন্ট একসাথে মুছে যায় |
+| ছবি আপলোড (ImgBB) | সব ছবি `POST /api/media` গেটওয়ে দিয়ে — key শুধু `server/config/imgbb.ts`-এ |
 | `VITE_*` env | bundle-এ inline হয় → কোনো third-party secret এখানে রাখা যাবে না |
 | `import.meta.env` | পুরো অবজেক্ট না পড়ে শুধু নির্দিষ্ট public key (`src/lib/firebase.ts` → `publicEnv()`) |
 | localStorage | production data-এর উৎস নয় — RTDB-ই single source of truth (cache শুধু `vite dev`-এ) |
@@ -402,16 +399,17 @@ npx wrangler deploy
 ## ৯. Environment Variables
 
 Client-side Firebase config public থাকে (API key গোপন নয় — Security Rules-ই আসল guard)।
-চাইলে Vite env ব্যবহার করা যাবে:
+কোনো secret `VITE_*` env-এ রাখা হয় না। server-side secret (Worker ও dev):
 
 ```bash
-VITE_IMGBB_API_KEY=...   # ImgBB fallback key (build-time)
+npx wrangler secret put FIREBASE_SERVICE_ACCOUNT   # service-account JSON
+npx wrangler secret put IMGBB_API_KEY              # ImgBB key override
 ```
 
-`src/lib/imgbb.ts`-এ `import.meta.env.VITE_IMGBB_API_KEY` পড়া হয় (সবচেয়ে কম priority)।
+dev-এ একই নামের process env ব্যবহার হয় (`server/config.ts`)।
 
 চাইলে পুরো Firebase config-ও env দিয়ে override করা যায় — তখন **সবগুলো required
-ভ্যারিয়েবল একসাথে** দিতে হবে (`VITE_FIREBASE_DATABASE_URL` সহ)। বিস্তারিত `.env.example`-এ।
+ভ্যারিয়েবল একসাথে দিতে হবে (`VITE_FIREBASE_DATABASE_URL` সহ)।
 
 ## ১০. আরও ডকুমেন্ট
 

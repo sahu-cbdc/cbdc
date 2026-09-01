@@ -20,10 +20,11 @@ import {
   requestPasswordReset,
   setOrChangePassword,
 } from "../lib/authx";
-import { getRow, setRow, updateRow, watchRow, watchList, addRow, findBy, listOnce, nowIso, updatePaths, removeRow, incrementField, ensureFieldAtLeast, serverTime, nextDonorId, releaseDonorSerial } from "../lib/rtdb";
+import { getRow, setRow, updateRow, watchRow, watchList, addRow, findBy, listOnce, nowIso, updatePaths, removeRow, incrementField, ensureFieldAtLeast, serverTime, nextDonorId, releaseDonorSerial, isPermissionDenied } from "../lib/rtdb";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { requestDirectApply } from "../lib/applyRequest";
+import { authCurrentUser, reauthenticateCurrentWithPassword, updateAuthEmail, deleteAuthCurrentUser, authSignOut } from "../lib/authActions";
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage } from "../lib/imgbb";
@@ -2220,7 +2221,7 @@ function initPage() {
             <input id="ad_note"></div>
           <div class="f"><label>প্রমাণ (ছবি) <i>*</i></label>
             <input id="ad_file" type="file" accept="image/*">
-            <span class="hint">রসিদ / ব্যাগের ছবি · সর্বোচ্চ ৪ MB · আবশ্যক — প্রমাণ ছাড়া যোগ করা যাবে না</span></div>
+            <span class="hint">রসিদ / ব্যাগের ছবি · আবশ্যক — প্রমাণ ছাড়া যোগ করা যাবে না</span></div>
           <label class="chk"><input type="checkbox" id="ad_ok">
             <span>আমি নিশ্চিত করছি তথ্যগুলো সত্য এবং আমি নিজেই এই রক্তদান করেছি।</span></label>
           <div style="display:flex;gap:8px;margin-top:12px">
@@ -2458,7 +2459,7 @@ function initPage() {
         try{ await saveData(); }
         catch(saveErr){
           console.warn("resend save:",saveErr&&saveErr.message);
-          toast("সংরক্ষণ করা যায়নি — ইন্টারনেট সংযোগ দেখে আবার চেষ্টা করুন","er");
+          toast(isPermissionDenied(saveErr)?"সংরক্ষণ করার অনুমতি নেই — অ্যাকাউন্ট রিফ্রেশ করে আবার চেষ্টা করুন":(saveErr&&saveErr.message?saveErr.message:"সংরক্ষণ করা যায়নি — আবার চেষ্টা করুন"),"er");
           return;
         }
         await logAct("রক্তদান পুনরায় পাঠানো",(x.date||"")+" · "+(x.place||""),"donor");
@@ -2893,7 +2894,7 @@ function initPage() {
       }catch(err){
         d.is=false;d.status="none";d.bloodGroup=accountBloodGroup();d.donorId="";
         btn.disabled=false;btn.textContent="রক্তদাতা হিসেবে আবেদন জমা দিন";
-        toast(err&&err.settingsOff&&err.message?err.message:"আবেদন জমা দেওয়া যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।","er");
+        return toast(isPermissionDenied(err)?"আবেদন জমা দেওয়ার অনুমতি নেই — অ্যাকাউন্ট রিফ্রেশ করে আবার চেষ্টা করুন":(err&&err.message?err.message:"আবেদন জমা দেওয়া যায়নি — আবার চেষ্টা করুন।"),"er");
         console.warn("donor application submit:",err&&err.message);
         return;
       }
@@ -2992,7 +2993,7 @@ function initPage() {
       }catch(err){
         btn.disabled=false;btn.textContent="আবেদন জমা দিন";
         console.warn("doner emergency write:",err&&err.message);
-        return toast("আবেদন জমা দেওয়া যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।","er");
+        return toast(isPermissionDenied(err)?"আবেদন জমা দেওয়ার অনুমতি নেই — অ্যাকাউন্ট রিফ্রেশ করে আবার চেষ্টা করুন":(err&&err.message?err.message:"আবেদন জমা দেওয়া যায়নি — আবার চেষ্টা করুন।"),"er");
       }
       await logAct("জরুরি রক্তের আবেদন",m.group+" · "+m.bags+" ব্যাগ","donor");
       
@@ -3027,7 +3028,6 @@ function initPage() {
       const f=fin&&fin.files&&fin.files[0];
       
       if(!f)return er("প্রমাণ ছবি দিন — প্রমাণ ছাড়া রক্তদান যোগ করা যাবে না");
-      if(f.size>4*1024*1024)return er("ছবি ৪ MB-এর কম হতে হবে");
       const orig=aSave.innerHTML;
       aSave.disabled=true;aSave.textContent="সংরক্ষণ হচ্ছে…";
       try{
@@ -3056,7 +3056,7 @@ function initPage() {
         try{ await saveData(); }
         catch(saveErr){
           console.warn("donation save:",saveErr&&saveErr.message);
-          toast("সংরক্ষণ করা যায়নি — ইন্টারনেট সংযোগ দেখে আবার চেষ্টা করুন","er");
+          toast(isPermissionDenied(saveErr)?"সংরক্ষণ করার অনুমতি নেই — অ্যাকাউন্ট রিফ্রেশ করে আবার চেষ্টা করুন":(saveErr&&saveErr.message?saveErr.message:"সংরক্ষণ করা যায়নি — আবার চেষ্টা করুন"),"er");
           return;
         }
         await logAct("রক্তদান যোগ",date+" · "+place,"donor");
@@ -3108,7 +3108,7 @@ function initPage() {
     try{ await saveData(); }
     catch(e){
       console.warn("donation delete save:",e&&e.message);
-      toast("রেকর্ড সংরক্ষণ করা যায়নি — ইন্টারনেট সংযোগ দেখে আবার চেষ্টা করুন","er");
+          toast(isPermissionDenied(e)?"সংরক্ষণ করার অনুমতি নেই — অ্যাকাউন্ট রিফ্রেশ করে আবার চেষ্টা করুন":(e&&e.message?e.message:"সংরক্ষণ করা যায়নি — আবার চেষ্টা করুন"),"er");
       return false;
     }
     
@@ -3569,7 +3569,7 @@ function initPage() {
         placeholder="যেমন: সাম্প্রতিক ল্যাব টেস্টে ভিন্ন গ্রুপ এসেছে"></textarea></div>
       <div class="f"><label>প্রমাণ — রক্ত পরীক্ষার রিপোর্টের ছবি <i>*</i></label>
         <input id="gc_file" type="file" accept="image/*">
-        <span class="hint">সর্বোচ্চ ৪ MB — ব্লাড গ্রুপিং রিপোর্ট বা কার্ডের স্পষ্ট ছবি দিন।</span>
+        <span class="hint">ব্লাড গ্রুপিং রিপোর্ট বা কার্ডের স্পষ্ট ছবি দিন।</span>
         <span class="hint er hide" id="gc_err"></span></div>`,
       `<button class="btn gh" data-close>বাতিল</button><button class="btn" id="gc_send">অনুরোধ পাঠান</button>`);
     s.dataset.gc="form";
@@ -3581,7 +3581,6 @@ function initPage() {
       if(reason.length<5)return er("গ্রুপ পরিবর্তনের কারণ লিখুন (কমপক্ষে ৫ অক্ষর)");
       const f=s.q("#gc_file").files&&s.q("#gc_file").files[0];
       if(!f)return er("প্রমাণ হিসেবে রিপোর্টের ছবি সংযুক্ত করুন");
-      if(f.size>4*1024*1024)return er("ছবি ৪ MB-এর কম হতে হবে");
       const uid=String(firebaseCurrentUid()||STORE.account.uid||"").trim();
       if(!uid)return er("লগইন সেশন পাওয়া যায়নি — আবার লগইন করুন");
       const btn=s.q("#gc_send");btn.disabled=true;btn.textContent="পাঠানো হচ্ছে…";
@@ -3674,7 +3673,6 @@ function initPage() {
     const i=document.createElement("input");i.type="file";i.accept="image/*";
     i.onchange=async()=>{
       const f=i.files[0];if(!f)return;
-      if(f.size>4*1024*1024){toast("ছবি ৪ MB এর কম হতে হবে","er");return}
       const s=sheet("ছবি আপলোড","<div style='text-align:center;padding:14px 0'><div class='sk' style='width:96px;height:96px;border-radius:50%;margin:0 auto 14px'></div><p class='mut'>ছবি আপলোড হচ্ছে…</p><div style='height:7px;border-radius:9px;background:var(--card2);margin-top:12px;overflow:hidden'><div id='pb' style='height:100%;width:8%;background:var(--grn);transition:width .3s'></div></div></div>","");
       try{
         
@@ -3773,17 +3771,15 @@ function initPage() {
       const btn=s.q("#go"),orig=btn.innerHTML;
       btn.disabled=true;btn.textContent="পরিবর্তন হচ্ছে…";
       try{
-        const shared=initSharedFirebase();
-        const user=shared.auth&&shared.auth.currentUser;
-        if(!user)throw new Error("লগইন অবস্থায় নেই। আবার লগইন করুন।");
+        const me=authCurrentUser();
+        if(!me)throw new Error("লগইন অবস্থায় নেই। আবার লগইন করুন।");
         
         const owner=await lookupEmailOwner(v);
-        if(owner&&String(owner)!==String(user.uid))throw new Error("এই ইমেইল অন্য একটি অ্যাকাউন্টে ব্যবহৃত");
+        if(owner&&String(owner)!==String(me.uid))throw new Error("এই ইমেইল অন্য একটি অ্যাকাউন্টে ব্যবহৃত");
         
-        const {EmailAuthProvider,reauthenticateWithCredential,updateEmail}=await import("firebase/auth");
-        await reauthenticateWithCredential(user,EmailAuthProvider.credential(user.email||a.email,p));
+        await reauthenticateCurrentWithPassword(p, me.email||a.email);
         
-        await updateEmail(user,v);
+        await updateAuthEmail(v);
         
         const old=a.email;
         
@@ -3792,8 +3788,8 @@ function initPage() {
         }catch(e){ console.warn("login release old:",e&&e.message); }
         a.email=v;a.emailVerified=false;
         try{ await pushAccountToRtdb(); }catch(e){ console.warn("email rtdb push:",e&&e.message); }
-        try{ await releaseEmailIdentity(old,user.uid); }catch(e){ console.warn("identity release:",e&&e.message); }
-        try{ await claimEmailIdentity(v,user.uid); }catch(e){ console.warn("identity claim:",e&&e.message); }
+        try{ await releaseEmailIdentity(old,me.uid); }catch(e){ console.warn("identity release:",e&&e.message); }
+        try{ await claimEmailIdentity(v,me.uid); }catch(e){ console.warn("identity claim:",e&&e.message); }
         try{ await claimLoginEntries(v,a.username,a.phone); }catch(e){ console.warn("login claim new:",e&&e.message); }
         await save();
         await logAct("ইমেইল পরিবর্তন",v,"security");
@@ -3886,8 +3882,7 @@ function initPage() {
   
   async function doLogout(){
     try{
-      const shared=initSharedFirebase();const {signOut}=await import("firebase/auth");
-      if(shared.auth)await signOut(shared.auth);
+      await authSignOut();
       await logAct("লগআউট","এই ডিভাইস থেকে","security");
       sessionStorage.clear();
       localStorage.removeItem("cbdc.session");
@@ -4057,22 +4052,20 @@ function initPage() {
   async function deleteAccountNow(currentPassword){
     const shared=initSharedFirebase();
     if(!shared.auth) throw new Error("Firebase সংযোগ নেই। ইন্টারনেট সংযোগ পরীক্ষা করুন।");
-    const user=shared.auth.currentUser;
-    if(!user) throw new Error("লগইন অবস্থায় নেই। আবার লগইন করুন।");
-    const uid=String(user.uid || STORE.account.uid || "").trim();
-    const email=String(user.email || STORE.account.email || "").trim().toLowerCase();
+    const me=authCurrentUser();
+    if(!me) throw new Error("লগইন অবস্থায় নেই। আবার লগইন করুন।");
+    const uid=String(me.uid || STORE.account.uid || "").trim();
+    const email=String(me.email || STORE.account.email || "").trim().toLowerCase();
     const phone=String(STORE.account.phone || "").replace(/\s+/g,"");
     if(!uid) throw new Error("অ্যাকাউন্টের UID পাওয়া যায়নি।");
     if(!email) throw new Error("এই অ্যাকাউন্টে ইমেইল নেই — অ্যাকাউন্ট মুছে ফেলা যাবে না।");
 
     
-    const providers=Array.isArray(user.providerData)?user.providerData.map(p=>String(p&&p.providerId||"")):[];
-    const hasPasswordProvider=providers.includes("password") || providers.includes("firebase");
+    const hasPasswordProvider=me.providerIds.includes("password") || me.providerIds.includes("firebase");
     if(!hasPasswordProvider) throw new Error("এই অ্যাকাউন্টে পাসওয়ার্ড সেট নেই। পাসওয়ার্ড দিয়ে যাচাই করা সম্ভব নয়।");
 
     
-    const {EmailAuthProvider, reauthenticateWithCredential}=await import("firebase/auth");
-    await reauthenticateWithCredential(user, EmailAuthProvider.credential(email, currentPassword));
+    await reauthenticateCurrentWithPassword(currentPassword, email);
 
     
     const paths={};
@@ -4174,8 +4167,7 @@ function initPage() {
 
     
     try{
-      const {deleteUser}=await import("firebase/auth");
-      await deleteUser(user);
+      await deleteAuthCurrentUser();
     }catch(e){
       
       throw new Error(authErrorMessage(e,{fallback:"Firebase Authentication থেকে অ্যাকাউন্ট মুছে ফেলা যায়নি। আবার চেষ্টা করুন।"}));

@@ -2,10 +2,15 @@
 
 import { getAuthInstance } from "./firebase";
 import { appBase } from "./router";
+import { API_GATEWAYS, API_TIMEOUTS } from "../config/api";
+import { IMGBB_PUBLIC_CONFIG } from "../config/imgbb";
 
-const ENDPOINT = "api/images/upload";
-const CONFIG_ENDPOINT = "api/admin/config-check";
-const TIMEOUT_MS = 25000;
+/** Public compression settings; key/endpoint/limit stay server-side only. */
+const CLIENT_COMPRESSION = IMGBB_PUBLIC_CONFIG.compression;
+
+const ENDPOINT = API_GATEWAYS.media;
+const CONFIG_ENDPOINT = API_GATEWAYS.admin;
+const TIMEOUT_MS = API_TIMEOUTS.upload;
 
 
 export async function getImgbbStatus(): Promise<boolean> {
@@ -15,13 +20,13 @@ export async function getImgbbStatus(): Promise<boolean> {
     if (!user || typeof user.getIdToken !== "function") return false;
     const token = await user.getIdToken();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10000);
+    const timer = setTimeout(() => controller.abort(), API_TIMEOUTS.statusCheck);
     let res: Response | null = null;
     try {
       res = await fetch(`${appBase()}${CONFIG_ENDPOINT}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ op: "config-check" }),
         signal: controller.signal,
       });
     } finally {
@@ -43,7 +48,11 @@ export interface ImgbbResult {
 }
 
 
-function compressImage(file: File, maxDim = 1600, quality = 0.85): Promise<Blob> {
+function compressImage(
+  file: File,
+  maxDim: number = CLIENT_COMPRESSION.maxDimension,
+  quality: number = CLIENT_COMPRESSION.quality
+): Promise<Blob> {
   return new Promise((resolve) => {
     let objectUrl = "";
     try {
@@ -72,7 +81,7 @@ function compressImage(file: File, maxDim = 1600, quality = 0.85): Promise<Blob>
         ctx.drawImage(img, 0, 0, width, height);
         canvas.toBlob(
           (blob) => resolve(blob || file),
-          "image/jpeg",
+          CLIENT_COMPRESSION.mimeType,
           quality
         );
       } catch {
@@ -98,13 +107,7 @@ function compressImage(file: File, maxDim = 1600, quality = 0.85): Promise<Blob>
 }
 
 
-export async function uploadImage(
-  file: File,
-  opts: { key?: string } = {},
-): Promise<ImgbbResult> {
-  
-  void opts;
-
+export async function uploadImage(file: File): Promise<ImgbbResult> {
   const image = await compressImage(file);
   const auth = getAuthInstance();
   const user = (auth?.currentUser ?? null) as any;

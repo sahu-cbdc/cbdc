@@ -12,7 +12,9 @@ import { getRow, setRow, updateRow, removeRow, listOnce, watchList, watchRow, fi
 import { ageText, ageFromDob, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
-import { uploadImage as imgbbUploadImage } from "../lib/imgbb";
+import { uploadImage as imgbbUploadImage, getImgbbStatus } from "../lib/imgbb";
+import { authSignOut } from "../lib/authActions";
+import { saveSiteConfigToSource } from "../lib/siteConfig";
 import {
   donationVerKey,
   safeDonationId,
@@ -956,7 +958,7 @@ function initPage() {
         donorApproval:true,emergencyApproval:true,bloodGroupApproval:true,
         
         reqApproval:true},
-      integr:{imgbbKey:"",firebase:true}};
+      integr:{firebase:true}};
   }
   let DB=seed(), SHARED_PULLING=false;
   let lastPersistedDB=null;
@@ -2127,7 +2129,6 @@ function initPage() {
     if(a==="photo"){
       const inp=document.createElement("input");inp.type="file";inp.accept="image/*";
       inp.onchange=()=>{const f=inp.files[0];if(!f)return;
-        if(f.size>5*1024*1024)return toast("ছবি ৫ MB-র কম হতে হবে","er");
         const r=new FileReader();
         r.onload=async()=>{ME.photo=r.result;ME.photoSource="upload";
           
@@ -2869,7 +2870,7 @@ function initPage() {
       localStorage.removeItem(ACC_LS);
       sessionStorage.clear();
     }catch(e){}
-    try{(async()=>{try{const shared=initSharedFirebase();const {signOut}=await import("firebase/auth");if(shared.auth)await signOut(shared.auth)}catch(e){}})()}catch(e){}
+    try{(async()=>{try{await authSignOut()}catch(e){}})()}catch(e){}
     toast("লগআউট হয়েছে — মূল ওয়েবসাইটে ফিরে যাচ্ছেন","ok");
     setTimeout(()=>{navigateToPage("home")},700);
   }
@@ -3658,15 +3659,9 @@ function initPage() {
   
   
   async function saveSiteToSource(s){
-    try{
-      const res=await fetch(appBase()+"__admin/site-config",{
-        method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({heroTitle:s.heroTitle,heroText:s.heroText,phone:s.phone,
-          email:s.email,address:s.address,facebook:s.facebook,
-          showStats:!!s.showStats,showGallery:!!s.showGallery,showEmergency:!!s.showEmergency})});
-      const data=await res.json().catch(()=>null);
-      return !!(data&&data.ok);
-    }catch(e){console.warn("site config save:",e&&e.message);return false}
+    return await saveSiteConfigToSource({heroTitle:s.heroTitle,heroText:s.heroText,phone:s.phone,
+      email:s.email,address:s.address,facebook:s.facebook,
+      showStats:!!s.showStats,showGallery:!!s.showGallery,showEmergency:!!s.showEmergency});
   }
   function previewDoc(){
     const s=DB.site,c=bloodCounts();
@@ -3767,9 +3762,9 @@ function initPage() {
     +(may?`<button class="btn w" style="margin-top:12px" id="gUp">${SI.up(16)} ছবি যোগ করুন</button>`:"")
     +`<div class="sec-t">ImgBB সংযোগ</div>
       <div class="card"><div class="kv">
-        <div><span>অবস্থা</span><b>${DB.integr.imgbbKey?"কী সংরক্ষিত":"কী দেওয়া হয়নি"}</b></div>
-        <div><span>সর্বোচ্চ আকার</span><b>৩২ MB</b></div></div>
-        <p class="hint2" style="margin-top:9px">নিয়ন্ত্রণ → নিয়ম ও সেটিংস থেকে API কী দিলে সরাসরি আপলোড চালু হবে।</p></div>`;
+        <div><span>অবস্থা</span><b id="gKeyState">যাচাই হচ্ছে…</b></div></div>
+        <p class="hint2" style="margin-top:9px">ছবি সার্ভারের মাধ্যমে ImgBB-তে আপলোড হয় — কী সার্ভারে সুরক্ষিত থাকে।</p></div>`;
+    getImgbbStatus().then(k=>{const inp=$("#gKeyState");if(inp)inp.textContent=k?"সক্রিয়":"কনফিগার করা নেই";});
     el.querySelectorAll("[data-gt]").forEach(b=>b.onclick=async()=>{
       const g=DB.gallery.find(x=>x.id===b.dataset.gt);
       g.status=g.status==="published"?"draft":"published";
@@ -3784,7 +3779,7 @@ function initPage() {
   function uploadSheet(){
     const s=sheet("ছবি যোগ করুন",`
       <div class="dz" id="dz"><span>${SI.up(24)}</span><b>ছবি বেছে নিন</b>
-        <small>JPG / PNG · সর্বোচ্চ ৩২ MB</small>
+        <small>JPG / PNG</small>
         <input type="file" id="fi" accept="image/*" hidden></div>
       <div class="f" style="margin-top:12px"><label>শিরোনাম</label>
         <input id="up_t"></div>
@@ -3799,7 +3794,6 @@ function initPage() {
     fi.onchange=()=>fi.files[0]&&take(fi.files[0]);
     function take(f){
       if(!/^image\//.test(f.type))return toast("ছবি ফাইল দিন","er");
-      if(f.size>32*1024*1024)return toast("ফাইল ৩২ MB-র বেশি","er");
       file=f;url=URL.createObjectURL(f);
       dz.innerHTML=`<img src="${url}" style="max-height:110px;border-radius:9px"><b>${esc(f.name)}</b>
         <small>${bn((f.size/1024).toFixed(0))} KB</small>`;
@@ -3979,8 +3973,7 @@ function initPage() {
             style="width:20px;height:20px;accent-color:var(--grn);flex:none"></label>`).join("")}</div>
       ${ME.role!=="admin"?`<p class="hint2" style="margin-top:8px">এই approval সেটিংস শুধু authorized Admin পরিবর্তন করতে পারবেন।</p>`:""}
       <div class="sec-t">সংযোগ</div>
-      <div class="card"><div class="f">
-        <label>ImgBB API কী</label><input id="i_key" value="${esc(DB.integr.imgbbKey)}"></div>
+      <div class="card">
         <div class="row" style="padding-left:0;padding-right:0;border:0;margin-top:6px">
           <span class="tx"><b>Firebase / Realtime Database</b>
             <small>"যুক্ত"</small></span>
@@ -4004,7 +3997,6 @@ function initPage() {
     });
     $("#rSave").onclick=async()=>{
       r.minAge=+$("#r_min").value||18;r.maxAge=+$("#r_max").value||60;r.interval=+$("#r_int").value||90;
-      DB.integr.imgbbKey=$("#i_key").value.trim();
       try{await pushSettings();logAudit("সেটিংস হালনাগাদ","নিয়ম ও সংযোগ","settings");
         toast("সেটিংস RTDB-তে সংরক্ষিত হয়েছে","ok");}
       catch(e){toast("সেটিংস সংরক্ষণ করা যায়নি","er");}};
