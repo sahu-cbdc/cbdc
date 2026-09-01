@@ -78,13 +78,15 @@ test("serviceAccountConfigured: detects raw JSON and base64 secrets, rejects gar
 
 /* ── wiring: Worker, dev middleware, client, Admin panel ───────────── */
 
-test("worker + dev middleware both mount /api/admin/config-check", () => {
+test("worker + dev middleware both mount config-check on the /api/admin gateway", () => {
   const worker = read("server/index.ts");
   const vite = read("vite.config.ts");
-  assert.match(worker, /api[\\\/]+admin[\\\/]+config-check/);
+  assert.match(worker, /api[\\\/]+admin/);
+  assert.match(worker, /op === "config-check"/);
   assert.match(worker, /handleAdminConfigCheck\(/);
   assert.match(worker, /serviceAccountConfigured\(env\)/);
-  assert.match(vite, /api\/admin\/config-check/);
+  assert.match(vite, /apiPath\.endsWith\("\/api\/admin"\)/);
+  assert.match(vite, /op === "config-check"/);
   assert.match(vite, /handleAdminConfigCheck\(/);
   assert.match(vite, /serviceAccountConfigured\(serverEnv\)/);
 });
@@ -92,7 +94,8 @@ test("worker + dev middleware both mount /api/admin/config-check", () => {
 test("client: checkDeleteServerConfig exists and treats unknown servers as null (no false block)", () => {
   const lib = read("src/lib/accountDelete.ts");
   assert.match(lib, /export async function checkDeleteServerConfig/);
-  assert.match(lib, /api\/admin\/config-check/);
+  assert.match(lib, /op: "config-check"/);
+  assert.match(lib, /API_GATEWAYS\.admin/);
   assert.match(lib, /return \{ configured: null \};/);
 });
 

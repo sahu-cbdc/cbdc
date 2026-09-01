@@ -96,7 +96,9 @@ function persistPublicCache() {
       savedAt: new Date().toISOString(),
     };
     for (const k of PUBLIC_COLLECTIONS) payload[k] = cache[k] || [];
-    localStorage.setItem(CACHE_KEY, JSON.stringify(payload));
+    const stamp = payload.updatedAt;
+    localStorage.setItem(CACHE_KEY, JSON.stringify(payload, (_k, v) =>
+      v && typeof v === "object" && (v as any).__sv__ === "timestamp" ? stamp : v));
   } catch {
     
   }

@@ -13,12 +13,14 @@ const identity = read("src/lib/identity.ts");
 const rules = read("database.rules.json");
 
 test("signup resumes a previous Auth user instead of aborting on email-already-in-use", () => {
-  assert.match(home, /createUserWithEmailAndPassword/);
-  assert.match(home, /auth\/email-already-in-use/);
-  assert.match(home, /signInWithEmailAndPassword/);
-  assert.match(home, /alreadyEmail === o\.email/);
-  assert.match(home, /isProfileComplete\(existingProfile\)/);
+  const actions = read("src/lib/authActions.ts");
+  assert.match(home, /createOrSignInEmailAccount\(o\.email, password, o\.name\)/);
+  assert.match(home, /created\.kind === "existing" && existingProfile && isProfileComplete\(existingProfile\)/);
   assert.match(home, /outcome\.reason === "email-conflict"/);
+  assert.match(actions, /createUserWithEmailAndPassword/);
+  assert.match(actions, /auth\/email-already-in-use/);
+  assert.match(actions, /signInWithEmailAndPassword/);
+  assert.match(actions, /alreadyEmail === email/);
 });
 
 test("signup submit locks immediately, loads, then unlocks in finally", () => {
@@ -27,7 +29,7 @@ test("signup submit locks immediately, loads, then unlocks in finally", () => {
   assert.match(home, /submitBtn\.innerHTML = "তৈরি হচ্ছে\.\.\."/);
   const click = home.indexOf('if(signupBusy) return');
   const loading = home.indexOf("showAppLoading();", click);
-  const create = home.indexOf("createUserWithEmailAndPassword", loading);
+  const create = home.indexOf("createOrSignInEmailAccount(o.email, password, o.name)", loading);
   const dups = home.indexOf('lookupLoginKey("username",o.username)', loading);
   assert.ok(click >= 0 && loading > click && dups > loading && create > dups);
   assert.match(home, /}finally\{\s*signupBusy = false/);
@@ -60,14 +62,24 @@ test("guest donor register always writes ownerUid so queue rules allow pending",
   assert.match(home, /ownerUid: registrationUid \|\| ""/);
 });
 
-test("identity claim re-claims own uid, retries, and does not apply locally", () => {
+test("identity claim re-claims own uid, retries, and defers writes to the server", () => {
   assert.match(identity, /export function nextIdentityUid/);
   assert.match(identity, /current !== cleanUid/);
-  assert.match(identity, /applyLocally:\s*false/);
   assert.match(identity, /for \(let i = 0; i < 3; i\+\+\)/);
+  /* ক্লেইম এখন সার্ভারে CAS দিয়ে হয় — ক্লায়েন্ট আর লোকালি apply করে না */
+  assert.match(identity, /apiClaimEmail\(address\)/);
+  const profile = read("server/profileApi.ts");
+  const claim = profile.slice(profile.indexOf("export async function handleClaimEmail"));
+  assert.match(claim, /cur === uid\) return \{ ok: true, status: "claimed" \}/);
+  assert.match(claim, /const verify = await io\.get\(path\)/);
 });
 
-test("identityIndex claim may re-claim own uid; validate allows delete", () => {
-  assert.match(rules, /newData\.val\(\) === auth\.uid/);
-  assert.match(rules, /!newData\.exists\(\) \|\| \(newData\.isString\(\)/);
+test("identityIndex claim may re-claim own uid; release deletes own entry (server-side)", () => {
+  assert.match(rules, /"\.write": false/);
+  const profile = read("server/profileApi.ts");
+  const claim = profile.slice(profile.indexOf("export async function handleClaimEmail"));
+  /* নিজের uid হলে re-claim ok; অন্যের uid হলে conflict */
+  assert.match(claim, /cur !== uid\) \{[\s\S]*?status: "conflict"/);
+  /* release শুধু নিজের entry-ই মুছে */
+  assert.match(claim, /cur === uid\) \{[\s\S]*?await io\.patch\(\{ \[path\]: null \}\)/);
 });

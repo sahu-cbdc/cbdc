@@ -15,7 +15,7 @@ test("Login with email goes straight to signInWithEmailAndPassword (no fetchSign
 
 test("Login still resolves email before signing in and reports auth errors", () => {
   assert.match(home, /resolveEmailForLogin\s*\(\s*authFlowIo\s*,\s*identifier\s*\)/);
-  assert.match(home, /signInWithEmailAndPassword\s*\(\s*auth\s*,\s*email\s*,\s*password\s*\)/);
+  assert.match(home, /signInWithPassword\s*\(\s*email\s*,\s*password\s*,\s*linkCred\s*\)/);
   assert.match(home, /auth\/user-not-found/);
   assert.match(home, /এই তথ্য দিয়ে কোনো অ্যাকাউন্ট পাওয়া যায়নি/);
 });

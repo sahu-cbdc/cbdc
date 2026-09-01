@@ -6,6 +6,8 @@
 import { useEffect } from "react";
 import "../lib/store";
 import { claimEmailIdentity, lookupEmailOwner, claimLoginEntries, lookupLoginKey } from "../lib/identity";
+import { apiUpsertProfile, apiPublicSubmit } from "../lib/api";
+import { authSignOut, createOrSignInEmailAccount, updateAuthProfile, signInWithPassword } from "../lib/authActions";
 import { finalizeEmailSignup, backfillLoginIndex, resolveEmailForLogin, duplicateRowIsSelf } from "../lib/authFlow";
 import { resolveLegacyAccount } from "../lib/accountDelete";
 import { initFirebase as initSharedFirebase, isFirebaseReady } from "../lib/firebase";
@@ -32,7 +34,7 @@ import {
   verifyResetCode,
   completePasswordReset,
 } from "../lib/authx";
-import { addRow, setRow, updateRow, findBy, getRow, listOnce, nowIso, incrementField, watchRow } from "../lib/rtdb";
+import { findBy, getRow, listOnce, nowIso, watchRow } from "../lib/rtdb";
 import { NODES } from "../lib/firebase";
 import { DISTRICTS, DEFAULT_DISTRICT, areasForDistrict, districtOfArea, searchAreas, fillAreaSelect } from "../lib/locations";
 import { noticeVisibleTo, noticeTarget } from "../lib/notice";
@@ -1320,30 +1322,6 @@ const pageCss = `    @font-face {
     .welcome-chip img{width:26px;height:26px;border-radius:50%;object-fit:cover}
 
 
-    /* OTP password recovery — follows the existing modal design */
-    .otp-modal{width:min(430px,100%);padding:25px 22px 20px;text-align:left}
-    .otp-modal h2{margin:0 36px 5px 0;color:var(--navy);font-size:1.35rem;line-height:1.3}
-    .otp-sub{margin:0 0 18px;color:var(--muted);font-size:.82rem;line-height:1.65}
-    .otp-steps{display:flex;gap:6px;margin:0 0 18px}
-    .otp-steps i{flex:1;height:4px;border-radius:99px;background:var(--line)}
-    .otp-steps i.on{background:var(--green)}
-    .otp-note{display:flex;gap:8px;margin:0 0 14px;padding:11px 12px;border:1px solid #cfe6f7;border-radius:11px;background:#eff8fe;color:#1c4c6b;font-size:.76rem;line-height:1.55}
-    .otp-note.ok{border-color:#b9e5ce;background:var(--green-soft);color:#075c3c}
-    .otp-error{display:none;margin:7px 0 0;color:var(--red);font-size:.74rem;font-weight:700}
-    .otp-error.show{display:block}
-    .otp-code{height:54px!important;text-align:center;font:800 1.35rem/1 system-ui,sans-serif!important;letter-spacing:.48em;padding-left:.48em!important}
-    .otp-actions{display:flex;gap:9px;margin-top:18px}
-    .otp-actions .btn{flex:1}
-    .otp-meta{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;color:var(--muted);font-size:.72rem}
-    .otp-link{padding:2px 0;border:0;background:transparent;color:var(--green-dark);font:inherit;font-weight:900;cursor:pointer}
-    .otp-link:disabled{opacity:.5;cursor:not-allowed}
-    .otp-success{text-align:center;padding:8px 0 2px}
-    .otp-success span{display:grid;place-items:center;width:62px;height:62px;margin:0 auto 12px;border-radius:50%;background:var(--green-soft);color:var(--green);font-size:1.8rem;font-weight:900}
-    .otp-success h3{margin:0 0 6px;color:var(--navy)}
-    .otp-success p{margin:0;color:var(--muted);font-size:.82rem}
-    [data-theme="dark"] .otp-note{background:#111d33;color:#9fc1f4;border-color:#263b59}
-    [data-theme="dark"] .otp-note.ok{background:var(--green-soft);color:#83dcb1;border-color:#21523d}
-    @media(max-width:520px){.otp-modal{padding:23px 17px 18px}.otp-actions{flex-direction:column-reverse}.otp-actions .btn{width:100%}}
 
     /* Automatic system dark mode; light-mode design remains unchanged. */
     [data-theme="dark"]{color-scheme:dark;--red:#f0444e;--red-dark:#ff6670;--red-soft:#321416;--green:#28b779;--green-dark:#8be0b7;--green-soft:#0e2d21;--navy:#e7f2ee;--ink:#dce8e3;--muted:#91a49d;--line:#293934;--cream:#0b1210;--white:#141f1c;--gold:#e8b44c;--shadow:0 18px 55px rgba(0,0,0,.32);--shadow-sm:0 8px 22px rgba(0,0,0,.28)}
@@ -1746,7 +1724,7 @@ function StaticShell() {
                 <div className="about-copy">
                   {" "}
                   <p className="about-subtitle" style={{ fontSize: "1.12rem", marginBottom: "16px" }}>
-                    {"মানবতার সেবায় আমরা রক্তদাতা🩸 “রক্তদানে নেই কোনো ভয়, সৃষ্টি হয় নতুন সম্পর্কের বন্ধন।”"}
+                    {"মানবতার সেবায় আমরা রক্তদাতা • রক্ত দিন জীবন বাঁচান"}
                   </p>
                   {" "}
                   <p style={{ marginBottom: "6px" }}>
@@ -1756,7 +1734,7 @@ function StaticShell() {
                   </p>
                   {" "}
                   <p>
-                    {"চকবাজার ব্লাড ডোনার'স ক্লাব (CBDC) চট্টগ্রামের চকবাজার, বাকলিয়া, কোতোয়ালী, চাঁদগাঁও বান্দরবান সহ সমগ্র চট্টগ্রামে রক্তদানের মাধ্যমে মানুষের পাশে দাঁড়ানোর একটি নিবেদিতপ্রাণ স্বেচ্ছাসেবী সামাজিক সংগঠন। আমাদের মূল লক্ষ্য হলো রক্তের অভাবে যাতে কোনো মুমূর্ষু রোগী মারা না যায়।"}
+                    {"চকবাজার ব্লাড ডোনার'স ক্লাব (CBDC) চট্টগ্রামের চকবাজার, বাকলিয়া, কোতোয়ালী, চাঁদগাঁওসহ সমগ্র চট্টগ্রামে রক্তদানের মাধ্যমে মানুষের পাশে দাঁড়ানোর একটি নিবেদিতপ্রাণ স্বেচ্ছাসেবী সামাজিক সংগঠন। আমাদের মূল লক্ষ্য হলো রক্তের অভাবে যাতে কোনো মুমূর্ষু রোগী মারা না যায়।"}
                   </p>
                   {" "}
                   <ul className="goals">
@@ -3185,8 +3163,6 @@ function StaticShell() {
                 <li>
                   {"চাঁদগাঁও থানা"}
                 </li>
-                {" বান্দরবান সদর থানা"}
-                </li>
               </ul>
             </div>
             <div className="footer-col">
@@ -3211,7 +3187,7 @@ function StaticShell() {
               {`© ২০২৬ ${SITE.name} (${SITE.short})। সর্বস্বত্ব সংরক্ষিত।`}
             </span>
             <span>
-              {"রক্তদানে নাহি ভয় • নতুন সম্পর্ক সৃষ্টি হয়🩸"}
+              {"মানবতার সেবায় আমরা রক্তদাতা🩸 “রক্তদানে নেই কোনো ভয়, সৃষ্টি হয় নতুন সম্পর্কের বন্ধন।”"}
             </span>
           </div>
         </div>
@@ -3473,7 +3449,7 @@ function initPage() {
         box.classList.add("hidden"); card.classList.remove("hidden");
       }
       $("#btnSwitchAccount")?.addEventListener("click", async ()=>{
-        try{ if(auth&&auth.currentUser){ const {signOut}=await import("firebase/auth"); await signOut(auth); } }catch(e){}
+        try{ await authSignOut(); }catch(e){}
         clearSession(); renderLoginGate(); toast("লগআউট সম্পন্ন হয়েছে");
       });
   
@@ -4132,46 +4108,19 @@ function initPage() {
 
         try{
           if(!fbReady) throw new Error("ডাটাবেস সংযোগ নেই। ইন্টারনেট সংযোগ পরীক্ষা করুন।");
-          
-          if(registrationUid){
-            const [existingDonors, existingMembers] = await Promise.all([
-              listOnce(NODES.donors),
-              listOnce(NODES.members)
-            ]);
-            const authEmail = String((auth && auth.currentUser && auth.currentUser.email) || "").trim().toLowerCase();
-            const sameAccount = (row) => {
-              if(!row) return false;
-              if(String(row.ownerUid || row.uid || row.userId || "").trim() === registrationUid) return true;
-              
-              return (!!authEmail && String(row.email || "").trim().toLowerCase() === authEmail)
-                || (!!o.phone && String(row.phone || "").replace(/\s+/g, "") === String(o.phone).replace(/\s+/g, ""));
-            };
-            const existing = existingDonors.find(sameAccount) || existingMembers.find(sameAccount);
-            if(existing){
-              hideAppModal();
-              showMessage(message, "এই অ্যাকাউন্টের ডোনার তথ্য আগে থেকেই সংরক্ষিত আছে। নতুন রেকর্ড তৈরি করা হয়নি।", "success");
-              return;
-            }
-          }
-          const newMember = {
+
+          const submitted = await apiPublicSubmit("donor-registration", {
             ...o,
-            ...(registrationUid ? {uid:registrationUid, ownerUid:registrationUid} : {}),
             dob: o.dob || "",
-            
-            district: String($("#district").value || o.district || DEFAULT_DISTRICT).trim(),
-            status: "pending",
-            createdAt: nowIso()
-          };
-          
-          const memberId = await addRow(NODES.members, newMember);
-          
-          if(registrationUid) await updateRow(NODES.users, registrationUid, {donorMemberId:memberId})
-            .catch(err=>console.warn("donor member key:", err && err.message));
-          await setRow(NODES.queue, memberId, {
-            kind:"donor", memberId, uid: registrationUid || "", ownerUid: registrationUid || "", name:o.name, group:o.bloodGroup, area:o.area,
-            dob:o.dob||"", gender:o.gender, health:o.healthNotes||"", last:o.lastDonationDate||"",
-            phone:o.phone, whatsapp:o.whatsapp||"", address:o.address||"", at:newMember.createdAt
+            uid: registrationUid || "",
+            ownerUid: registrationUid || "",
+            district: String($("#district").value || o.district || DEFAULT_DISTRICT).trim()
           });
+          if(submitted.duplicate){
+            hideAppModal();
+            showMessage(message, "এই অ্যাকাউন্টের ডোনার তথ্য আগে থেকেই সংরক্ষিত আছে। নতুন রেকর্ড তৈরি করা হয়নি।", "success");
+            return;
+          }
           form.reset();
           clearFormErrors(form);
           $("#district").value = DEFAULT_DISTRICT;
@@ -4182,7 +4131,7 @@ function initPage() {
         }catch(err){
           hideAppModal();
           console.warn("register write:", err && err.message);
-          showMessage(message, "নিবন্ধন সংরক্ষণ করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।", "error");
+          showMessage(message, err && err.message ? err.message : "নিবন্ধন সংরক্ষণ করা যায়নি — আবার চেষ্টা করুন।", "error");
         }finally{
           donorRegistrationBusy = false;
         }
@@ -4308,28 +4257,19 @@ function initPage() {
 
         try{
           if(!fbReady) throw new Error("ডাটাবেস সংযোগ নেই।");
-          
+
           const memberUid = String((auth && auth.currentUser && auth.currentUser.uid)||"").trim();
-          const reqId = await addRow(NODES.requests, {
-            ...o, status:newStatus, createdAt, expiresAt: expiresAtDate.toISOString(),
-            ownerUid: memberUid||""
+          void memberUid;
+          const submittedReq = await apiPublicSubmit("emergency-request", {
+            ...o, durationHours: hours, expiresAt: expiresAtDate.toISOString()
           });
-          if(!autoApproved){
-            await setRow(NODES.queue, reqId, {
-              kind:"request", requestId:reqId, patient:o.patientName, group:o.bloodGroup, bags:o.bags,
-              urgency:o.urgency, hospital:o.hospitalName, area:o.hospitalAddress, phone:o.phone,
-              requester:o.requesterName, whatsapp:o.whatsapp||"", description:o.description||"",
-              at:createdAt, expiresAt:expiresAtDate.toISOString(), ownerUid:memberUid||""
-            });
-          }
-          if(memberUid)incrementField(NODES.users,memberUid,"applicationCount",1)
-            .catch(e=>console.warn("application count increment:",e&&e.message));
-          
+          const liveStatus = String(submittedReq.status || newStatus);
+          const liveApproved = liveStatus === "approved";
           form.reset();
           clearFormErrors(form);
           $("#requestAgree").checked = false;
           message.className = "hidden"; message.textContent = "";
-          if(autoApproved){
+          if(liveApproved){
             showAppMessage("আপনার জরুরি রক্তের আবেদনটি সরাসরি লাইভ সহায়তা বোর্ডে যুক্ত হয়েছে।", false, "আবেদন লাইভ হয়েছে!");
           } else {
             showAppMessage("আপনার জরুরি রক্তের আবেদনটি সফলভাবে জমা হয়েছে। বর্তমানে এটি অ্যাডমিনের অনুমোদনের অপেক্ষায় (Pending) রয়েছে। তথ্য যাচাই ও অনুমোদনের পর লাইভ সহায়তা বোর্ডে প্রকাশিত হবে।", false, "আবেদন গৃহীত হয়েছে");
@@ -4337,7 +4277,7 @@ function initPage() {
         }catch(err){
           hideAppModal();
           console.warn("emergency write:", err && err.message);
-          showMessage(message, "আবেদনটি সংরক্ষণ করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।", "error");
+          showMessage(message, err && err.message ? err.message : "আবেদনটি সংরক্ষণ করা যায়নি — আবার চেষ্টা করুন।", "error");
         }
       });
       attachLiveClear($("#emergencyForm"));
@@ -4584,7 +4524,7 @@ function initPage() {
           return { status: "unavailable" };
         },
         getProfile: async (uid) => getRow(NODES.users, uid),
-        createProfile: async (uid, data) => { await setRow(NODES.users, uid, data); },
+        createProfile: async (uid, data) => { await apiUpsertProfile(data, { mode: "create" }); },
         updateProfile: async (uid, data, existing) => {
           await ensureUserProfile(data, { provider: data.provider, existing });
         },
@@ -4646,7 +4586,7 @@ function initPage() {
       async function doLogout(){
         const ok = await uiDialog({type:"warn", title:"লগআউট করবেন?", desc:"আপনি কি নিশ্চিতভাবে অ্যাকাউন্ট থেকে বের হতে চান?", okText:"হ্যাঁ, লগআউট", cancelText:"বাতিল"});
         if(!ok) return;
-        try{ if(auth && auth.currentUser){ const {signOut} = await import("firebase/auth"); await signOut(auth); } }catch(e){}
+        try{ await authSignOut(); }catch(e){}
         clearMemberSession(); clearSession();
         toast("লগআউট সম্পন্ন হয়েছে");
         showView("home");
@@ -5036,39 +4976,15 @@ function initPage() {
 
           let existingProfile = null;
           if(auth && !isGoogle){
-            const {createUserWithEmailAndPassword, updateProfile, signInWithEmailAndPassword} = await import("firebase/auth");
-            const already = auth.currentUser;
-            const alreadyEmail = String((already && already.email) || "").trim().toLowerCase();
-            if(already && already.uid && alreadyEmail === o.email){
-              uid = already.uid;
-              existingProfile = await getRow(NODES.users, uid);
-            } else {
-              try{
-                const cred = await createUserWithEmailAndPassword(auth, o.email, password);
-                uid = cred.user.uid;
-                try{ updateProfile(cred.user, {displayName: o.name}); }catch(_){}
-              }catch(createErr){
-                const code = authErrorCode(createErr);
-                if(code !== "auth/email-already-in-use") throw createErr;
-                let cred;
-                try{
-                  cred = await signInWithEmailAndPassword(auth, o.email, password);
-                }catch(_signErr){
-                  throw createErr;
-                }
-                uid = cred.user.uid;
-                existingProfile = await getRow(NODES.users, uid);
-                if(existingProfile && isProfileComplete(existingProfile)){
-                  hideAppModal();
-                  showView("login");
-                  showMessage($("#loginMessage"), "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।", "error");
-                  setFieldError($("#suEmail"), "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।");
-                  return;
-                }
-              }
-            }
-            if(!(auth.currentUser && auth.currentUser.uid === uid)){
-              try{ if(auth.authStateReady) await auth.authStateReady(); }catch(_){}
+            const created = await createOrSignInEmailAccount(o.email, password, o.name);
+            uid = created.uid;
+            if(created.kind !== "created") existingProfile = await getRow(NODES.users, uid);
+            if(created.kind === "existing" && existingProfile && isProfileComplete(existingProfile)){
+              hideAppModal();
+              showView("login");
+              showMessage($("#loginMessage"), "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।", "error");
+              setFieldError($("#suEmail"), "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।");
+              return;
             }
           }
           if(!uid) throw new Error("অ্যাকাউন্ট তৈরি করা যায়নি।");
@@ -5114,7 +5030,7 @@ function initPage() {
 
           if(!outcome.ok){
             if(outcome.reason === "email-conflict" && !isGoogle && signupUid){
-              try{ const {signOut} = await import("firebase/auth"); if(auth && auth.currentUser) await signOut(auth); }catch(_e){}
+              try{ await authSignOut(); }catch(_e){}
             }
             hideAppModal();
             message.className = "";
@@ -5132,10 +5048,9 @@ function initPage() {
           }
           if(isGoogle && auth && auth.currentUser && auth.currentUser.uid === uid){
             try{
-              const {updateProfile} = await import("firebase/auth");
-              const authPatch = {displayName: o.name};
+              const authPatch: { displayName: string; photoURL?: string } = {displayName: o.name};
               if(googleProfile && googleProfile.photo) authPatch.photoURL = googleProfile.photo;
-              await updateProfile(auth.currentUser, authPatch);
+              await updateAuthProfile(authPatch);
             }catch(e){ console.warn("auth profile update:", e && e.message); }
           }
 
@@ -5167,8 +5082,7 @@ function initPage() {
 
           
           try{
-            const {signOut} = await import("firebase/auth");
-            if(auth && auth.currentUser) await signOut(auth);
+            await authSignOut();
           }catch(e){}
           setPendingGoogleProfile(null);
           
@@ -5236,24 +5150,15 @@ function initPage() {
         if(_btn){ _btn.disabled=true; _btn.innerHTML="লগইন হচ্ছে..."; }
         try{
           if(!fbReady || !auth) throw Object.assign(new Error("network"),{code:"auth/network-request-failed"});
-          const {signInWithEmailAndPassword}=await import("firebase/auth");
-          
           const found=await resolveEmailForLogin(authFlowIo, identifier);
           if(!found) throw Object.assign(new Error("not-found"),{code:"auth/user-not-found"});
           const email=found;
-          const cred=await signInWithEmailAndPassword(auth,email,password);
-          
-          if(pendingGoogleLink){
-            if(cred && cred.user && cred.user.uid && pendingGoogleLink.email === email){
-              try{
-                const {linkWithCredential} = await import("firebase/auth");
-                await linkWithCredential(cred.user, pendingGoogleLink.credential);
-              }catch(e){ console.warn("google link on login:", (e && e.code) || "", (e && e.message) || "", e); }
-            } else {
-              console.warn("google link on login: email mismatch, cleared pending credential.");
-            }
-            pendingGoogleLink = null;
+          const linkCred = (pendingGoogleLink && pendingGoogleLink.email === email) ? pendingGoogleLink.credential : undefined;
+          if(pendingGoogleLink && !linkCred){
+            console.warn("google link on login: email mismatch, cleared pending credential.");
           }
+          pendingGoogleLink = null;
+          const cred=await signInWithPassword(email,password,linkCred);
           const profile = await loadUserProfile(cred.user.uid);
           
           if(profile && (profile.username || profile.phone)){

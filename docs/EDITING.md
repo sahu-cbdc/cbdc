@@ -105,9 +105,9 @@ export const firebaseConfig = {
 
 ### ৩.২ ImgBB API key
 
-- Admin Panel → Settings → সংযোগ → **ImgBB API কী** ঘরে বসিয়ে "সংরক্ষণ করুন"।
-- এটা Realtime Database-এর `settings/imgbb`-এ সেভ হয় (সব পেজ/browser-এ শেয়ার, live)।
-- বিকল্প: build-time env `VITE_IMGBB_API_KEY` (fallback)।
+- key শুধু **server-side** এক জায়গায়: `server/config/imgbb.ts` (`IMGBB_API_KEY`)।
+- override করতে চাইলে env `IMGBB_API_KEY` (Worker: `npx wrangler secret put IMGBB_API_KEY`)।
+- ব্রাউজার/panel-এ key থাকে না; সব ছবি লগইন-verify করা `POST /api/media` গেটওয়ে দিয়ে যায়।
 
 ### ৩.৩ Database — Firebase Realtime Database
 

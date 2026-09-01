@@ -1,7 +1,9 @@
 {
-  // Worker entry (server/index.ts) hosts the secure /api/... handlers.
-  // Deploy secrets (never commit): `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT`
-  // and `IMGBB_API_KEY` (see .env.example). Public values are the `vars` below.
+  // Worker entry (server/index.ts) hosts the secure /api/... gateways.
+  // NO configuration lives here: public service config comes from the single
+  // shared source src/config/firebase.ts. The ImgBB key lives in
+  // server/config/imgbb.ts (optionally overridden by the IMGBB_API_KEY
+  // Worker secret); the Firebase service account is a Worker secret only.
   "name": "cbdc",
   "compatibility_date": "2026-08-16",
   "main": "server/index.ts",
@@ -10,9 +12,5 @@
     "not_found_handling": "single-page-application",
     "binding": "ASSETS",
     "run_worker_first": ["/api/*"]
-  },
-  "vars": {
-    "FIREBASE_API_KEY": "AIzaSyBxUlGig2NtQLf6tZMRwK6xxzjScNIqbrM",
-    "FIREBASE_DATABASE_URL": "https://chokbazarbloodclub-69d5f-default-rtdb.firebaseio.com"
   }
 }
