@@ -103,12 +103,38 @@ test("public submit: anonymous registration keeps ownerUid empty and status pend
   assert.equal(queueRow.ownerUid, "");
 });
 
-test("public submit: emergency request requires a verified login", async () => {
-  const { io } = makePublicIo({ verified: null });
+test("public submit: emergency request works anonymously — validation + no spoofable owner", async () => {
+  /* The public Home form submits without a login; anonymous emergency requests
+     are accepted (approval queue + flood guard), but validation still runs and
+     a client-supplied ownerUid is never trusted. */
+  const { io, patched } = makePublicIo({ verified: null });
   await assert.rejects(
     () => handlePublicSubmit({ kind: "emergency-request", payload: {} }, io, ""),
-    (e) => e instanceof ApiError && e.status === 401,
+    (e) => e instanceof ApiError && e.status === 400,
   );
+  await handlePublicSubmit(
+    {
+      kind: "emergency-request",
+      payload: {
+        patientName: "রোগী",
+        bloodGroup: "B+",
+        bags: 2,
+        urgency: "৬ ঘণ্টা",
+        hospitalName: "সিএমসি",
+        hospitalAddress: "আগ্রাবাদ",
+        requesterName: "আবেদনকারী",
+        phone: "01766666666",
+        ownerUid: "attacker-uid",
+      },
+    },
+    io,
+    "",
+  );
+  const reqRow = Object.entries(patched).find(([k]) => k.startsWith("requests/"))?.[1];
+  const queueRow = Object.entries(patched).find(([k]) => k.startsWith("queue/"))?.[1];
+  assert.ok(reqRow && queueRow, "anonymous emergency lands in requests + approval queue");
+  assert.equal(reqRow.ownerUid, "", "ownerUid only from a verified token — never the payload");
+  assert.equal(queueRow.ownerUid, "");
 });
 
 function makeGuardIo(db = {}) {

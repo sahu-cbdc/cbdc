@@ -65,7 +65,7 @@ export async function handleImageUpload(
   if (!key) {
     throw new ApiError(
       503,
-      "সার্ভারে ImgBB API key কনফিগার করা নেই — অ্যাডমিন প্যানেলের সেটিংসে key দিন (বা সার্ভার secret সেট করুন)।",
+      "সার্ভারে ImgBB API key কনফিগার করা নেই — সার্ভারের IMGBB_API_KEY secret দিন (server/config/imgbb.ts)।",
     );
   }
 

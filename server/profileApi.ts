@@ -149,7 +149,10 @@ export async function handleProfileUpsert(
     if (!record.role) record.role = "donor";
     if (!record.createdAt) record.createdAt = new Date().toISOString();
   } else {
-    record = buildProfileUpsert(uid, email, user, existing, provider);
+    const built = buildProfileUpsert(uid, email, user, existing, provider);
+    /* MERGE, never replace: fields the upsert does not know about (role,
+       data/* history, counters, …) must survive a profile sync untouched. */
+    record = existing ? { ...existing, ...built } : built;
   }
 
   const plan = await authorizeDataWrite(caller, { writes: { [`users/${uid}`]: record } }, io);

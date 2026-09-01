@@ -194,11 +194,11 @@ async function submitEmergencyRequest(
   io: PublicIo,
   idToken: string
 ): Promise<{ ok: true; kind: string; id: string; status: string }> {
+  /* Public form: works with or without a login. ownerUid comes only from the
+     verified token (never the payload); anonymous submissions land in the
+     approval queue behind the same validation + flood guard. */
   const caller = await resolveCaller(io, idToken);
   const uid = caller ? caller.uid : "";
-  if (!uid) {
-    throw new ApiError(401, "জরুরি আবেদন জমা দিতে লগইন করুন।");
-  }
   const patientName = cleanText(payload.patientName, 120);
   const bloodGroup = cleanText(payload.bloodGroup, 5);
   const bags = Math.max(1, Math.min(99, Math.floor(Number(digits(payload.bags)) || 0)));
@@ -297,10 +297,12 @@ async function submitEmergencyRequest(
     };
   }
 
-  const currentCount = (await io.get(`users/${uid}/applicationCount`).catch(() => null)) as any;
-  const base = Number(currentCount);
-  const next = (Number.isFinite(base) ? base : 0) + 1;
-  paths[`users/${uid}/applicationCount`] = next;
+  if (uid) {
+    const currentCount = (await io.get(`users/${uid}/applicationCount`).catch(() => null)) as any;
+    const base = Number(currentCount);
+    const next = (Number.isFinite(base) ? base : 0) + 1;
+    paths[`users/${uid}/applicationCount`] = next;
+  }
 
   await io.patch(paths);
   return { ok: true, kind: "emergency-request", id: reqId, status };

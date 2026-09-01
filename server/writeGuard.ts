@@ -25,6 +25,8 @@ export type Caller = {
   role: GuardRole;
   staff: boolean;
   admin: boolean;
+  /** Per-operation grants from the server-side admins/{uid} row (admin ⇒ all). */
+  permissions: ReadonlySet<string>;
 };
 
 export type GuardIo = {
@@ -157,14 +159,21 @@ function checkUsersField(caller: Caller, uid: string, field: string, value: any,
     return;
   }
   if (field === "donorStatus") {
-    requireCondition(caller.staff || value !== "approved", 403, "ডোনার অনুমোদন শুধু স্টাফ করতে পারেন।");
+    /* staff approve; a donor may re-write the value they already have unchanged */
+    requireCondition(
+      caller.staff || value !== "approved" || sameValue(value, cur),
+      403,
+      "ডোনার অনুমোদন শুধু স্টাফ করতে পারেন।"
+    );
     return;
   }
   if (field === "donorId") {
+    /* staff issue/assign donor ids (moderator approvals included); a donor may
+       only keep the unchanged value or clear a not-yet-assigned one */
     requireCondition(
-      caller.admin || sameValue(value, cur) || (cur == null && (value === null || value === "")),
+      caller.staff || sameValue(value, cur) || (cur == null && (value === null || value === "")),
       403,
-      "ডোনার আইডি শুধু অ্যাডমিন নির্ধারণ করেন।"
+      "ডোনার আইডি শুধু স্টাফ নির্ধারণ করেন।"
     );
     return;
   }
@@ -626,7 +635,19 @@ export async function authorizeDataWrite(
         await guardMeta(ctx, segs.slice(1), authorizedValue);
         break;
       case "notices":
+        requireCondition(
+          caller.admin || (caller.staff && caller.permissions.has("notice.manage")),
+          403,
+          "নোটিশ ব্যবস্থাপনার অনুমতি আপনার নেই।"
+        );
+        break;
       case "gallery":
+        requireCondition(
+          caller.admin || (caller.staff && caller.permissions.has("gallery.manage")),
+          403,
+          "গ্যালারি ব্যবস্থাপনার অনুমতি আপনার নেই।"
+        );
+        break;
       case "settings":
       case "identityIndex":
       case "loginIndex":
@@ -647,11 +668,16 @@ export function callerRoleFromAdminRow(row: any, uid: string, email: string): Ca
   const active = status !== "disabled";
   const isAdmin = !!row && role === "admin" && active;
   const isMod = !!row && (role === "moderator" || role === "mod") && active;
+  const rawPerms: unknown[] = row && Array.isArray(row.permissions) ? row.permissions : [];
+  const permissions = new Set<string>(
+    rawPerms.map((p) => String(p ?? "").trim()).filter((p) => p.length > 0),
+  );
   return {
     uid,
     email,
     role: isAdmin ? "admin" : isMod ? "moderator" : "donor",
     staff: isAdmin || isMod,
     admin: isAdmin,
+    permissions,
   };
 }
