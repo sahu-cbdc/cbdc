@@ -6,7 +6,7 @@
 import { useEffect } from "react";
 import "../lib/store";
 import { claimEmailIdentity, lookupEmailOwner, claimLoginEntries } from "../lib/identity";
-import { finalizeEmailSignup, backfillLoginIndex, resolveEmailForLogin } from "../lib/authFlow";
+import { finalizeEmailSignup, backfillLoginIndex, resolveEmailForLogin, duplicateRowIsSelf } from "../lib/authFlow";
 import { resolveLegacyAccount } from "../lib/accountDelete";
 import { initFirebase as initSharedFirebase, isFirebaseReady } from "../lib/firebase";
 import { waitForAuthUser } from "../lib/authState";
@@ -4166,7 +4166,7 @@ function initPage() {
           if(registrationUid) await updateRow(NODES.users, registrationUid, {donorMemberId:memberId})
             .catch(err=>console.warn("donor member key:", err && err.message));
           await setRow(NODES.queue, memberId, {
-            kind:"donor", memberId, ...(registrationUid ? {uid:registrationUid, ownerUid:registrationUid} : {}), name:o.name, group:o.bloodGroup, area:o.area,
+            kind:"donor", memberId, uid: registrationUid || "", ownerUid: registrationUid || "", name:o.name, group:o.bloodGroup, area:o.area,
             dob:o.dob||"", gender:o.gender, health:o.healthNotes||"", last:o.lastDonationDate||"",
             phone:o.phone, whatsapp:o.whatsapp||"", address:o.address||"", at:newMember.createdAt
           });
@@ -4996,8 +4996,8 @@ function initPage() {
         o.email = (o.email||"").trim().toLowerCase();
 
         
-        const dupOwnerUid = isGoogle ? (googleProfile?.uid || (auth && auth.currentUser && auth.currentUser.uid) || "") : "";
-        const dupIsSelf = (row) => !!dupOwnerUid && row && String(row.uid) === dupOwnerUid;
+        const dupOwnerUid = googleProfile?.uid || (auth && auth.currentUser && auth.currentUser.uid) || "";
+        const dupIsSelf = (row) => duplicateRowIsSelf(row, { uid: dupOwnerUid, email: o.email });
         let dupEmail=null, dupPhone=null, dupUser=null;
         try{
           dupEmail = await findBy(NODES.users, "email", o.email);
@@ -5029,10 +5029,37 @@ function initPage() {
           if(!uid && isGoogle && auth && auth.currentUser) uid = auth.currentUser.uid;
 
           if(auth && !isGoogle){
-            const {createUserWithEmailAndPassword, updateProfile} = await import("firebase/auth");
-            const cred = await createUserWithEmailAndPassword(auth, o.email, password);
-            uid = cred.user.uid;
-            try{ await updateProfile(cred.user, {displayName: o.name}); }catch(_){}
+            const {createUserWithEmailAndPassword, updateProfile, signInWithEmailAndPassword} = await import("firebase/auth");
+            const already = auth.currentUser;
+            const alreadyEmail = String((already && already.email) || "").trim().toLowerCase();
+            if(already && already.uid && alreadyEmail === o.email){
+              uid = already.uid;
+            } else {
+              try{
+                const cred = await createUserWithEmailAndPassword(auth, o.email, password);
+                uid = cred.user.uid;
+                try{ await updateProfile(cred.user, {displayName: o.name}); }catch(_){}
+              }catch(createErr){
+                const code = authErrorCode(createErr);
+                if(code !== "auth/email-already-in-use") throw createErr;
+                let cred;
+                try{
+                  cred = await signInWithEmailAndPassword(auth, o.email, password);
+                }catch(_signErr){
+                  throw createErr;
+                }
+                uid = cred.user.uid;
+                const existingMember = await getRow(NODES.users, uid);
+                if(existingMember && isProfileComplete(existingMember)){
+                  hideAppModal();
+                  showView("login");
+                  showMessage($("#loginMessage"), "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।", "error");
+                  setFieldError($("#suEmail"), "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।");
+                  return;
+                }
+              }
+            }
+            try{ if(auth.authStateReady) await auth.authStateReady(); }catch(_){}
           }
           if(!uid) throw new Error("অ্যাকাউন্ট তৈরি করা যায়নি।");
           signupUid = uid;

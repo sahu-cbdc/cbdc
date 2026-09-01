@@ -32,29 +32,48 @@ export type EmailClaim =
   | { claimed: true; ownerUid: string }
   | { claimed: false; ownerUid: string; reason: "conflict" | "unavailable" };
 
+/** Transaction reducer: keep another owner's uid, otherwise claim `uid`. */
+export function nextIdentityUid(current: unknown, uid: string): string | undefined {
+  const cleanUid = String(uid || "").trim();
+  if (!cleanUid) return undefined;
+  if (typeof current === "string" && current && current !== cleanUid) return undefined;
+  return cleanUid;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export async function claimEmailIdentity(email: unknown, uid: string): Promise<EmailClaim> {
   const db = getRtdb();
   const key = emailIndexKey(email);
   const cleanUid = String(uid || "").trim();
   if (!db || !key || !cleanUid) return { claimed: false, ownerUid: "", reason: "unavailable" };
-  try {
+
+  const attempt = async (): Promise<EmailClaim> => {
     const res = await runTransaction(
       ref(db, `${INDEX_PATH}/${key}`),
-      (current) => {
-        
-        if (typeof current === "string" && current) return undefined;
-        return cleanUid;
-      },
+      (current) => nextIdentityUid(current, cleanUid),
+      { applyLocally: false },
     );
     const owner = typeof res.snapshot.val() === "string" ? String(res.snapshot.val()) : "";
-    if (res.committed) return { claimed: true, ownerUid: cleanUid };
-    if (owner === cleanUid) return { claimed: true, ownerUid: cleanUid };
-    return { claimed: false, ownerUid: owner, reason: "conflict" };
-  } catch (e) {
-    console.warn("identity claim:", (e as Error)?.message);
+    if (res.committed || owner === cleanUid) return { claimed: true, ownerUid: cleanUid };
+    if (owner) return { claimed: false, ownerUid: owner, reason: "conflict" };
     return { claimed: false, ownerUid: "", reason: "unavailable" };
+  };
+
+  let last: EmailClaim = { claimed: false, ownerUid: "", reason: "unavailable" };
+  for (let i = 0; i < 3; i++) {
+    try {
+      last = await attempt();
+      if (last.claimed || last.reason === "conflict") return last;
+    } catch (e) {
+      console.warn("identity claim:", (e as Error)?.message);
+      last = { claimed: false, ownerUid: "", reason: "unavailable" };
+    }
+    if (i < 2) await sleep(180 * (i + 1));
   }
+  return last;
 }
 
 
@@ -125,6 +144,7 @@ export async function claimLoginKey(
         if (typeof current === "string" && current && current !== mail) return undefined;
         return mail;
       },
+      { applyLocally: false },
     );
     const owner = typeof res.snapshot.val() === "string" ? String(res.snapshot.val()) : "";
     if (res.committed || owner === mail) return { claimed: true };

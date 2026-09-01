@@ -21,6 +21,22 @@ export function isElevenDigitPhone(value: unknown): boolean {
   return /^01[3-9]\d{8}$/.test(normalizePhone(value));
 }
 
+/** True when a duplicate-check row belongs to the user currently signing up. */
+export function duplicateRowIsSelf(
+  row: Record<string, unknown> | null | undefined,
+  self: { uid?: unknown; email?: unknown },
+): boolean {
+  if (!row) return false;
+  const selfUid = String(self.uid ?? "").trim();
+  const selfEmail = normalizeEmail(self.email);
+  const rowUid = String(row.uid ?? "").trim();
+  const rowId = String(row.id ?? "").trim();
+  const rowEmail = normalizeEmail(row.email);
+  if (selfUid && (rowUid === selfUid || rowId === selfUid)) return true;
+  if (selfEmail && (rowUid === selfEmail || rowId === selfEmail || rowEmail === selfEmail)) return true;
+  return false;
+}
+
 export type EmailClaimStatus =
   | { status: "claimed" }
   | { status: "conflict"; ownerUid: string }

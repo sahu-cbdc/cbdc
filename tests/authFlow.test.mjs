@@ -20,6 +20,7 @@ import {
   normalizeUsername,
   normalizePhone,
   isElevenDigitPhone,
+  duplicateRowIsSelf,
 } from "../src/lib/authFlow.ts";
 
 function makeIo(overrides = {}) {
@@ -231,6 +232,16 @@ test("backfillLoginIndex best-effort: failure returns false, never throws", asyn
   const io = makeIo({ claimLogin: async () => { throw new Error("denied"); } });
   const ok = await backfillLoginIndex(io, "rahim@example.com", "rahim", "01812345678");
   assert.equal(ok, false);
+});
+
+test("duplicateRowIsSelf: loginIndex email owner is treated as self", () => {
+  const email = "rahim@example.com";
+  const uid = "uid-google1234567890abcd";
+  assert.equal(duplicateRowIsSelf({ username: "rahim", uid: email }, { uid, email }), true);
+  assert.equal(duplicateRowIsSelf({ uid, id: uid }, { uid, email }), true);
+  assert.equal(duplicateRowIsSelf({ uid: "other-uid", email: "x@y.z" }, { uid, email }), false);
+  assert.equal(duplicateRowIsSelf({ username: "rahim", uid: "other@x.y" }, { uid: "", email }), false);
+  assert.equal(duplicateRowIsSelf(null, { uid, email }), false);
 });
 
 test("signup normalizes email before claiming (case + whitespace consistent)", async () => {
