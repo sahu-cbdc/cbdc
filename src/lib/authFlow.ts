@@ -21,6 +21,22 @@ export function isElevenDigitPhone(value: unknown): boolean {
   return /^01[3-9]\d{8}$/.test(normalizePhone(value));
 }
 
+/** True when a duplicate-check row belongs to the user currently signing up. */
+export function duplicateRowIsSelf(
+  row: Record<string, unknown> | null | undefined,
+  self: { uid?: unknown; email?: unknown },
+): boolean {
+  if (!row) return false;
+  const selfUid = String(self.uid ?? "").trim();
+  const selfEmail = normalizeEmail(self.email);
+  const rowUid = String(row.uid ?? "").trim();
+  const rowId = String(row.id ?? "").trim();
+  const rowEmail = normalizeEmail(row.email);
+  if (selfUid && (rowUid === selfUid || rowId === selfUid)) return true;
+  if (selfEmail && (rowUid === selfEmail || rowId === selfEmail || rowEmail === selfEmail)) return true;
+  return false;
+}
+
 export type EmailClaimStatus =
   | { status: "claimed" }
   | { status: "conflict"; ownerUid: string }
@@ -57,6 +73,7 @@ export interface FinalizeSignupInput {
   provider: string;
   newData: Record<string, any>;
   existingData: Record<string, any>;
+  knownProfile?: Record<string, any> | null;
   resolveConflict?: () => Promise<boolean>;
 }
 
@@ -80,7 +97,8 @@ export async function finalizeEmailSignup(
     return { ok: false, reason: "email-claim-unavailable", message: EMAIL_CLAIM_UNAVAILABLE_MESSAGE };
   }
 
-  const existing = await io.getProfile(input.uid);
+  const existing =
+    input.knownProfile !== undefined ? input.knownProfile : await io.getProfile(input.uid);
   try {
     if (existing) {
       await io.updateProfile(

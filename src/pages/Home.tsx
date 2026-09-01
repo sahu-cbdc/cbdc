@@ -5,8 +5,8 @@
 
 import { useEffect } from "react";
 import "../lib/store";
-import { claimEmailIdentity, lookupEmailOwner, claimLoginEntries } from "../lib/identity";
-import { finalizeEmailSignup, backfillLoginIndex, resolveEmailForLogin } from "../lib/authFlow";
+import { claimEmailIdentity, lookupEmailOwner, claimLoginEntries, lookupLoginKey } from "../lib/identity";
+import { finalizeEmailSignup, backfillLoginIndex, resolveEmailForLogin, duplicateRowIsSelf } from "../lib/authFlow";
 import { resolveLegacyAccount } from "../lib/accountDelete";
 import { initFirebase as initSharedFirebase, isFirebaseReady } from "../lib/firebase";
 import { waitForAuthUser } from "../lib/authState";
@@ -4166,7 +4166,7 @@ function initPage() {
           if(registrationUid) await updateRow(NODES.users, registrationUid, {donorMemberId:memberId})
             .catch(err=>console.warn("donor member key:", err && err.message));
           await setRow(NODES.queue, memberId, {
-            kind:"donor", memberId, ...(registrationUid ? {uid:registrationUid, ownerUid:registrationUid} : {}), name:o.name, group:o.bloodGroup, area:o.area,
+            kind:"donor", memberId, uid: registrationUid || "", ownerUid: registrationUid || "", name:o.name, group:o.bloodGroup, area:o.area,
             dob:o.dob||"", gender:o.gender, health:o.healthNotes||"", last:o.lastDonationDate||"",
             phone:o.phone, whatsapp:o.whatsapp||"", address:o.address||"", at:newMember.createdAt
           });
@@ -4587,10 +4587,7 @@ function initPage() {
           await ensureUserProfile(data, { provider: data.provider, existing });
         },
         claimLogin: (email, username, phone) => claimLoginEntries(email, username, phone),
-        lookupLoginKey: async (kind, value) => {
-          const { lookupLoginKey } = await import("../lib/identity");
-          return lookupLoginKey(kind, value);
-        },
+        lookupLoginKey: (kind, value) => lookupLoginKey(kind, value),
       };
       function saveMemberSession(profile){
         localStorage.setItem("cbdcMember","1");
@@ -4838,6 +4835,7 @@ function initPage() {
       
       $("#btnGoogleLogin")?.addEventListener("click", async () => {
         const btn = $("#btnGoogleLogin");
+        if(btn && btn.disabled) return;
         const _orig = btn ? btn.innerHTML : "";
         try{
           if(btn){ btn.disabled = true; btn.innerHTML = "অপেক্ষা..."; }
@@ -4960,8 +4958,10 @@ function initPage() {
       }
 
       
+      let signupBusy = false;
       $("#signupForm")?.addEventListener("submit", async e => {
         e.preventDefault();
+        if(signupBusy) return;
         const form = e.currentTarget, message = $("#signupMessage");
         if(!googleProfile){
           const pending = getPendingGoogleProfile();
@@ -4995,28 +4995,10 @@ function initPage() {
         o.username = (o.username||"").trim().toLowerCase();
         o.email = (o.email||"").trim().toLowerCase();
 
-        
-        const dupOwnerUid = isGoogle ? (googleProfile?.uid || (auth && auth.currentUser && auth.currentUser.uid) || "") : "";
-        const dupIsSelf = (row) => !!dupOwnerUid && row && String(row.uid) === dupOwnerUid;
-        let dupEmail=null, dupPhone=null, dupUser=null;
-        try{
-          dupEmail = await findBy(NODES.users, "email", o.email);
-          dupPhone = await findBy(NODES.users, "phone", digits(o.phone));
-          dupUser  = await findBy(NODES.users, "username", o.username);
-          
-          if(!dupPhone){ const m=await findBy(NODES.members, "phone", digits(o.phone)); if(m) dupPhone=m; }
-          if(!dupUser){ const m=await findBy(NODES.members, "username", o.username); if(m) dupUser=m; }
-          
-          if(!dupUser){
-            const {lookupLoginKey}=await import("../lib/identity");
-            const owner=await lookupLoginKey("username",o.username);
-            if(owner) dupUser={username:o.username,uid:owner};
-          }
-        }catch(e){ console.warn("duplicate check:", e && e.message); }
-        if(dupEmail && !dupIsSelf(dupEmail)){ message.className="hidden"; message.textContent=""; setFieldError($("#suEmail"), "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।"); return; }
-        if(dupPhone && !dupIsSelf(dupPhone)){ message.className="hidden"; message.textContent=""; setFieldError($("#suPhone"), "এই মোবাইল নম্বর দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে।"); return; }
-        if(dupUser && !dupIsSelf(dupUser)){ message.className="hidden"; message.textContent=""; setFieldError($("#suUsername"), "এই ইউজার নেইম ইতিমধ্যে ব্যবহৃত হচ্ছে — অন্যটি বেছে নিন।"); return; }
-
+        signupBusy = true;
+        const submitBtn = form.querySelector('button[type="submit"]');
+        const submitOrig = submitBtn ? submitBtn.innerHTML : "";
+        if(submitBtn){ submitBtn.disabled = true; submitBtn.innerHTML = "তৈরি হচ্ছে..."; }
         showAppLoading();
         const password = o.password || "";
         delete o.password;
@@ -5024,21 +5006,75 @@ function initPage() {
         let signupUid = null;
 
         try{
+        const dupOwnerUid = googleProfile?.uid || (auth && auth.currentUser && auth.currentUser.uid) || "";
+        const dupIsSelf = (row) => duplicateRowIsSelf(row, { uid: dupOwnerUid, email: o.email });
+        let dupEmail=null, dupPhone=null, dupUser=null;
+        try{
+          const [byEmail, byPhone, byUser, memPhone, memUser, owner] = await Promise.all([
+            findBy(NODES.users, "email", o.email).catch(()=>null),
+            findBy(NODES.users, "phone", digits(o.phone)).catch(()=>null),
+            findBy(NODES.users, "username", o.username).catch(()=>null),
+            findBy(NODES.members, "phone", digits(o.phone)).catch(()=>null),
+            findBy(NODES.members, "username", o.username).catch(()=>null),
+            lookupLoginKey("username",o.username).catch(()=>null),
+          ]);
+          dupEmail = byEmail;
+          dupPhone = byPhone || memPhone;
+          dupUser = byUser || memUser;
+          if(!dupUser){
+            if(owner) dupUser={username:o.username,uid:owner};
+          }
+        }catch(e){ console.warn("duplicate check:", e && e.message); }
+        if(dupEmail && !dupIsSelf(dupEmail)){ hideAppModal(); message.className="hidden"; message.textContent=""; setFieldError($("#suEmail"), "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।"); return; }
+        if(dupPhone && !dupIsSelf(dupPhone)){ hideAppModal(); message.className="hidden"; message.textContent=""; setFieldError($("#suPhone"), "এই মোবাইল নম্বর দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে।"); return; }
+        if(dupUser && !dupIsSelf(dupUser)){ hideAppModal(); message.className="hidden"; message.textContent=""; setFieldError($("#suUsername"), "এই ইউজার নেইম ইতিমধ্যে ব্যবহৃত হচ্ছে — অন্যটি বেছে নিন।"); return; }
           if(!fbReady) throw new Error("ডাটাবেস সংযোগ নেই। ইন্টারনেট সংযোগ পরীক্ষা করুন।");
           let uid = googleProfile ? googleProfile.uid : null;
           if(!uid && isGoogle && auth && auth.currentUser) uid = auth.currentUser.uid;
 
+          let existingProfile = null;
           if(auth && !isGoogle){
-            const {createUserWithEmailAndPassword, updateProfile} = await import("firebase/auth");
-            const cred = await createUserWithEmailAndPassword(auth, o.email, password);
-            uid = cred.user.uid;
-            try{ await updateProfile(cred.user, {displayName: o.name}); }catch(_){}
+            const {createUserWithEmailAndPassword, updateProfile, signInWithEmailAndPassword} = await import("firebase/auth");
+            const already = auth.currentUser;
+            const alreadyEmail = String((already && already.email) || "").trim().toLowerCase();
+            if(already && already.uid && alreadyEmail === o.email){
+              uid = already.uid;
+              existingProfile = await getRow(NODES.users, uid);
+            } else {
+              try{
+                const cred = await createUserWithEmailAndPassword(auth, o.email, password);
+                uid = cred.user.uid;
+                try{ updateProfile(cred.user, {displayName: o.name}); }catch(_){}
+              }catch(createErr){
+                const code = authErrorCode(createErr);
+                if(code !== "auth/email-already-in-use") throw createErr;
+                let cred;
+                try{
+                  cred = await signInWithEmailAndPassword(auth, o.email, password);
+                }catch(_signErr){
+                  throw createErr;
+                }
+                uid = cred.user.uid;
+                existingProfile = await getRow(NODES.users, uid);
+                if(existingProfile && isProfileComplete(existingProfile)){
+                  hideAppModal();
+                  showView("login");
+                  showMessage($("#loginMessage"), "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।", "error");
+                  setFieldError($("#suEmail"), "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।");
+                  return;
+                }
+              }
+            }
+            if(!(auth.currentUser && auth.currentUser.uid === uid)){
+              try{ if(auth.authStateReady) await auth.authStateReady(); }catch(_){}
+            }
           }
           if(!uid) throw new Error("অ্যাকাউন্ট তৈরি করা যায়নি।");
           signupUid = uid;
 
-          
-          const existingProfile = await getRow(NODES.users, uid);
+          if(existingProfile === null && isGoogle){
+            existingProfile = await getRow(NODES.users, uid);
+          }
           const photoURL = photoForUid(existingProfile, googleProfile ? (googleProfile.photo||"") : "");
 
           let mergeUnconfigured = false;
@@ -5066,6 +5102,7 @@ function initPage() {
               area:o.area, district:o.district, username:o.username, address:o.address,
               bloodGroup:o.bloodGroup
             },
+            knownProfile: existingProfile,
             resolveConflict: async () => {
               const merged = await resolveLegacyAccount().catch(() => null);
               mergeUnconfigured = !!(merged && merged.unconfigured);
@@ -5074,7 +5111,7 @@ function initPage() {
           });
 
           if(!outcome.ok){
-            if(!isGoogle && signupUid){
+            if(outcome.reason === "email-conflict" && !isGoogle && signupUid){
               try{ const {signOut} = await import("firebase/auth"); if(auth && auth.currentUser) await signOut(auth); }catch(_e){}
             }
             hideAppModal();
@@ -5147,7 +5184,7 @@ function initPage() {
               "অ্যাকাউন্ট তৈরি হয়েছে!"
             );
             
-            setTimeout(()=>{ try{ hideAppModal(); }catch(e){} }, 3000);
+            setTimeout(()=>{ try{ hideAppModal(); }catch(e){} }, 900);
           }catch(e){ hideAppModal(); toast("অ্যাকাউন্ট তৈরি হয়েছে — এখন লগইন করুন"); }
         }catch(err){
           hideAppModal();
@@ -5170,13 +5207,18 @@ function initPage() {
             return;
           }
           showMessage(message, authErrorMessage(err, {fallback: "অ্যাকাউন্ট তৈরি করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।"}), "error");
+        }finally{
+          signupBusy = false;
+          if(submitBtn){ submitBtn.disabled = false; submitBtn.innerHTML = submitOrig; }
         }
       });
       attachLiveClear($("#signupForm"));
 
       
+      let loginBusy = false;
       $("#loginForm").addEventListener("submit", async e=>{
         e.preventDefault();
+        if(loginBusy) return;
         const form = e.currentTarget;
         const valid = validateForm(form, {
           username: {required:true, label:"ইমেইল / ইউজার নেইম"},
@@ -5188,6 +5230,7 @@ function initPage() {
         const password=$("#password").value;
         const _btn = form.querySelector('button[type="submit"]');
         const _orig = _btn ? _btn.innerHTML : "";
+        loginBusy = true;
         if(_btn){ _btn.disabled=true; _btn.innerHTML="লগইন হচ্ছে..."; }
         try{
           if(!fbReady || !auth) throw Object.assign(new Error("network"),{code:"auth/network-request-failed"});
@@ -5212,7 +5255,7 @@ function initPage() {
           const profile = await loadUserProfile(cred.user.uid);
           
           if(profile && (profile.username || profile.phone)){
-            await backfillLoginIndex(authFlowIo, email, profile.username, profile.phone);
+            backfillLoginIndex(authFlowIo, email, profile.username, profile.phone);
           }
           const resolved=await resolveRole({uid:cred.user.uid, email, name: (profile&&profile.name) || cred.user.displayName || email}, undefined, profile);
           const photo = photoForUid(profile, cred.user.photoURL || "");
@@ -5233,7 +5276,6 @@ function initPage() {
               }, ensureOpts);
             }catch(e){ console.warn("profile upsert:", e&&e.message); }
           }
-          if(_btn){ _btn.disabled=false; _btn.innerHTML=_orig; }
           form.reset(); clearFormErrors(form);
           finishLogin({
             email,
@@ -5251,7 +5293,6 @@ function initPage() {
             donorId: profile&&profile.donorId
           });
         }catch(err){
-          if(_btn){ _btn.disabled=false; _btn.innerHTML=_orig; }
           console.warn("login failed:",err&&err.code,err&&err.message);
           const code=(err&&err.code)||"";
           let msg="লগইন করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।";
@@ -5269,6 +5310,9 @@ function initPage() {
             msg="ইন্টারনেট সংযোগ নেই। সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।";
           }
           showMessage($("#loginMessage"),msg,"error");
+        }finally{
+          loginBusy = false;
+          if(_btn){ _btn.disabled=false; _btn.innerHTML=_orig; }
         }
       });
       attachLiveClear($("#loginForm"));
