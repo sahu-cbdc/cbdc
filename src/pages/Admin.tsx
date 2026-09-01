@@ -5,7 +5,7 @@
 
 import { useEffect } from "react";
 import "../lib/store";
-import { initFirebase as initSharedFirebase, NODES, getAuthInstance } from "../lib/firebase";
+import { initFirebase as initSharedFirebase, NODES } from "../lib/firebase";
 import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
 import { authErrorMessage, authErrorCode, resolveUserRole, panelForRole, setOrChangePassword, requestPasswordReset } from "../lib/authx";
 import { getRow, setRow, updateRow, removeRow, listOnce, watchList, watchRow, findBy, nowIso, nextDonorId, updatePaths, serverTime, getPath, setPath, removePath, watchPath, releaseDonorSerial } from "../lib/rtdb";
@@ -14,6 +14,8 @@ import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERR
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage, getImgbbStatus } from "../lib/imgbb";
+import { currentAuthUid, hasAuthCurrentUser, authSignOut } from "../lib/authActions";
+import { saveSiteConfigToSource } from "../lib/siteConfig";
 import {
   donationVerKey,
   safeDonationId,
@@ -1852,7 +1854,7 @@ function initPage() {
       if(!v.ok)return;
       const btn=s.q("#ad_save");btn.disabled=true;btn.textContent="সংরক্ষণ হচ্ছে…";
       try{
-        const authUid=String((getAuthInstance()&&getAuthInstance().currentUser&&getAuthInstance().currentUser.uid)||"");
+        const authUid=currentAuthUid();
         const uid=String(ME.uid||"");
         if(!uid||authUid!==uid)throw new Error("অ্যাডমিন লগইন সেশন পাওয়া যায়নি");
         const current=(await getRow(NODES.users,uid))||{};
@@ -1935,7 +1937,7 @@ function initPage() {
     if(!await confirmS({title:"ডোনার তালিকা থেকে সরে যাবেন?",
       desc:"অ্যাকাউন্ট ও অ্যাডমিন প্রোফাইল থাকবে; শুধু ডোনার তথ্য ও পাবলিক কার্ড সরে যাবে।",ok:"সরে যান",danger:true}))return;
     try{
-      const uid=String(ME.uid||""),authUid=String((getAuthInstance()&&getAuthInstance().currentUser&&getAuthInstance().currentUser.uid)||"");
+      const uid=String(ME.uid||""),authUid=currentAuthUid();
       if(!uid||authUid!==uid)throw new Error("অ্যাডমিন লগইন সেশন পাওয়া যায়নি");
       const donor=await ownAdminDonorRow(),id=String((donor&&(donor.id||donor.donorId))||"");
       const paths={};if(id)paths[`donors/${id}`]=null;
@@ -3173,7 +3175,7 @@ function initPage() {
       localStorage.removeItem(ACC_LS);
       sessionStorage.clear();
     }catch(e){}
-    try{(async()=>{try{const shared=initSharedFirebase();const {signOut}=await import("firebase/auth");if(shared.auth)await signOut(shared.auth)}catch(e){}})()}catch(e){}
+    try{(async()=>{try{await authSignOut()}catch(e){}})()}catch(e){}
     toast("লগআউট হয়েছে — মূল ওয়েবসাইটে ফিরে যাচ্ছেন","ok");
     setTimeout(()=>{navigateToPage("home")},700);
   }
@@ -4599,15 +4601,9 @@ function initPage() {
   
   
   async function saveSiteToSource(s){
-    try{
-      const res=await fetch(appBase()+"__admin/site-config",{
-        method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({heroTitle:s.heroTitle,heroText:s.heroText,phone:s.phone,
-          email:s.email,address:s.address,facebook:s.facebook,
-          showStats:!!s.showStats,showGallery:!!s.showGallery,showEmergency:!!s.showEmergency})});
-      const data=await res.json().catch(()=>null);
-      return !!(data&&data.ok);
-    }catch(e){console.warn("site config save:",e&&e.message);return false}
+    return await saveSiteConfigToSource({heroTitle:s.heroTitle,heroText:s.heroText,phone:s.phone,
+      email:s.email,address:s.address,facebook:s.facebook,
+      showStats:!!s.showStats,showGallery:!!s.showGallery,showEmergency:!!s.showEmergency});
   }
   function previewDoc(){
     const s=DB.site,c=bloodCounts();
@@ -4788,8 +4784,7 @@ function initPage() {
     if(dbUnsub)return;
     if(dbWatchdog){clearTimeout(dbWatchdog);dbWatchdog=null;}
     
-    const au=getAuthInstance();
-    if(!au||!au.currentUser){
+    if(!hasAuthCurrentUser()){
       dbState="auth";dbErr="";dbRender();
       
       dbWatchdog=setTimeout(()=>{dbWatchdog=null;if(!dbUnsub)dbEnsureListener();},200);

@@ -13,12 +13,14 @@ const identity = read("src/lib/identity.ts");
 const rules = read("database.rules.json");
 
 test("signup resumes a previous Auth user instead of aborting on email-already-in-use", () => {
-  assert.match(home, /createUserWithEmailAndPassword/);
-  assert.match(home, /auth\/email-already-in-use/);
-  assert.match(home, /signInWithEmailAndPassword/);
-  assert.match(home, /alreadyEmail === o\.email/);
-  assert.match(home, /isProfileComplete\(existingProfile\)/);
+  const actions = read("src/lib/authActions.ts");
+  assert.match(home, /createOrSignInEmailAccount\(o\.email, password, o\.name\)/);
+  assert.match(home, /created\.kind === "existing" && existingProfile && isProfileComplete\(existingProfile\)/);
   assert.match(home, /outcome\.reason === "email-conflict"/);
+  assert.match(actions, /createUserWithEmailAndPassword/);
+  assert.match(actions, /auth\/email-already-in-use/);
+  assert.match(actions, /signInWithEmailAndPassword/);
+  assert.match(actions, /alreadyEmail === email/);
 });
 
 test("signup submit locks immediately, loads, then unlocks in finally", () => {
@@ -27,7 +29,7 @@ test("signup submit locks immediately, loads, then unlocks in finally", () => {
   assert.match(home, /submitBtn\.innerHTML = "তৈরি হচ্ছে\.\.\."/);
   const click = home.indexOf('if(signupBusy) return');
   const loading = home.indexOf("showAppLoading();", click);
-  const create = home.indexOf("createUserWithEmailAndPassword", loading);
+  const create = home.indexOf("createOrSignInEmailAccount(o.email, password, o.name)", loading);
   const dups = home.indexOf('lookupLoginKey("username",o.username)', loading);
   assert.ok(click >= 0 && loading > click && dups > loading && create > dups);
   assert.match(home, /}finally\{\s*signupBusy = false/);

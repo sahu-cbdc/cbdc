@@ -320,6 +320,21 @@ test("config: single source — public values live ONLY in src/config, secrets O
   assert.doesNotMatch(lib, /apiKey:\s*"/, "no inline key value in lib code");
 });
 
+test("pages: no direct Firebase SDK, ImgBB, or raw endpoint fetch in components", () => {
+  for (const f of ["Home", "Admin", "Moderator", "Doner"]) {
+    const page = read(`src/pages/${f}.tsx`);
+    assert.doesNotMatch(page, /import\(["']firebase\//, `${f}: dynamic firebase SDK import`);
+    assert.doesNotMatch(page, /from ["']firebase\//, `${f}: static firebase SDK import`);
+    assert.doesNotMatch(page, /api\.imgbb\.com/, `${f}: direct ImgBB call`);
+    assert.doesNotMatch(page, /fetch\(\s*appBase\(\)/, `${f}: raw endpoint fetch — pages use lib helpers`);
+  }
+  const authActions = read("src/lib/authActions.ts");
+  assert.match(authActions, /createOrSignInEmailAccount/, "auth session actions centralized");
+  assert.match(authActions, /reauthenticateWithCredential/, "re-auth lives in the helper");
+  const siteCfg = read("src/lib/siteConfig.ts");
+  assert.match(siteCfg, /INTERNAL_ENDPOINTS\.siteConfigSource/, "site-config channel lives in a helper");
+});
+
 test("secrets: no service-account material in client sources", () => {
   const src = read("src/lib/firebase.ts") + read("src/lib/api.ts") + read("src/lib/imgbb.ts");
   assert.doesNotMatch(src, /BEGIN PRIVATE KEY/);

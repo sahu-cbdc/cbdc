@@ -57,9 +57,12 @@ test("Email sheet: direct change flow, no verification-email popup", () => {
   assert.match(sheet, /<label>নতুন ইমেইল <i>\*<\/i><\/label><input id="ne" type="email">/);
   assert.match(sheet, /<label>পাসওয়ার্ড দিয়ে নিশ্চিত করুন <i>\*<\/i><\/label>/);
   assert.match(sheet, /id="go">পরিবর্তন করুন</);
-  /* password সঠিক হলেই ইমেইল পরিবর্তন — re-auth + updateEmail */
-  assert.match(sheet, /reauthenticateWithCredential/);
-  assert.match(sheet, /updateEmail\(user,v\)/);
+  /* password সঠিক হলেই ইমেইল পরিবর্তন — re-auth + updateEmail (centralized helper) */
+  assert.match(sheet, /reauthenticateCurrentWithPassword\(p, me\.email\|\|a\.email\)/);
+  assert.match(sheet, /updateAuthEmail\(v\)/);
+  const actions = read("src/lib/authActions.ts");
+  assert.match(actions, /reauthenticateWithCredential\(user, EmailAuthProvider\.credential/);
+  assert.match(actions, /updateEmail\(user, newEmail\)/);
   /* RTDB + identity index sync */
   assert.match(sheet, /pushAccountToRtdb\(\)/);
   assert.match(sheet, /releaseEmailIdentity\(old/);
@@ -233,7 +236,7 @@ test("Account delete cascades: approved donation log + reports + all previous sc
   assert.match(del, /reports\.filter\(x=>ownerMatches\(x\)\)/);
   assert.match(del, /paths\[`reports\/\$\{x\.id\}`\]=null/);
   /* Auth delete + local cache cleanup অক্ষত */
-  assert.match(del, /deleteUser\(user\)/);
+  assert.match(del, /deleteAuthCurrentUser\(\)/);
   assert.match(del, /cbdcMemberUsername/);
 });
 

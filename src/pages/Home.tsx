@@ -7,6 +7,7 @@ import { useEffect } from "react";
 import "../lib/store";
 import { claimEmailIdentity, lookupEmailOwner, claimLoginEntries, lookupLoginKey } from "../lib/identity";
 import { apiUpsertProfile, apiPublicSubmit } from "../lib/api";
+import { authSignOut, createOrSignInEmailAccount, updateAuthProfile, signInWithPassword } from "../lib/authActions";
 import { finalizeEmailSignup, backfillLoginIndex, resolveEmailForLogin, duplicateRowIsSelf } from "../lib/authFlow";
 import { resolveLegacyAccount } from "../lib/accountDelete";
 import { initFirebase as initSharedFirebase, isFirebaseReady } from "../lib/firebase";
@@ -3475,7 +3476,7 @@ function initPage() {
         box.classList.add("hidden"); card.classList.remove("hidden");
       }
       $("#btnSwitchAccount")?.addEventListener("click", async ()=>{
-        try{ if(auth&&auth.currentUser){ const {signOut}=await import("firebase/auth"); await signOut(auth); } }catch(e){}
+        try{ await authSignOut(); }catch(e){}
         clearSession(); renderLoginGate(); toast("লগআউট সম্পন্ন হয়েছে");
       });
   
@@ -4612,7 +4613,7 @@ function initPage() {
       async function doLogout(){
         const ok = await uiDialog({type:"warn", title:"লগআউট করবেন?", desc:"আপনি কি নিশ্চিতভাবে অ্যাকাউন্ট থেকে বের হতে চান?", okText:"হ্যাঁ, লগআউট", cancelText:"বাতিল"});
         if(!ok) return;
-        try{ if(auth && auth.currentUser){ const {signOut} = await import("firebase/auth"); await signOut(auth); } }catch(e){}
+        try{ await authSignOut(); }catch(e){}
         clearMemberSession(); clearSession();
         toast("লগআউট সম্পন্ন হয়েছে");
         showView("home");
@@ -5002,39 +5003,15 @@ function initPage() {
 
           let existingProfile = null;
           if(auth && !isGoogle){
-            const {createUserWithEmailAndPassword, updateProfile, signInWithEmailAndPassword} = await import("firebase/auth");
-            const already = auth.currentUser;
-            const alreadyEmail = String((already && already.email) || "").trim().toLowerCase();
-            if(already && already.uid && alreadyEmail === o.email){
-              uid = already.uid;
-              existingProfile = await getRow(NODES.users, uid);
-            } else {
-              try{
-                const cred = await createUserWithEmailAndPassword(auth, o.email, password);
-                uid = cred.user.uid;
-                try{ updateProfile(cred.user, {displayName: o.name}); }catch(_){}
-              }catch(createErr){
-                const code = authErrorCode(createErr);
-                if(code !== "auth/email-already-in-use") throw createErr;
-                let cred;
-                try{
-                  cred = await signInWithEmailAndPassword(auth, o.email, password);
-                }catch(_signErr){
-                  throw createErr;
-                }
-                uid = cred.user.uid;
-                existingProfile = await getRow(NODES.users, uid);
-                if(existingProfile && isProfileComplete(existingProfile)){
-                  hideAppModal();
-                  showView("login");
-                  showMessage($("#loginMessage"), "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।", "error");
-                  setFieldError($("#suEmail"), "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।");
-                  return;
-                }
-              }
-            }
-            if(!(auth.currentUser && auth.currentUser.uid === uid)){
-              try{ if(auth.authStateReady) await auth.authStateReady(); }catch(_){}
+            const created = await createOrSignInEmailAccount(o.email, password, o.name);
+            uid = created.uid;
+            if(created.kind !== "created") existingProfile = await getRow(NODES.users, uid);
+            if(created.kind === "existing" && existingProfile && isProfileComplete(existingProfile)){
+              hideAppModal();
+              showView("login");
+              showMessage($("#loginMessage"), "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।", "error");
+              setFieldError($("#suEmail"), "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।");
+              return;
             }
           }
           if(!uid) throw new Error("অ্যাকাউন্ট তৈরি করা যায়নি।");
@@ -5080,7 +5057,7 @@ function initPage() {
 
           if(!outcome.ok){
             if(outcome.reason === "email-conflict" && !isGoogle && signupUid){
-              try{ const {signOut} = await import("firebase/auth"); if(auth && auth.currentUser) await signOut(auth); }catch(_e){}
+              try{ await authSignOut(); }catch(_e){}
             }
             hideAppModal();
             message.className = "";
@@ -5098,10 +5075,9 @@ function initPage() {
           }
           if(isGoogle && auth && auth.currentUser && auth.currentUser.uid === uid){
             try{
-              const {updateProfile} = await import("firebase/auth");
-              const authPatch = {displayName: o.name};
+              const authPatch: { displayName: string; photoURL?: string } = {displayName: o.name};
               if(googleProfile && googleProfile.photo) authPatch.photoURL = googleProfile.photo;
-              await updateProfile(auth.currentUser, authPatch);
+              await updateAuthProfile(authPatch);
             }catch(e){ console.warn("auth profile update:", e && e.message); }
           }
 
@@ -5133,8 +5109,7 @@ function initPage() {
 
           
           try{
-            const {signOut} = await import("firebase/auth");
-            if(auth && auth.currentUser) await signOut(auth);
+            await authSignOut();
           }catch(e){}
           setPendingGoogleProfile(null);
           
@@ -5202,24 +5177,15 @@ function initPage() {
         if(_btn){ _btn.disabled=true; _btn.innerHTML="লগইন হচ্ছে..."; }
         try{
           if(!fbReady || !auth) throw Object.assign(new Error("network"),{code:"auth/network-request-failed"});
-          const {signInWithEmailAndPassword}=await import("firebase/auth");
-          
           const found=await resolveEmailForLogin(authFlowIo, identifier);
           if(!found) throw Object.assign(new Error("not-found"),{code:"auth/user-not-found"});
           const email=found;
-          const cred=await signInWithEmailAndPassword(auth,email,password);
-          
-          if(pendingGoogleLink){
-            if(cred && cred.user && cred.user.uid && pendingGoogleLink.email === email){
-              try{
-                const {linkWithCredential} = await import("firebase/auth");
-                await linkWithCredential(cred.user, pendingGoogleLink.credential);
-              }catch(e){ console.warn("google link on login:", (e && e.code) || "", (e && e.message) || "", e); }
-            } else {
-              console.warn("google link on login: email mismatch, cleared pending credential.");
-            }
-            pendingGoogleLink = null;
+          const linkCred = (pendingGoogleLink && pendingGoogleLink.email === email) ? pendingGoogleLink.credential : undefined;
+          if(pendingGoogleLink && !linkCred){
+            console.warn("google link on login: email mismatch, cleared pending credential.");
           }
+          pendingGoogleLink = null;
+          const cred=await signInWithPassword(email,password,linkCred);
           const profile = await loadUserProfile(cred.user.uid);
           
           if(profile && (profile.username || profile.phone)){

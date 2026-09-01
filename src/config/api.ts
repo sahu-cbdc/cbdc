@@ -19,6 +19,14 @@ export const API_GATEWAYS = {
 export type ApiGateway = keyof typeof API_GATEWAYS;
 
 /**
+ * Internal (non-gateway) control channels — dev-server tooling, not public
+ * API surface. Kept here so endpoint strings live in exactly one place.
+ */
+export const INTERNAL_ENDPOINTS = {
+  siteConfigSource: "__admin/site-config",
+} as const;
+
+/**
  * Request timeouts (ms) for every API call — client library defaults,
  * kept here so tuning never means hunting through lib files.
  */

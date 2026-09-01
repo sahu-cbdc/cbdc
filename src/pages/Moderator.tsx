@@ -13,6 +13,8 @@ import { ageText, ageFromDob, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
 import { uploadImage as imgbbUploadImage } from "../lib/imgbb";
+import { authSignOut } from "../lib/authActions";
+import { saveSiteConfigToSource } from "../lib/siteConfig";
 import {
   donationVerKey,
   safeDonationId,
@@ -2869,7 +2871,7 @@ function initPage() {
       localStorage.removeItem(ACC_LS);
       sessionStorage.clear();
     }catch(e){}
-    try{(async()=>{try{const shared=initSharedFirebase();const {signOut}=await import("firebase/auth");if(shared.auth)await signOut(shared.auth)}catch(e){}})()}catch(e){}
+    try{(async()=>{try{await authSignOut()}catch(e){}})()}catch(e){}
     toast("লগআউট হয়েছে — মূল ওয়েবসাইটে ফিরে যাচ্ছেন","ok");
     setTimeout(()=>{navigateToPage("home")},700);
   }
@@ -3658,15 +3660,9 @@ function initPage() {
   
   
   async function saveSiteToSource(s){
-    try{
-      const res=await fetch(appBase()+"__admin/site-config",{
-        method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({heroTitle:s.heroTitle,heroText:s.heroText,phone:s.phone,
-          email:s.email,address:s.address,facebook:s.facebook,
-          showStats:!!s.showStats,showGallery:!!s.showGallery,showEmergency:!!s.showEmergency})});
-      const data=await res.json().catch(()=>null);
-      return !!(data&&data.ok);
-    }catch(e){console.warn("site config save:",e&&e.message);return false}
+    return await saveSiteConfigToSource({heroTitle:s.heroTitle,heroText:s.heroText,phone:s.phone,
+      email:s.email,address:s.address,facebook:s.facebook,
+      showStats:!!s.showStats,showGallery:!!s.showGallery,showEmergency:!!s.showEmergency});
   }
   function previewDoc(){
     const s=DB.site,c=bloodCounts();
