@@ -1,20 +1,17 @@
 /**
- * Central server configuration — the single place service values come from.
+ * Central server configuration — how service values reach the server.
  *
- *   • PUBLIC values (Firebase web API key, database URL, project id) ship as
- *     Cloudflare `vars` (see wrangler.jsonc) and fall back to the checked-in
- *     defaults below. The web API key is public by design.
- *   • SECRETS (FIREBASE_SERVICE_ACCOUNT, IMGBB_API_KEY) are read from the
- *     environment ONLY — they are never bundled, never returned by an API,
- *     and never appear in this file.
+ *   • PUBLIC values (Firebase web API key, database URL, project id) come
+ *     from the single shared source src/config/firebase.ts — the same file
+ *     the browser SDK uses. They are not duplicated here or in wrangler vars.
+ *   • SECRETS (FIREBASE_SERVICE_ACCOUNT, IMGBB_API_KEY) and deployment
+ *     tunables (ALLOWED_ORIGINS, guard limits) are read from the server
+ *     environment ONLY — Cloudflare Worker secrets in production, process
+ *     environment for local dev. They are never bundled, never returned by
+ *     an API, and never appear in any checked-in file.
  */
 import { parseAllowedOrigins } from "./cors.ts";
-
-export const PUBLIC_DEFAULTS = {
-  firebaseWebApiKey: "AIzaSyBxUlGig2NtQLf6tZMRwK6xxzjScNIqbrM",
-  firebaseDatabaseUrl: "https://chokbazarbloodclub-69d5f-default-rtdb.firebaseio.com",
-  firebaseProjectId: "chokbazarbloodclub-69d5f",
-} as const;
+import { FIREBASE_PUBLIC_CONFIG } from "../src/config/firebase.ts";
 
 export const UNCONFIGURED_MSG =
   "সার্ভারে service-account secret (FIREBASE_SERVICE_ACCOUNT) কনফিগার করা নেই — " +
@@ -42,9 +39,9 @@ export function serverConfig(env: unknown): ServerConfig {
     return Number.isFinite(n) && n > 0 ? n : fallback;
   };
   return {
-    firebaseWebApiKey: str(e.FIREBASE_API_KEY) || PUBLIC_DEFAULTS.firebaseWebApiKey,
-    firebaseDatabaseUrl: str(e.FIREBASE_DATABASE_URL) || PUBLIC_DEFAULTS.firebaseDatabaseUrl,
-    firebaseProjectId: str(e.FIREBASE_PROJECT_ID) || PUBLIC_DEFAULTS.firebaseProjectId,
+    firebaseWebApiKey: FIREBASE_PUBLIC_CONFIG.apiKey,
+    firebaseDatabaseUrl: FIREBASE_PUBLIC_CONFIG.databaseURL,
+    firebaseProjectId: FIREBASE_PUBLIC_CONFIG.projectId,
     serviceAccount: e.FIREBASE_SERVICE_ACCOUNT,
     imgbbApiKey: str(e.IMGBB_API_KEY),
     allowedOrigins: parseAllowedOrigins(typeof e.ALLOWED_ORIGINS === "string" ? e.ALLOWED_ORIGINS : undefined),

@@ -13,11 +13,8 @@
  *     and future Android/iOS clients from the same origin/CDN edge.
  */
 import { getAuthInstance } from "./firebase";
-import { API_GATEWAYS } from "../config/api";
+import { API_GATEWAYS, API_TIMEOUTS } from "../config/api";
 import { appBase } from "./router";
-
-export const API_TIMEOUT_MS = 30000;
-export const API_LONG_TIMEOUT_MS = 45000;
 
 export class ApiCallError extends Error {
   status: number;
@@ -66,7 +63,7 @@ export async function apiPostRaw<T = any>(
     throw new ApiCallError(401, AUTH_REQUIRED_MESSAGE);
   }
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), opts.timeoutMs || API_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs || API_TIMEOUTS.default);
   let res: Response | null = null;
   try {
     res = await fetch(`${appBase()}${endpoint}`, {

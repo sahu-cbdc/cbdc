@@ -3936,7 +3936,7 @@ function initPage() {
       if(cfg.configured===false){
         toast("সার্ভারে service-account secret (FIREBASE_SERVICE_ACCOUNT) কনফিগার করা নেই — "
           +"লগইন অ্যাকাউন্টসহ সম্পূর্ণ ডিলিট সম্ভব নয়, তাই কিছুই মোছা হয়নি। "
-          +"ডিপ্লয়ে `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT` (বা dev-এ `.env`-এ) সেট করে আবার চেষ্টা করুন।","er");
+          +"ডিপ্লয়ে `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT` (dev-এ environment variable সেট করে) আবার চেষ্টা করুন।","er");
         return;
       }
     }

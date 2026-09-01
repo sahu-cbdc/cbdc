@@ -17,3 +17,17 @@ export const API_GATEWAYS = {
 } as const;
 
 export type ApiGateway = keyof typeof API_GATEWAYS;
+
+/**
+ * Request timeouts (ms) for every API call — client library defaults,
+ * kept here so tuning never means hunting through lib files.
+ */
+export const API_TIMEOUTS = {
+  default: 30_000,
+  long: 45_000,
+  upload: 25_000,
+  statusCheck: 10_000,
+  apply: 20_000,
+  accountDelete: 20_000,
+  dedupeScan: 30_000,
+} as const;

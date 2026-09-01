@@ -15,7 +15,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -62,22 +62,21 @@ test("secret: ImgBB key never read/bundled client-side (imgbb.ts)", () => {
   assert.doesNotMatch(src, /fetch\(.["']https:\/\/api\.imgbb/);
 });
 
-test("secret: .env has no committed ImgBB key value", () => {
-  // .env is gitignored and legitimately absent in fresh checkouts/CI — then
-  // there is nothing committed to leak, so the guard passes vacuously.
-  let env = "";
-  try { env = read(".env"); } catch { return; }
-  assert.doesNotMatch(env, /8a5458f04438f111f2150bb73ee7499d/);
-  assert.doesNotMatch(env, /VITE_IMGBB_API_KEY\s*=\s*[A-Za-z0-9]/);
-  assert.match(env, /IMGBB_API_KEY=/);
+test("secret: no .env files exist — secrets are process-env/Worker-secrets only", () => {
+  for (const f of [".env", ".env.example", ".env.local"]) {
+    assert.equal(existsSync(f), false, `${f} must not exist`);
+  }
+  const vite = read("vite.config.ts");
+  assert.doesNotMatch(vite, /loadEnv/);
 });
 
-test("secret: wrangler vars are public-only (no secret value)", () => {
+test("secret: wrangler.jsonc carries no config values at all (config lives in src/config)", () => {
   const w = read("wrangler.jsonc");
-  assert.doesNotMatch(w, /IMGBB_API_KEY"\s*:\s*"/);
-  assert.doesNotMatch(w, /FIREBASE_SERVICE_ACCOUNT"\s*:\s*"/);
+  assert.doesNotMatch(w, /"vars"/, "no vars block — public config is not duplicated here");
+  assert.doesNotMatch(w, /IMGBB_API_KEY"\s*:\s*"/, "no ImgBB key value");
+  assert.doesNotMatch(w, /FIREBASE_SERVICE_ACCOUNT"\s*:\s*"/, "no service-account value");
   assert.doesNotMatch(w, /BEGIN PRIVATE KEY/);
-  assert.match(w, /"FIREBASE_API_KEY"\s*:\s*"AIza/);
+  assert.doesNotMatch(w, /AIza/, "no Firebase key value");
 });
 
 test("secret: no service-account/private-key in client source", () => {

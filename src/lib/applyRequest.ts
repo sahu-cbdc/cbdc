@@ -2,7 +2,7 @@
 
 import { getAuthInstance } from "./firebase";
 import { appBase } from "./router";
-import { API_GATEWAYS } from "../config/api";
+import { API_GATEWAYS, API_TIMEOUTS } from "../config/api";
 
 export type ApplyAction = "donor" | "bloodGroup" | "donation";
 
@@ -15,7 +15,7 @@ export type ApplyOutcome = {
 };
 
 const ENDPOINT = API_GATEWAYS.data;
-const TIMEOUT_MS = 20000;
+const TIMEOUT_MS = API_TIMEOUTS.apply;
 
 export async function requestDirectApply(
   action: ApplyAction,

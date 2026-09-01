@@ -5,13 +5,10 @@ import { getDatabase, type Database } from "firebase/database";
 import { getAuth, browserLocalPersistence, setPersistence, type Auth } from "firebase/auth";
 
 
-import { resolveFirebasePublicConfig } from "../config/firebase";
+import { FIREBASE_PUBLIC_CONFIG } from "../config/firebase";
 
 
-const resolved = resolveFirebasePublicConfig();
-
-
-export const firebaseConfig = resolved.config;
+export const firebaseConfig = FIREBASE_PUBLIC_CONFIG;
 
 
 export const NODES = {
@@ -38,7 +35,7 @@ export const COLLECTIONS = NODES;
 let app: FirebaseApp | null = null;
 let rtdb: Database | null = null;
 let auth: Auth | null = null;
-let initError: Error | null = resolved.error;
+let initError: Error | null = null;
 
 
 export function initFirebase(): { app: FirebaseApp; db: Database; auth: Auth } {

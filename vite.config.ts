@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv, type Plugin } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -270,28 +270,24 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
 
 const BASE = process.env.VITE_BASE || "/";
 
-export default defineConfig(({ mode }) => {
-  
-  const env = loadEnv(mode, process.cwd(), "");
-  const devServerEnv: Record<string, string> = {
-    FIREBASE_SERVICE_ACCOUNT: env.FIREBASE_SERVICE_ACCOUNT || process.env.FIREBASE_SERVICE_ACCOUNT || "",
-    FIREBASE_PROJECT_ID: env.FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || "",
-    IMGBB_API_KEY: env.IMGBB_API_KEY || process.env.IMGBB_API_KEY || "",
-  };
-  return {
-    plugins: [react(), cbdcSiteConfig(), cbdcDeleteApi(devServerEnv)],
-    base: BASE,
-    server: {
-      host: "0.0.0.0",
-      port: 5173,
-      strictPort: false,
-      
-      allowedHosts: true,
-    },
-    preview: {
-      host: "0.0.0.0",
-      port: 4173,
-      allowedHosts: true,
-    },
-  };
+const devServerEnv: Record<string, string> = {
+  FIREBASE_SERVICE_ACCOUNT: process.env.FIREBASE_SERVICE_ACCOUNT || "",
+  FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID || "",
+  IMGBB_API_KEY: process.env.IMGBB_API_KEY || "",
+};
+
+export default defineConfig({
+  plugins: [react(), cbdcSiteConfig(), cbdcDeleteApi(devServerEnv)],
+  base: BASE,
+  server: {
+    host: "0.0.0.0",
+    port: 5173,
+    strictPort: false,
+    allowedHosts: true,
+  },
+  preview: {
+    host: "0.0.0.0",
+    port: 4173,
+    allowedHosts: true,
+  },
 });

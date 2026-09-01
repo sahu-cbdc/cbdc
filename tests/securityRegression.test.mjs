@@ -295,12 +295,14 @@ test("gateway: ops dispatch — protected ops need a token, public-submit stays 
   assert.equal(unknownOp.status, 400, "unknown op → 400 JSON, never a fall-through");
 });
 
-test("config: service configuration is centralized and split public/secret", () => {
+test("config: single source — public values live ONLY in src/config, secrets ONLY server-side", () => {
   const serverCfg = read("server/config.ts");
-  assert.match(serverCfg, /firebaseWebApiKey/, "server config resolves the public web key");
+  assert.match(serverCfg, /from "\.\.\/src\/config\/firebase\.ts"/, "server imports the shared public config");
+  assert.match(serverCfg, /FIREBASE_PUBLIC_CONFIG\.apiKey/, "web key resolved from the shared source");
   for (const secret of ["FIREBASE_SERVICE_ACCOUNT", "IMGBB_API_KEY"]) {
-    assert.match(serverCfg, new RegExp(secret), `server config reads ${secret} from env`);
+    assert.match(serverCfg, new RegExp("e\\." + secret), `server reads ${secret} from env only`);
   }
+  assert.doesNotMatch(serverCfg, /AIza/, "no hardcoded key value in server config");
   assert.doesNotMatch(serverCfg, /BEGIN PRIVATE KEY/);
   const index = read("server/index.ts");
   assert.match(index, /serverConfig\(env\)/, "router resolves config centrally");
@@ -310,6 +312,12 @@ test("config: service configuration is centralized and split public/secret", () 
   assert.match(fbCfg, /FIREBASE_PUBLIC_CONFIG/, "client firebase config lives in src/config");
   assert.match(fbCfg, /safe to bundle/, "documented as safe-to-bundle public config");
   assert.doesNotMatch(fbCfg, /SERVICE_ACCOUNT|IMGBB/, "no server secrets in the public config");
+  assert.doesNotMatch(fbCfg, /import\.meta\.env/, "no build-env override — the file is the single source");
+  const wrangler = read("wrangler.jsonc");
+  assert.doesNotMatch(wrangler, /AIza/, "wrangler.jsonc must not duplicate the Firebase key");
+  const lib = read("src/lib/firebase.ts");
+  assert.match(lib, /FIREBASE_PUBLIC_CONFIG/, "client SDK init uses the shared config");
+  assert.doesNotMatch(lib, /apiKey:\s*"/, "no inline key value in lib code");
 });
 
 test("secrets: no service-account material in client sources", () => {

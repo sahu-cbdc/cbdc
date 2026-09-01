@@ -44,9 +44,10 @@ test("client: duplicate delete click blocked via deletingEntities guard + local 
   assert.match(admin, /DB\.donors=DB\.donors\.filter\(x=>String\(x&&x\.id\|\|""\)\.trim\(\)!==donorId\);/);
 });
 
-test("dev middleware: loads FIREBASE_SERVICE_ACCOUNT from .env (loadEnv)", () => {
-  assert.match(vite, /import \{ defineConfig, loadEnv, type Plugin \} from "vite";/);
-  assert.match(vite, /const env = loadEnv\(mode, process\.cwd\(\), ""\);/);
-  assert.match(vite, /FIREBASE_SERVICE_ACCOUNT: env\.FIREBASE_SERVICE_ACCOUNT \|\| process\.env\.FIREBASE_SERVICE_ACCOUNT \|\| ""/);
+test("dev middleware: secrets come from the process environment only (no .env files)", () => {
+  assert.doesNotMatch(vite, /loadEnv/);
+  assert.doesNotMatch(vite, /"dotenv"|dotenv\/config/);
+  assert.match(vite, /FIREBASE_SERVICE_ACCOUNT: process\.env\.FIREBASE_SERVICE_ACCOUNT \|\| ""/);
+  assert.match(vite, /IMGBB_API_KEY: process\.env\.IMGBB_API_KEY \|\| ""/);
   assert.match(vite, /cbdcDeleteApi\(devServerEnv\)/);
 });

@@ -2,11 +2,11 @@
 
 import { getAuthInstance } from "./firebase";
 import { appBase } from "./router";
-import { API_GATEWAYS } from "../config/api";
+import { API_GATEWAYS, API_TIMEOUTS } from "../config/api";
 
 const ENDPOINT = API_GATEWAYS.media;
 const CONFIG_ENDPOINT = API_GATEWAYS.admin;
-const TIMEOUT_MS = 25000;
+const TIMEOUT_MS = API_TIMEOUTS.upload;
 
 
 export async function getImgbbStatus(): Promise<boolean> {
@@ -16,7 +16,7 @@ export async function getImgbbStatus(): Promise<boolean> {
     if (!user || typeof user.getIdToken !== "function") return false;
     const token = await user.getIdToken();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10000);
+    const timer = setTimeout(() => controller.abort(), API_TIMEOUTS.statusCheck);
     let res: Response | null = null;
     try {
       res = await fetch(`${appBase()}${CONFIG_ENDPOINT}`, {
