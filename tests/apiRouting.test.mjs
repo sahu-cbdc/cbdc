@@ -15,7 +15,10 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import apiHandler from "../server/index.ts";
+
+const read = (p) => readFileSync(p, "utf8");
 
 const SPA_HTML = "<!doctype html><html><body>Website SPA</body></html>";
 
@@ -117,3 +120,25 @@ test("OPTIONS preflight on /api path is still handled by the Worker (not SPA)", 
   assert.ok([204, 403].includes(res.status));
   assert.equal(env.calls.length, 0, "preflight must not fall through to SPA");
 });
+
+test("GET /api/donor/apply with browser navigate header → still 405 JSON, never SPA", async () => {
+  const env = makeEnv();
+  const res = await fetchRaw(env, "/api/donor/apply", "GET", {
+    headers: { "Sec-Fetch-Mode": "navigate" },
+  });
+  assert.equal(res.status, 405);
+  assert.match(res.headers.get("content-type") || "", /application\/json/);
+  assert.equal(env.calls.length, 0, "navigation request to /api must be handled by the Worker");
+});
+
+/* ── Deployment config: the Worker MUST be invoked first for /api/* ── */
+
+test("wrangler.jsonc routes /api/* to the Worker before SPA fallback (run_worker_first)", () => {
+  const cfg = read("wrangler.jsonc");
+  assert.match(cfg, /"run_worker_first"\s*:\s*\[\s*"\/api\/\*"/, "run_worker_first must include /api/*");
+  assert.match(cfg, /"not_found_handling"\s*:\s*"single-page-application"/, "SPA fallback preserved");
+  assert.match(cfg, /"main"\s*:\s*"server\/index\.ts"/, "Worker entry is server/index.ts");
+  assert.match(cfg, /"binding"\s*:\s*"ASSETS"/, "ASSETS binding exposed to Worker code");
+  assert.doesNotMatch(cfg, /"run_worker_first"\s*:\s*true\b/, "must not be global worker-first (keeps non-API asset serving fast)");
+});
+

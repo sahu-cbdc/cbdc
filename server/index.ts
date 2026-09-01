@@ -132,9 +132,6 @@ export default {
     const allowedOrigins = parseAllowedOrigins(env && env.ALLOWED_ORIGINS);
 
     
-    // Every /api/... route is owned by the Worker and MUST be intercepted here
-    // — never handed to env.ASSETS (SPA fallback). Only non-API paths fall
-    // through to the static Website.
     if (!isApiPath) {
       return env.ASSETS && typeof env.ASSETS.fetch === "function"
         ? env.ASSETS.fetch(request)
@@ -155,9 +152,7 @@ export default {
       }
       return jsonResponse({ ok: false, error: "CORS preflight অনুমোদিত নয়।" }, { status: 403 });
     }
-
-    // Reserved /api/ namespace but no matching handler → API-style JSON 404,
-    // never the Website homepage/SPA fallback.
+    
     if (!isApi(apis)) {
       return jsonResponse(
         { ok: false, error: "অনুরোধকৃত API রুটটি খুঁজে পাওয়া যায়নি।" },
