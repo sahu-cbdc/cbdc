@@ -6,6 +6,7 @@
 import { useEffect } from "react";
 import "../lib/store";
 import { claimEmailIdentity, lookupEmailOwner, claimLoginEntries } from "../lib/identity";
+import { finalizeEmailSignup, backfillLoginIndex, resolveEmailForLogin } from "../lib/authFlow";
 import { resolveLegacyAccount } from "../lib/accountDelete";
 import { initFirebase as initSharedFirebase, isFirebaseReady } from "../lib/firebase";
 import { waitForAuthUser } from "../lib/authState";
@@ -4573,6 +4574,24 @@ function initPage() {
         if(!fbReady || !uid) return null;
         try{ return await getRow(NODES.users, uid); }catch(e){ return null; }
       }
+      const authFlowIo = {
+        claimEmail: async (email, uid) => {
+          const c = await claimEmailIdentity(email, uid);
+          if (c.claimed) return { status: "claimed" };
+          if (c.ownerUid && c.ownerUid !== uid) return { status: "conflict", ownerUid: c.ownerUid };
+          return { status: "unavailable" };
+        },
+        getProfile: async (uid) => getRow(NODES.users, uid),
+        createProfile: async (uid, data) => { await setRow(NODES.users, uid, data); },
+        updateProfile: async (uid, data, existing) => {
+          await ensureUserProfile(data, { provider: data.provider, existing });
+        },
+        claimLogin: (email, username, phone) => claimLoginEntries(email, username, phone),
+        lookupLoginKey: async (kind, value) => {
+          const { lookupLoginKey } = await import("../lib/identity");
+          return lookupLoginKey(kind, value);
+        },
+      };
       function saveMemberSession(profile){
         localStorage.setItem("cbdcMember","1");
         localStorage.setItem("cbdcMemberEmail", profile.email||"");
@@ -4850,27 +4869,6 @@ function initPage() {
         if(v.includes("@")){const [a,b]=v.split("@");return (a.slice(0,2)||"*")+"***@"+b}
         return v;
       }
-      
-      async function resolveEmailByIdentifier(identifier){
-        if(!fbReady) return null;
-        const q=String(identifier).trim().toLowerCase();
-        try{
-          
-          const {lookupLoginKey}=await import("../lib/identity");
-          if(!q.includes("@")){
-            const byIndex=await lookupLoginKey("username",q);
-            if(byIndex&&String(byIndex).includes("@")) return String(byIndex).toLowerCase();
-            const dq=digits(q);
-            if(/^[0-9]{11}$/.test(dq)){
-              const byPhoneIdx=await lookupLoginKey("phone",dq);
-              if(byPhoneIdx&&String(byPhoneIdx).includes("@")) return String(byPhoneIdx).toLowerCase();
-            }
-          }
-        }catch(e){ console.warn("identifier lookup:", e && e.message); }
-        return null;
-      }
-
-      
       function resetForgotPage(prefill=""){
         const form=$("#forgotForm");
         if(!form) return;
@@ -5040,71 +5038,59 @@ function initPage() {
           signupUid = uid;
 
           
-          let claim = await claimEmailIdentity(o.email, uid);
-          if(!claim.claimed && claim.ownerUid && claim.ownerUid !== uid){
-            const merged = await resolveLegacyAccount().catch(() => null);
-            if(merged && merged.ok && merged.merged){
-              claim = await claimEmailIdentity(o.email, uid);
-            }
-            if(!claim.claimed){
-              if(!isGoogle && signupUid){
-                
-                try{ const {signOut} = await import("firebase/auth"); if(auth && auth.currentUser) await signOut(auth); }catch(_e){}
-              }
-              hideAppModal();
-              message.className = "";
-              showMessage($("#signupMessage"),
-                (merged && merged.unconfigured)
-                  ? "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে — একই ইমেইলে দ্বিতীয় অ্যাকাউন্ট তৈরি করা যায় না। অ্যাডমিন প্যানেলে 'ডুপ্লিকেট যাচাই ও পরিষ্কার' চালালে পুরোনো রেকর্ড মিলে যাবে।"
-                  : "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে — একই ইমেইলে দ্বিতীয় অ্যাকাউন্ট তৈরি করা যায় না। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।",
-                "error");
-              setFieldError($("#suEmail"), "এই ইমেইলে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।");
-              return;
-            }
-          }
-
           const existingProfile = await getRow(NODES.users, uid);
           const photoURL = photoForUid(existingProfile, googleProfile ? (googleProfile.photo||"") : "");
-          
-          const profilePayload = {
+
+          let mergeUnconfigured = false;
+          const outcome = await finalizeEmailSignup(authFlowIo, {
             uid,
-            name: o.name,
-            username: o.username,
             email: o.email,
-            phone: o.phone || "",
-            dob: o.dob || "",
-            gender: o.gender || "",
-            bloodGroup: o.bloodGroup || "",
-            district: String(o.district || "").trim() || districtOfArea(o.area),
-            area: o.area || "",
-            address: o.address || "",
-            photoURL,
+            username: o.username,
+            phone: o.phone,
+            role: DEFAULT_ROLE,
             provider: isGoogle ? "google" : "password",
-            status: "active"
-          };
-          if(existingProfile){
-            
-            await ensureUserProfile({
-              uid, email:o.email, name:o.name, photo:photoURL,
-              phone:o.phone, dob:o.dob, gender:o.gender, area:o.area,
-              district:o.district, username:o.username, address:o.address,
+            newData: {
+              uid,
+              name: o.name,
+              dob: o.dob || "",
+              gender: o.gender || "",
+              bloodGroup: o.bloodGroup || "",
+              district: String(o.district || "").trim() || districtOfArea(o.area),
+              area: o.area || "",
+              address: o.address || "",
+              photoURL,
+              status: "active"
+            },
+            existingData: {
+              uid, name: o.name, photo: photoURL, phone:o.phone, dob:o.dob, gender:o.gender,
+              area:o.area, district:o.district, username:o.username, address:o.address,
               bloodGroup:o.bloodGroup
-            }, {provider: isGoogle ? "google" : "password", existing: existingProfile});
-          } else {
-            
-            await setRow(NODES.users, uid, {
-              ...profilePayload,
-              role: DEFAULT_ROLE,
-              createdAt: nowIso()
-            });
+            },
+            resolveConflict: async () => {
+              const merged = await resolveLegacyAccount().catch(() => null);
+              mergeUnconfigured = !!(merged && merged.unconfigured);
+              return !!(merged && merged.ok && merged.merged);
+            }
+          });
+
+          if(!outcome.ok){
+            if(!isGoogle && signupUid){
+              try{ const {signOut} = await import("firebase/auth"); if(auth && auth.currentUser) await signOut(auth); }catch(_e){}
+            }
+            hideAppModal();
+            message.className = "";
+            if(outcome.reason === "email-conflict"){
+              showMessage($("#signupMessage"),
+                mergeUnconfigured
+                  ? "এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট আছে — একই ইমেইলে দ্বিতীয় অ্যাকাউন্ট তৈরি করা যায় না। অ্যাডমিন প্যানেলে 'ডুপ্লিকেট যাচাই ও পরিষ্কার' চালালে পুরোনো রেকর্ড মিলে যাবে।"
+                  : outcome.message,
+                "error");
+              setFieldError($("#suEmail"), "এই ইমেইলে ইতিমধ্যে একটি অ্যাকাউন্ট আছে। লগইন করুন অথবা পাসওয়ার্ড রিসেট করুন।");
+            } else {
+              showMessage($("#signupMessage"), outcome.message, "error");
+            }
+            return;
           }
-
-          
-          try{
-            await claimLoginEntries(o.email, o.username, o.phone);
-          }catch(e){ console.warn("loginIndex claim (signup):", e&&e.message); }
-
-          
           if(isGoogle && auth && auth.currentUser && auth.currentUser.uid === uid){
             try{
               const {updateProfile} = await import("firebase/auth");
@@ -5207,12 +5193,9 @@ function initPage() {
           if(!fbReady || !auth) throw Object.assign(new Error("network"),{code:"auth/network-request-failed"});
           const {signInWithEmailAndPassword}=await import("firebase/auth");
           
-          let email=identifier;
-          if(!email.includes("@")){
-            const found=await resolveEmailByIdentifier(email);
-            if(!found) throw Object.assign(new Error("not-found"),{code:"auth/user-not-found"});
-            email=found;
-          }
+          const found=await resolveEmailForLogin(authFlowIo, identifier);
+          if(!found) throw Object.assign(new Error("not-found"),{code:"auth/user-not-found"});
+          const email=found;
           const cred=await signInWithEmailAndPassword(auth,email,password);
           
           if(pendingGoogleLink){
@@ -5229,9 +5212,7 @@ function initPage() {
           const profile = await loadUserProfile(cred.user.uid);
           
           if(profile && (profile.username || profile.phone)){
-            try{
-              await claimLoginEntries(email, profile.username, profile.phone);
-            }catch(e){ console.warn("loginIndex backfill:", e&&e.message); }
+            await backfillLoginIndex(authFlowIo, email, profile.username, profile.phone);
           }
           const resolved=await resolveRole({uid:cred.user.uid, email, name: (profile&&profile.name) || cred.user.displayName || email}, undefined, profile);
           const photo = photoForUid(profile, cred.user.photoURL || "");
