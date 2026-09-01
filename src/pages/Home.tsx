@@ -1471,10 +1471,10 @@ function StaticShell() {
                   <img className="hero-logo" data-logo={true} alt="চকবাজার ব্লাড ডোনার'স ক্লাব লোগো" />
                 </div>
                 <div className="hero-badge">
-                  {"অনুমোদিত রক্তদাতা নেটওয়ার্ক"}
+                  {"🩸এক ব্যাগ রক্ত"}
                 </div>
                 <div className="hero-float">
-                  {"🩸 ২৪ ঘণ্টা মানবিক সহায়তা"}
+                  {"একটি নতুন জীবন 💚"}
                 </div>
               </div>
               {" "}
@@ -1482,12 +1482,12 @@ function StaticShell() {
                 <div className="hero-kicker">
                   <span>
                   </span>
-                  {" চকবাজার • চট্টগ্রাম"}
+                  {"চট্টগ্রাম • চকবাজার • বান্দরবান"}
                 </div>
                 <h1 id="heroTitle">
-                  {"এক ব্যাগ রক্ত,"}
+                  {"রক্তদানে নাহি ভয়,"}
                   <em>
-                    {"একটি নতুন জীবন"}
+                    {"নতুন সম্পর্ক সৃষ্টি হয়"}
                   </em>
                 </h1>
                 <p className="hero-desc">
