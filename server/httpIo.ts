@@ -225,27 +225,13 @@ export function makeDataIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): DataI
 export function makeImagesIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): ImagesIo {
   const cfg = serverConfig(env);
   const apiKey = cfg.firebaseWebApiKey;
-  const priv = makePrivilegedIo(env, undefined, fetchImpl);
-  const hasKey = async (): Promise<boolean> => {
-    if (cfg.imgbbApiKey) return true;
-    if (!priv.configured) return false;
-    const row = (await priv.get("settings/imgbb").catch(() => null)) as any;
-    return !!String(row?.key ?? "").trim();
-  };
   return {
     verifyToken: (token: string) => verifyIdentityLookup(token, apiKey, fetchImpl),
     getImgbbKey: async () => {
       if (cfg.imgbbApiKey) return cfg.imgbbApiKey;
-      if (!priv.configured) {
-        
-        throw new ApiError(503, UNCONFIGURED_MSG);
-      }
-      const row = (await priv.get("settings/imgbb").catch(() => null)) as any;
-      const k = String(row?.key ?? "").trim();
-      if (!k) throw new ApiError(503, "সার্ভারে ImgBB API key কনফিগার করা নেই।");
-      return k;
+      throw new ApiError(503, "সার্ভারে ImgBB API key কনফিগার করা নেই।");
     },
-    hasKey,
+    hasKey: async () => !!cfg.imgbbApiKey,
   };
 }
 

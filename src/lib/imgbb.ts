@@ -3,7 +3,7 @@
 import { getAuthInstance } from "./firebase";
 import { appBase } from "./router";
 import { API_GATEWAYS, API_TIMEOUTS } from "../config/api";
-import { IMGBB_PUBLIC_CONFIG } from "../config/imgbb";
+import { IMGBB_PUBLIC_CONFIG } from "../config/imgbb.public";
 
 const ENDPOINT = API_GATEWAYS.media;
 const CONFIG_ENDPOINT = API_GATEWAYS.admin;

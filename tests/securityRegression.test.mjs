@@ -14,6 +14,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import handlePublicSubmit from "../server/publicApi.ts";
 import apiHandler from "../server/index.ts";
 import { ApiError } from "../server/deleteApi.ts";
@@ -335,22 +336,40 @@ test("pages: no direct Firebase SDK, ImgBB, or raw endpoint fetch in components"
   assert.match(siteCfg, /INTERNAL_ENDPOINTS\.siteConfigSource/, "site-config channel lives in a helper");
 });
 
-test("imgbb: public config single-sourced in src/config/imgbb.ts; key stays server-side", () => {
-  const cfg = read("src/config/imgbb.ts");
-  assert.match(cfg, /IMGBB_PUBLIC_CONFIG/, "dedicated imgbb config file");
-  assert.match(cfg, /uploadMaxBytes/, "upload ceiling defined here");
-  assert.doesNotMatch(cfg, /[keyKey]\s*[:=]\s*["'][A-Za-z0-9]{10,}/, "no key VALUE in the public config");
-  assert.doesNotMatch(cfg, /api\.imgbb\.com\/1\/upload\?key=/, "no keyed ImgBB URL");
-  const lib = read("src/lib/imgbb.ts");
-  assert.match(lib, /IMGBB_PUBLIC_CONFIG\.compression\.maxDimension/, "client compression uses the config");
+test("imgbb: key centralized in src/config/imgbb.ts — server-only, never client-bundled", () => {
+  const central = read("src/config/imgbb.ts");
+  assert.match(central, /IMGBB_SERVER/, "central server section");
+  assert.match(central, /apiKey:\s*"[0-9a-f]{20,}"/, "the key lives here");
+  assert.match(central, /uploadEndpoint:\s*"https:\/\/api\.imgbb\.com/, "upload endpoint lives here");
+  const pub = read("src/config/imgbb.public.ts");
+  assert.match(pub, /IMGBB_PUBLIC_CONFIG/, "client-safe public half");
+  assert.doesNotMatch(pub, /apiKey|IMGBB_SERVER/, "public half carries no key reference");
+  /* client code must import ONLY the public half — never the central file */
+  for (const f of ["imgbb", "api", "rtdb", "authActions", "siteConfig", "applyRequest", "accountDelete", "firebase", "identity", "store"]) {
+    const lib = read(`src/lib/${f}.ts`);
+    assert.doesNotMatch(lib, /from ["']\.\.\/config\/imgbb["']/, `${f}.ts must not import the central imgbb config`);
+  }
+  for (const f of ["Home", "Admin", "Moderator", "Doner"]) {
+    const page = read(`src/pages/${f}.tsx`);
+    assert.doesNotMatch(page, /from ["']\.\.\/config\/imgbb["']/, `${f}.tsx must not import the central imgbb config (lib helper is fine)`);
+  }
+  /* key value exists in exactly ONE repo file */
+  const hits = execFileSync("grep", ["-rl", "8a5458f04438f111f2150bb73ee7499d", "src", "server", "vite.config.ts", "wrangler.jsonc", "database.rules.json"]).toString().trim().split("\n").filter(Boolean);
+  assert.deepEqual(hits, ["src/config/imgbb.ts"], "the key value must exist only in src/config/imgbb.ts");
+  /* server resolves env-override → central key; upload endpoint not duplicated */
+  const cfg = read("server/config.ts");
+  assert.match(cfg, /IMGBB_SERVER\.apiKey/, "server config falls back to the central key");
   const api = read("server/imagesApi.ts");
-  assert.match(api, /MAX_UPLOAD_BYTES = IMGBB_PUBLIC_CONFIG\.uploadMaxBytes/, "server limit single-sourced");
-  const vite = read("vite.config.ts");
-  assert.match(vite, /gateway === "media" \? IMGBB_PUBLIC_CONFIG\.uploadMaxBytes/, "dev middleware limit single-sourced");
+  assert.match(api, /IMGBB_URL = IMGBB_SERVER\.uploadEndpoint/, "upload endpoint single-sourced");
+  assert.doesNotMatch(api, /["']https:\/\/api\.imgbb\.com/, "no hardcoded endpoint duplicate");
+  const lib = read("src/lib/imgbb.ts");
+  assert.match(lib, /from ["']\.\.\/config\/imgbb\.public["']/, "client uses the public half");
+  assert.match(lib, /IMGBB_PUBLIC_CONFIG\.compression\.maxDimension/, "compression from config");
   const dup = read("server/imagesApi.ts") + read("vite.config.ts") + read("src/lib/imgbb.ts");
   assert.doesNotMatch(dup, /8 \* 1024 \* 1024/, "no duplicated 8MB literal");
   assert.doesNotMatch(dup, /maxDim = 1600/, "no duplicated compression default");
 });
+
 
 test("secrets: no service-account material in client sources", () => {
   const src = read("src/lib/firebase.ts") + read("src/lib/api.ts") + read("src/lib/imgbb.ts");

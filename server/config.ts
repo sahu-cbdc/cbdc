@@ -12,6 +12,7 @@
  */
 import { parseAllowedOrigins } from "./cors.ts";
 import { FIREBASE_PUBLIC_CONFIG } from "../src/config/firebase.ts";
+import { IMGBB_SERVER } from "../src/config/imgbb.ts";
 
 export const UNCONFIGURED_MSG =
   "সার্ভারে service-account secret (FIREBASE_SERVICE_ACCOUNT) কনফিগার করা নেই — " +
@@ -43,7 +44,7 @@ export function serverConfig(env: unknown): ServerConfig {
     firebaseDatabaseUrl: FIREBASE_PUBLIC_CONFIG.databaseURL,
     firebaseProjectId: FIREBASE_PUBLIC_CONFIG.projectId,
     serviceAccount: e.FIREBASE_SERVICE_ACCOUNT,
-    imgbbApiKey: str(e.IMGBB_API_KEY),
+    imgbbApiKey: str(e.IMGBB_API_KEY) || IMGBB_SERVER.apiKey,
     allowedOrigins: parseAllowedOrigins(typeof e.ALLOWED_ORIGINS === "string" ? e.ALLOWED_ORIGINS : undefined),
     abuseGuardMax: num(e.ABUSE_GUARD_MAX, 600),
     abuseGuardWindowMs: num(e.ABUSE_GUARD_WINDOW_MS, 60_000),

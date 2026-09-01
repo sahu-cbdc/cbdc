@@ -1,7 +1,7 @@
 
 
 import { ApiError } from "./deleteApi.ts";
-import { IMGBB_PUBLIC_CONFIG } from "../src/config/imgbb.ts";
+import { IMGBB_PUBLIC_CONFIG, IMGBB_SERVER } from "../src/config/imgbb.ts";
 
 
 export type ImagesIo = {
@@ -22,7 +22,7 @@ export type ImageUploadResult = {
   height: number;
 };
 
-const IMGBB_URL = "https://api.imgbb.com/1/upload";
+const IMGBB_URL = IMGBB_SERVER.uploadEndpoint;
 
 export const MAX_UPLOAD_BYTES = IMGBB_PUBLIC_CONFIG.uploadMaxBytes;
 
