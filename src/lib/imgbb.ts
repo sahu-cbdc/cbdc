@@ -1,71 +1,36 @@
-/**
- * CBDC — ImgBB image hosting helper
- *
- * ছবি Firebase Storage-এ নয়, **ImgBB API**-তে সংরক্ষণ করা হয়:
- *   1. ImgBB API key দিয়ে ছবি upload করা হয়,
- *   2. ImgBB থেকে পাওয়া image URL (link) সংগ্রহ করা হয়,
- *   3. সেই link + metadata শুধু ডাটাবেসে (Realtime Database) সেভ হয়,
- *   4. UI-তে ওই link দিয়ে সরাসরি ছবি দেখানো হয়।
- *
- * API key-এর উৎস (priority ক্রমে):
- *   - localStorage cache (`cbdc.imgbb.key`)
- *   - Realtime Database `settings/imgbb` node (Admin Settings থেকে save হয়)
- *   - build-time env `VITE_IMGBB_API_KEY` (fallback)
- */
 
-import { getRow, setRow } from "./rtdb";
 
-const UPLOAD_URL = "https://api.imgbb.com/1/upload";
-const KEY_CACHE = "cbdc.imgbb.key";
+import { getAuthInstance } from "./firebase";
+import { appBase } from "./router";
 
-/** Build-time ImgBB API key (VITE_IMGBB_API_KEY). */
-function getEnvImgbbKey(): string {
+const ENDPOINT = "api/images/upload";
+const CONFIG_ENDPOINT = "api/admin/config-check";
+const TIMEOUT_MS = 25000;
+
+
+export async function getImgbbStatus(): Promise<boolean> {
   try {
-    const env = (import.meta as any).env;
-    return String(env?.VITE_IMGBB_API_KEY || "").trim();
-  } catch {
-    return "";
-  }
-}
-
-/** ImgBB API key পড়া (cache → RTDB settings → env)। */
-export async function getImgbbKey(): Promise<string> {
-  try {
-    const c = localStorage.getItem(KEY_CACHE);
-    if (c) return c;
-  } catch {
-    /* ignore */
-  }
-  try {
-    const row = await getRow("settings", "imgbb");
-    const k = String(row?.key || "").trim();
-    if (k) {
-      try {
-        localStorage.setItem(KEY_CACHE, k);
-      } catch {
-        /* ignore */
-      }
-      return k;
+    const auth = getAuthInstance();
+    const user = (auth?.currentUser ?? null) as any;
+    if (!user || typeof user.getIdToken !== "function") return false;
+    const token = await user.getIdToken();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    let res: Response | null = null;
+    try {
+      res = await fetch(`${appBase()}${CONFIG_ENDPOINT}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({}),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
     }
+    const data: any = await res.json().catch(() => null);
+    return !!(data && data.ok === true && data.imgbbConfigured === true);
   } catch {
-    /* ignore */
-  }
-  return getEnvImgbbKey();
-}
-
-/** ImgBB API key সংরক্ষণ (Admin Settings থেকে; RTDB `settings/imgbb`)। */
-export async function saveImgbbKey(key: string): Promise<void> {
-  const k = String(key || "").trim();
-  try {
-    if (k) localStorage.setItem(KEY_CACHE, k);
-    else localStorage.removeItem(KEY_CACHE);
-  } catch {
-    /* ignore */
-  }
-  try {
-    await setRow("settings", "imgbb", { key: k, updatedAt: new Date().toISOString() });
-  } catch (e) {
-    console.warn("imgbb key save:", (e as Error)?.message);
+    return false;
   }
 }
 
@@ -77,7 +42,7 @@ export interface ImgbbResult {
   height: number;
 }
 
-/** বড় ছবিকে web-friendly সাইজে compress/resize (canvas)। */
+
 function compressImage(file: File, maxDim = 1600, quality = 0.85): Promise<Blob> {
   return new Promise((resolve) => {
     let objectUrl = "";
@@ -116,7 +81,7 @@ function compressImage(file: File, maxDim = 1600, quality = 0.85): Promise<Blob>
         try {
           URL.revokeObjectURL(objectUrl);
         } catch {
-          /* ignore */
+          
         }
       }
     };
@@ -124,7 +89,7 @@ function compressImage(file: File, maxDim = 1600, quality = 0.85): Promise<Blob>
       try {
         URL.revokeObjectURL(objectUrl);
       } catch {
-        /* ignore */
+        
       }
       resolve(file);
     };
@@ -132,36 +97,62 @@ function compressImage(file: File, maxDim = 1600, quality = 0.85): Promise<Blob>
   });
 }
 
-/**
- * একটি image file ImgBB-তে upload করে hosted URL গুলো ফেরত দেয়।
- * এই URL গুলোই ডাটাবেসে (Realtime Database) সংরক্ষণ করা হয় — image file নয়।
- */
+
 export async function uploadImage(
   file: File,
-  opts: { key?: string } = {}
+  opts: { key?: string } = {},
 ): Promise<ImgbbResult> {
-  const key = opts.key || (await getImgbbKey());
-  if (!key) {
-    throw new Error("ImgBB API কী নেই। অ্যাডমিন সেটিংসে কী দিন।");
-  }
+  
+  void opts;
 
   const image = await compressImage(file);
-  const fd = new FormData();
-  fd.append("key", key);
-  fd.append("image", image, file.name || "image.jpg");
-
-  const resp = await fetch(UPLOAD_URL, { method: "POST", body: fd });
-  const json = await resp.json().catch(() => ({}));
-  if (!resp.ok || !json?.success) {
-    throw new Error(String(json?.error?.message || "ImgBB আপলোড ব্যর্থ হয়েছে"));
+  const auth = getAuthInstance();
+  const user = (auth?.currentUser ?? null) as any;
+  if (!user || typeof user.getIdToken !== "function") {
+    throw new Error("লগইন করা নেই — ছবি আপলোড করা যায় না।");
+  }
+  let token = "";
+  try {
+    token = await user.getIdToken();
+  } catch (e) {
+    throw new Error(`লগইন সেশন নবায়ন করা যায়নি — ${(e as Error)?.message || "আবার লগইন করুন।"}`);
   }
 
-  const d = json.data || {};
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  let resp: Response | null = null;
+  try {
+    resp = await fetch(`${appBase()}${ENDPOINT}`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": image.type || "image/jpeg",
+        "X-Filename": file.name || "image.jpg",
+      },
+      body: image,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+
+  let data: any = null;
+  try {
+    data = await resp.json();
+  } catch {
+    data = null;
+  }
+  if (!resp || !resp.ok || !data || data.ok === false) {
+    const message = String((data && data.error) || `সার্ভার আপলোড ব্যর্থ (HTTP ${resp ? resp.status : "—"})`);
+    throw new Error(message.includes("abort") ? "আপলোডের সময়সীমা পেরিয়ে গেছে — আবার চেষ্টা করুন।" : message);
+  }
+  const url = String(data.url || "");
+  if (!url) throw new Error("সার্ভার থেকে ছবির লিংক পাওয়া যায়নি।");
   return {
-    url: String(d.url || ""),
-    thumbUrl: String((d.thumb && d.thumb.url) || d.display_url || d.url || ""),
-    deleteUrl: String(d.delete_url || ""),
-    width: Number(d.width) || 0,
-    height: Number(d.height) || 0,
+    url,
+    thumbUrl: String(data.thumbUrl || data.url || url),
+    deleteUrl: String(data.deleteUrl || ""),
+    width: Number(data.width) || 0,
+    height: Number(data.height) || 0,
   };
 }

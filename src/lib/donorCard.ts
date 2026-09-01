@@ -1,64 +1,38 @@
 // @ts-nocheck — Doner প্যানেলের (src/pages/Doner.tsx) কার্ড-ডাউনলোড সিস্টেমের verbatim
-// shared port। Doner প্যানেলের working implementation-ই এখানে single source of truth —
-// runtime আচরণ ১০০% অপরিবর্তিত রাখতে legacy logic-কে TypeScript টাইপ-চেকিং থেকে
-// মুক্ত রাখা হয়েছে।
-/**
- * ═══════════════════════════════════════════════════════════════════════════
- *  donorCard.ts — ডোনার প্রোফাইল কার্ড ডাউনলোড (Shared, single source of truth)
- * ═══════════════════════════════════════════════════════════════════════════
- *
- *  Doner প্যানেল ও মেইন ওয়েবসাইট — দুই জায়গাতেই ডোনার কার্ড এখান থেকেই তৈরি
- *  ও ডাউনলোড হয়, তাই একই ডোনারের কার্ড সব জায়গায় pixel-for-pixel একই:
- *
- *    • QRLIB + qrSVG()            — অফলাইনে স্ক্যানযোগ্য আসল QR কোড
- *    • vcardTextOf(subject)       — QR-এর vCard payload (স্ক্যান করলে কন্টাক্ট সেভ)
- *    • drawCardFront/Back/Tall()  — canvas-এ কার্ড আঁকা
- *                                    (ছাপানোর কার্ড ১০১৬×৬৩৮ px · শেয়ার কার্ড ৯০০×১৬০০ px)
- *    • downloadDonorCardImages()  — PNG বানিয়ে ব্রাউজারের নিজস্ব ডাউনলোড সিস্টেমে নামায়,
- *                                    টোস্ট/স্টেটাস callback সহ (Doner প্যানেলের dlCard-এর হুবহু flow)
- *    • donorCardSheetBodyHTML()   — "কার্ড নামান" sheet-এর ৩টি অপশনের একক মার্কআপ
- *    • openDonorCardDownloadSheet() — মেইন ওয়েবসাইটের জন্য একই sheet UI (নিজস্ব scoped CSS)
- *
- *  `subject` object-এর আকৃতি (সব ফিল্ড plain string/bool):
- *    { name, gender, area, phone, ageText, photo, bloodGroup, donorId,
- *      cardTheme:"green"|"red"|"dark", available:boolean, lastDonation:"YYYY-MM-DD",
- *      stat?:{t,c}, club?:{name,phone,addr,site}, logo?:string }
- *  stat/club/logo না দিলে ডিফল্ট (SITE কনফিগ + logoUrl()) বসে যায়।
- */
+
+
+
+
 import SITE from "../config/site";
 import { logoUrl } from "../config/logo";
 
-  /* ---------- QR (real, scannable, offline) ---------- */
-  /* QR Code Generator — (c) 2009 Kazuhiko Arase, MIT license. http://www.d-project.com/ */
+  
+  
   const QRLIB=(function(){
-  //---------------------------------------------------------------------
-  //
-  // QR Code Generator for JavaScript
-  //
-  // Copyright (c) 2009 Kazuhiko Arase
-  //
-  // URL: http://www.d-project.com/
-  //
-  // Licensed under the MIT license:
-  //  http://www.opensource.org/licenses/mit-license.php
-  //
-  // The word 'QR Code' is registered trademark of
-  // DENSO WAVE INCORPORATED
-  //  http://www.denso-wave.com/qrcode/faqpatent-e.html
-  //
-  //---------------------------------------------------------------------
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
   
   var qrcode = function() {
   
-    //---------------------------------------------------------------------
-    // qrcode
-    //---------------------------------------------------------------------
+    
+    
+    
   
-    /**
-     * qrcode
-     * @param typeNumber 1 to 40
-     * @param errorCorrectionLevel 'L','M','Q','H'
-     */
+    
     var qrcode = function(typeNumber, errorCorrectionLevel) {
   
       var PAD0 = 0xEC;
@@ -214,7 +188,7 @@ import { logoUrl } from "../config/logo";
         var data = (_errorCorrectionLevel << 3) | maskPattern;
         var bits = QRUtil.getBCHTypeInfo(data);
   
-        // vertical
+        
         for (var i = 0; i < 15; i += 1) {
   
           var mod = (!test && ( (bits >> i) & 1) == 1);
@@ -228,7 +202,7 @@ import { logoUrl } from "../config/logo";
           }
         }
   
-        // horizontal
+        
         for (var i = 0; i < 15; i += 1) {
   
           var mod = (!test && ( (bits >> i) & 1) == 1);
@@ -242,7 +216,7 @@ import { logoUrl } from "../config/logo";
           }
         }
   
-        // fixed module
+        
         _modules[_moduleCount - 8][8] = (!test);
       };
   
@@ -375,7 +349,7 @@ import { logoUrl } from "../config/logo";
           data.write(buffer);
         }
   
-        // calc num max data.
+        
         var totalDataCount = 0;
         for (var i = 0; i < rsBlocks.length; i += 1) {
           totalDataCount += rsBlocks[i].dataCount;
@@ -389,17 +363,17 @@ import { logoUrl } from "../config/logo";
             + ')';
         }
   
-        // end code
+        
         if (buffer.getLengthInBits() + 4 <= totalDataCount * 8) {
           buffer.put(0, 4);
         }
   
-        // padding
+        
         while (buffer.getLengthInBits() % 8 != 0) {
           buffer.putBit(false);
         }
   
-        // padding
+        
         while (true) {
   
           if (buffer.getLengthInBits() >= totalDataCount * 8) {
@@ -529,9 +503,9 @@ import { logoUrl } from "../config/logo";
   
         var opts = {};
         if (typeof arguments[0] == 'object') {
-          // Called by options.
+          
           opts = arguments[0];
-          // overwrite cellSize and margin.
+          
           cellSize = opts.cellSize;
           margin = opts.margin;
           alt = opts.alt;
@@ -541,12 +515,12 @@ import { logoUrl } from "../config/logo";
         cellSize = cellSize || 2;
         margin = (typeof margin == 'undefined')? cellSize * 4 : margin;
   
-        // Compose alt property surrogate
+        
         alt = (typeof alt === 'string') ? {text: alt} : alt || {};
         alt.text = alt.text || null;
         alt.id = (alt.text) ? alt.id || 'qrcode-description' : null;
   
-        // Compose title property surrogate
+        
         title = (typeof title === 'string') ? {text: title} : title || {};
         title.text = title.text || null;
         title.id = (title.text) ? title.id || 'qrcode-title' : null;
@@ -692,7 +666,7 @@ import { logoUrl } from "../config/logo";
               p += '█';
             }
   
-            // Output 2 characters per pixel, to create full square. 1 character per pixels gives only half width of square.
+            
             ascii += (margin < 1 && y+1 >= max) ? blocksLastLineNoMargin[p] : blocks[p];
           }
   
@@ -737,7 +711,7 @@ import { logoUrl } from "../config/logo";
               p = 0;
             }
   
-            // Output 2 characters per pixel, to create full square. 1 character per pixels gives only half width of square.
+            
             line += p ? white : black;
           }
   
@@ -763,9 +737,9 @@ import { logoUrl } from "../config/logo";
       return _this;
     };
   
-    //---------------------------------------------------------------------
-    // qrcode.stringToBytes
-    //---------------------------------------------------------------------
+    
+    
+    
   
     qrcode.stringToBytesFuncs = {
       'default' : function(s) {
@@ -780,18 +754,14 @@ import { logoUrl } from "../config/logo";
   
     qrcode.stringToBytes = qrcode.stringToBytesFuncs['default'];
   
-    //---------------------------------------------------------------------
-    // qrcode.createStringToBytes
-    //---------------------------------------------------------------------
+    
+    
+    
   
-    /**
-     * @param unicodeData base64 string of byte array.
-     * [16bit Unicode],[16bit Bytes], ...
-     * @param numChars
-     */
+    
     qrcode.createStringToBytes = function(unicodeData, numChars) {
   
-      // create conversion map.
+      
   
       var unicodeMap = function() {
   
@@ -834,10 +804,10 @@ import { logoUrl } from "../config/logo";
             var b = unicodeMap[s.charAt(i)];
             if (typeof b == 'number') {
               if ( (b & 0xff) == b) {
-                // 1byte
+                
                 bytes.push(b);
               } else {
-                // 2bytes
+                
                 bytes.push(b >>> 8);
                 bytes.push(b & 0xff);
               }
@@ -850,9 +820,9 @@ import { logoUrl } from "../config/logo";
       };
     };
   
-    //---------------------------------------------------------------------
-    // QRMode
-    //---------------------------------------------------------------------
+    
+    
+    
   
     var QRMode = {
       MODE_NUMBER :    1 << 0,
@@ -861,9 +831,9 @@ import { logoUrl } from "../config/logo";
       MODE_KANJI :     1 << 3
     };
   
-    //---------------------------------------------------------------------
-    // QRErrorCorrectionLevel
-    //---------------------------------------------------------------------
+    
+    
+    
   
     var QRErrorCorrectionLevel = {
       L : 1,
@@ -872,9 +842,9 @@ import { logoUrl } from "../config/logo";
       H : 2
     };
   
-    //---------------------------------------------------------------------
-    // QRMaskPattern
-    //---------------------------------------------------------------------
+    
+    
+    
   
     var QRMaskPattern = {
       PATTERN000 : 0,
@@ -887,9 +857,9 @@ import { logoUrl } from "../config/logo";
       PATTERN111 : 7
     };
   
-    //---------------------------------------------------------------------
-    // QRUtil
-    //---------------------------------------------------------------------
+    
+    
+    
   
     var QRUtil = function() {
   
@@ -1008,7 +978,7 @@ import { logoUrl } from "../config/logo";
   
         if (1 <= type && type < 10) {
   
-          // 1 - 9
+          
   
           switch(mode) {
           case QRMode.MODE_NUMBER    : return 10;
@@ -1021,7 +991,7 @@ import { logoUrl } from "../config/logo";
   
         } else if (type < 27) {
   
-          // 10 - 26
+          
   
           switch(mode) {
           case QRMode.MODE_NUMBER    : return 12;
@@ -1034,7 +1004,7 @@ import { logoUrl } from "../config/logo";
   
         } else if (type < 41) {
   
-          // 27 - 40
+          
   
           switch(mode) {
           case QRMode.MODE_NUMBER    : return 14;
@@ -1056,7 +1026,7 @@ import { logoUrl } from "../config/logo";
   
         var lostPoint = 0;
   
-        // LEVEL1
+        
   
         for (var row = 0; row < moduleCount; row += 1) {
           for (var col = 0; col < moduleCount; col += 1) {
@@ -1092,7 +1062,7 @@ import { logoUrl } from "../config/logo";
           }
         };
   
-        // LEVEL2
+        
   
         for (var row = 0; row < moduleCount - 1; row += 1) {
           for (var col = 0; col < moduleCount - 1; col += 1) {
@@ -1107,7 +1077,7 @@ import { logoUrl } from "../config/logo";
           }
         }
   
-        // LEVEL3
+        
   
         for (var row = 0; row < moduleCount; row += 1) {
           for (var col = 0; col < moduleCount - 6; col += 1) {
@@ -1137,7 +1107,7 @@ import { logoUrl } from "../config/logo";
           }
         }
   
-        // LEVEL4
+        
   
         var darkCount = 0;
   
@@ -1158,16 +1128,16 @@ import { logoUrl } from "../config/logo";
       return _this;
     }();
   
-    //---------------------------------------------------------------------
-    // QRMath
-    //---------------------------------------------------------------------
+    
+    
+    
   
     var QRMath = function() {
   
       var EXP_TABLE = new Array(256);
       var LOG_TABLE = new Array(256);
   
-      // initialize tables
+      
       for (var i = 0; i < 8; i += 1) {
         EXP_TABLE[i] = 1 << i;
       }
@@ -1208,9 +1178,9 @@ import { logoUrl } from "../config/logo";
       return _this;
     }();
   
-    //---------------------------------------------------------------------
-    // qrPolynomial
-    //---------------------------------------------------------------------
+    
+    
+    
   
     function qrPolynomial(num, shift) {
   
@@ -1270,261 +1240,261 @@ import { logoUrl } from "../config/logo";
           num[i] ^= QRMath.gexp(QRMath.glog(e.getAt(i) ) + ratio);
         }
   
-        // recursive call
+        
         return qrPolynomial(num, 0).mod(e);
       };
   
       return _this;
     };
   
-    //---------------------------------------------------------------------
-    // QRRSBlock
-    //---------------------------------------------------------------------
+    
+    
+    
   
     var QRRSBlock = function() {
   
       var RS_BLOCK_TABLE = [
   
-        // L
-        // M
-        // Q
-        // H
+        
+        
+        
+        
   
-        // 1
+        
         [1, 26, 19],
         [1, 26, 16],
         [1, 26, 13],
         [1, 26, 9],
   
-        // 2
+        
         [1, 44, 34],
         [1, 44, 28],
         [1, 44, 22],
         [1, 44, 16],
   
-        // 3
+        
         [1, 70, 55],
         [1, 70, 44],
         [2, 35, 17],
         [2, 35, 13],
   
-        // 4
+        
         [1, 100, 80],
         [2, 50, 32],
         [2, 50, 24],
         [4, 25, 9],
   
-        // 5
+        
         [1, 134, 108],
         [2, 67, 43],
         [2, 33, 15, 2, 34, 16],
         [2, 33, 11, 2, 34, 12],
   
-        // 6
+        
         [2, 86, 68],
         [4, 43, 27],
         [4, 43, 19],
         [4, 43, 15],
   
-        // 7
+        
         [2, 98, 78],
         [4, 49, 31],
         [2, 32, 14, 4, 33, 15],
         [4, 39, 13, 1, 40, 14],
   
-        // 8
+        
         [2, 121, 97],
         [2, 60, 38, 2, 61, 39],
         [4, 40, 18, 2, 41, 19],
         [4, 40, 14, 2, 41, 15],
   
-        // 9
+        
         [2, 146, 116],
         [3, 58, 36, 2, 59, 37],
         [4, 36, 16, 4, 37, 17],
         [4, 36, 12, 4, 37, 13],
   
-        // 10
+        
         [2, 86, 68, 2, 87, 69],
         [4, 69, 43, 1, 70, 44],
         [6, 43, 19, 2, 44, 20],
         [6, 43, 15, 2, 44, 16],
   
-        // 11
+        
         [4, 101, 81],
         [1, 80, 50, 4, 81, 51],
         [4, 50, 22, 4, 51, 23],
         [3, 36, 12, 8, 37, 13],
   
-        // 12
+        
         [2, 116, 92, 2, 117, 93],
         [6, 58, 36, 2, 59, 37],
         [4, 46, 20, 6, 47, 21],
         [7, 42, 14, 4, 43, 15],
   
-        // 13
+        
         [4, 133, 107],
         [8, 59, 37, 1, 60, 38],
         [8, 44, 20, 4, 45, 21],
         [12, 33, 11, 4, 34, 12],
   
-        // 14
+        
         [3, 145, 115, 1, 146, 116],
         [4, 64, 40, 5, 65, 41],
         [11, 36, 16, 5, 37, 17],
         [11, 36, 12, 5, 37, 13],
   
-        // 15
+        
         [5, 109, 87, 1, 110, 88],
         [5, 65, 41, 5, 66, 42],
         [5, 54, 24, 7, 55, 25],
         [11, 36, 12, 7, 37, 13],
   
-        // 16
+        
         [5, 122, 98, 1, 123, 99],
         [7, 73, 45, 3, 74, 46],
         [15, 43, 19, 2, 44, 20],
         [3, 45, 15, 13, 46, 16],
   
-        // 17
+        
         [1, 135, 107, 5, 136, 108],
         [10, 74, 46, 1, 75, 47],
         [1, 50, 22, 15, 51, 23],
         [2, 42, 14, 17, 43, 15],
   
-        // 18
+        
         [5, 150, 120, 1, 151, 121],
         [9, 69, 43, 4, 70, 44],
         [17, 50, 22, 1, 51, 23],
         [2, 42, 14, 19, 43, 15],
   
-        // 19
+        
         [3, 141, 113, 4, 142, 114],
         [3, 70, 44, 11, 71, 45],
         [17, 47, 21, 4, 48, 22],
         [9, 39, 13, 16, 40, 14],
   
-        // 20
+        
         [3, 135, 107, 5, 136, 108],
         [3, 67, 41, 13, 68, 42],
         [15, 54, 24, 5, 55, 25],
         [15, 43, 15, 10, 44, 16],
   
-        // 21
+        
         [4, 144, 116, 4, 145, 117],
         [17, 68, 42],
         [17, 50, 22, 6, 51, 23],
         [19, 46, 16, 6, 47, 17],
   
-        // 22
+        
         [2, 139, 111, 7, 140, 112],
         [17, 74, 46],
         [7, 54, 24, 16, 55, 25],
         [34, 37, 13],
   
-        // 23
+        
         [4, 151, 121, 5, 152, 122],
         [4, 75, 47, 14, 76, 48],
         [11, 54, 24, 14, 55, 25],
         [16, 45, 15, 14, 46, 16],
   
-        // 24
+        
         [6, 147, 117, 4, 148, 118],
         [6, 73, 45, 14, 74, 46],
         [11, 54, 24, 16, 55, 25],
         [30, 46, 16, 2, 47, 17],
   
-        // 25
+        
         [8, 132, 106, 4, 133, 107],
         [8, 75, 47, 13, 76, 48],
         [7, 54, 24, 22, 55, 25],
         [22, 45, 15, 13, 46, 16],
   
-        // 26
+        
         [10, 142, 114, 2, 143, 115],
         [19, 74, 46, 4, 75, 47],
         [28, 50, 22, 6, 51, 23],
         [33, 46, 16, 4, 47, 17],
   
-        // 27
+        
         [8, 152, 122, 4, 153, 123],
         [22, 73, 45, 3, 74, 46],
         [8, 53, 23, 26, 54, 24],
         [12, 45, 15, 28, 46, 16],
   
-        // 28
+        
         [3, 147, 117, 10, 148, 118],
         [3, 73, 45, 23, 74, 46],
         [4, 54, 24, 31, 55, 25],
         [11, 45, 15, 31, 46, 16],
   
-        // 29
+        
         [7, 146, 116, 7, 147, 117],
         [21, 73, 45, 7, 74, 46],
         [1, 53, 23, 37, 54, 24],
         [19, 45, 15, 26, 46, 16],
   
-        // 30
+        
         [5, 145, 115, 10, 146, 116],
         [19, 75, 47, 10, 76, 48],
         [15, 54, 24, 25, 55, 25],
         [23, 45, 15, 25, 46, 16],
   
-        // 31
+        
         [13, 145, 115, 3, 146, 116],
         [2, 74, 46, 29, 75, 47],
         [42, 54, 24, 1, 55, 25],
         [23, 45, 15, 28, 46, 16],
   
-        // 32
+        
         [17, 145, 115],
         [10, 74, 46, 23, 75, 47],
         [10, 54, 24, 35, 55, 25],
         [19, 45, 15, 35, 46, 16],
   
-        // 33
+        
         [17, 145, 115, 1, 146, 116],
         [14, 74, 46, 21, 75, 47],
         [29, 54, 24, 19, 55, 25],
         [11, 45, 15, 46, 46, 16],
   
-        // 34
+        
         [13, 145, 115, 6, 146, 116],
         [14, 74, 46, 23, 75, 47],
         [44, 54, 24, 7, 55, 25],
         [59, 46, 16, 1, 47, 17],
   
-        // 35
+        
         [12, 151, 121, 7, 152, 122],
         [12, 75, 47, 26, 76, 48],
         [39, 54, 24, 14, 55, 25],
         [22, 45, 15, 41, 46, 16],
   
-        // 36
+        
         [6, 151, 121, 14, 152, 122],
         [6, 75, 47, 34, 76, 48],
         [46, 54, 24, 10, 55, 25],
         [2, 45, 15, 64, 46, 16],
   
-        // 37
+        
         [17, 152, 122, 4, 153, 123],
         [29, 74, 46, 14, 75, 47],
         [49, 54, 24, 10, 55, 25],
         [24, 45, 15, 46, 46, 16],
   
-        // 38
+        
         [4, 152, 122, 18, 153, 123],
         [13, 74, 46, 32, 75, 47],
         [48, 54, 24, 14, 55, 25],
         [42, 45, 15, 32, 46, 16],
   
-        // 39
+        
         [20, 147, 117, 4, 148, 118],
         [40, 75, 47, 7, 76, 48],
         [43, 54, 24, 22, 55, 25],
         [10, 45, 15, 67, 46, 16],
   
-        // 40
+        
         [19, 148, 118, 6, 149, 119],
         [18, 75, 47, 31, 76, 48],
         [34, 54, 24, 34, 55, 25],
@@ -1586,9 +1556,9 @@ import { logoUrl } from "../config/logo";
       return _this;
     }();
   
-    //---------------------------------------------------------------------
-    // qrBitBuffer
-    //---------------------------------------------------------------------
+    
+    
+    
   
     var qrBitBuffer = function() {
   
@@ -1633,9 +1603,9 @@ import { logoUrl } from "../config/logo";
       return _this;
     };
   
-    //---------------------------------------------------------------------
-    // qrNumber
-    //---------------------------------------------------------------------
+    
+    
+    
   
     var qrNumber = function(data) {
   
@@ -1690,9 +1660,9 @@ import { logoUrl } from "../config/logo";
       return _this;
     };
   
-    //---------------------------------------------------------------------
-    // qrAlphaNum
-    //---------------------------------------------------------------------
+    
+    
+    
   
     var qrAlphaNum = function(data) {
   
@@ -1753,9 +1723,9 @@ import { logoUrl } from "../config/logo";
       return _this;
     };
   
-    //---------------------------------------------------------------------
-    // qr8BitByte
-    //---------------------------------------------------------------------
+    
+    
+    
   
     var qr8BitByte = function(data) {
   
@@ -1782,9 +1752,9 @@ import { logoUrl } from "../config/logo";
       return _this;
     };
   
-    //---------------------------------------------------------------------
-    // qrKanji
-    //---------------------------------------------------------------------
+    
+    
+    
   
     var qrKanji = function(data) {
   
@@ -1796,7 +1766,7 @@ import { logoUrl } from "../config/logo";
         throw 'sjis not supported.';
       }
       !function(c, code) {
-        // self test for sjis support.
+        
         var test = stringToBytes(c);
         if (test.length != 2 || ( (test[0] << 8) | test[1]) != code) {
           throw 'sjis not supported.';
@@ -1848,13 +1818,13 @@ import { logoUrl } from "../config/logo";
       return _this;
     };
   
-    //=====================================================================
-    // GIF Support etc.
-    //
+    
+    
+    
   
-    //---------------------------------------------------------------------
-    // byteArrayOutputStream
-    //---------------------------------------------------------------------
+    
+    
+    
   
     var byteArrayOutputStream = function() {
   
@@ -1905,9 +1875,9 @@ import { logoUrl } from "../config/logo";
       return _this;
     };
   
-    //---------------------------------------------------------------------
-    // base64EncodeOutputStream
-    //---------------------------------------------------------------------
+    
+    
+    
   
     var base64EncodeOutputStream = function() {
   
@@ -1924,7 +1894,7 @@ import { logoUrl } from "../config/logo";
   
       var encode = function(n) {
         if (n < 0) {
-          // error.
+          
         } else if (n < 26) {
           return 0x41 + n;
         } else if (n < 52) {
@@ -1960,7 +1930,7 @@ import { logoUrl } from "../config/logo";
         }
   
         if (_length % 3 != 0) {
-          // padding
+          
           var padlen = 3 - _length % 3;
           for (var i = 0; i < padlen; i += 1) {
             _base64 += '=';
@@ -1975,9 +1945,9 @@ import { logoUrl } from "../config/logo";
       return _this;
     };
   
-    //---------------------------------------------------------------------
-    // base64DecodeInputStream
-    //---------------------------------------------------------------------
+    
+    
+    
   
     var base64DecodeInputStream = function(str) {
   
@@ -2006,7 +1976,7 @@ import { logoUrl } from "../config/logo";
             _buflen = 0;
             return -1;
           } else if (c.match(/^\s$/) ) {
-            // ignore if whitespace.
+            
             continue;
           }
   
@@ -2038,9 +2008,9 @@ import { logoUrl } from "../config/logo";
       return _this;
     };
   
-    //---------------------------------------------------------------------
-    // gifImage (B/W)
-    //---------------------------------------------------------------------
+    
+    
+    
   
     var gifImage = function(width, height) {
   
@@ -2056,36 +2026,36 @@ import { logoUrl } from "../config/logo";
   
       _this.write = function(out) {
   
-        //---------------------------------
-        // GIF Signature
+        
+        
   
         out.writeString('GIF87a');
   
-        //---------------------------------
-        // Screen Descriptor
+        
+        
   
         out.writeShort(_width);
         out.writeShort(_height);
   
-        out.writeByte(0x80); // 2bit
+        out.writeByte(0x80); 
         out.writeByte(0);
         out.writeByte(0);
   
-        //---------------------------------
-        // Global Color Map
+        
+        
   
-        // black
+        
         out.writeByte(0x00);
         out.writeByte(0x00);
         out.writeByte(0x00);
   
-        // white
+        
         out.writeByte(0xff);
         out.writeByte(0xff);
         out.writeByte(0xff);
   
-        //---------------------------------
-        // Image Descriptor
+        
+        
   
         out.writeString(',');
         out.writeShort(0);
@@ -2094,11 +2064,11 @@ import { logoUrl } from "../config/logo";
         out.writeShort(_height);
         out.writeByte(0);
   
-        //---------------------------------
-        // Local Color Map
+        
+        
   
-        //---------------------------------
-        // Raster Data
+        
+        
   
         var lzwMinCodeSize = 2;
         var raster = getLZWRaster(lzwMinCodeSize);
@@ -2117,8 +2087,8 @@ import { logoUrl } from "../config/logo";
         out.writeBytes(raster, offset, raster.length - offset);
         out.writeByte(0x00);
   
-        //---------------------------------
-        // GIF Terminator
+        
+        
         out.writeString(';');
       };
   
@@ -2163,7 +2133,7 @@ import { logoUrl } from "../config/logo";
         var endCode = (1 << lzwMinCodeSize) + 1;
         var bitLength = lzwMinCodeSize + 1;
   
-        // Setup LZWTable
+        
         var table = lzwTable();
   
         for (var i = 0; i < clearCode; i += 1) {
@@ -2175,7 +2145,7 @@ import { logoUrl } from "../config/logo";
         var byteOut = byteArrayOutputStream();
         var bitOut = bitOutputStream(byteOut);
   
-        // clear code
+        
         bitOut.write(clearCode, bitLength);
   
         var dataIndex = 0;
@@ -2211,7 +2181,7 @@ import { logoUrl } from "../config/logo";
   
         bitOut.write(table.indexOf(s), bitLength);
   
-        // end code
+        
         bitOut.write(endCode, bitLength);
   
         bitOut.flush();
@@ -2273,17 +2243,17 @@ import { logoUrl } from "../config/logo";
       return 'data:image/gif;base64,' + base64;
     };
   
-    //---------------------------------------------------------------------
-    // returns qrcode function.
+    
+    
   
     return qrcode;
   }();
   
-  // multibyte support
+  
   !function() {
   
     qrcode.stringToBytesFuncs['UTF-8'] = function(s) {
-      // http://stackoverflow.com/questions/18729405/how-to-convert-utf8-string-to-byte-array
+      
       function toUTF8Array(str) {
         var utf8 = [];
         for (var i=0; i < str.length; i++) {
@@ -2298,12 +2268,12 @@ import { logoUrl } from "../config/logo";
                 0x80 | ((charcode>>6) & 0x3f),
                 0x80 | (charcode & 0x3f));
           }
-          // surrogate pair
+          
           else {
             i++;
-            // UTF-16 encodes 0x10000-0x10FFFF by
-            // subtracting 0x10000 and splitting the
-            // 20 bits of 0x0-0xFFFFF into two halves
+            
+            
+            
             charcode = 0x10000 + (((charcode & 0x3ff)<<10)
               | (str.charCodeAt(i) & 0x3ff));
             utf8.push(0xf0 | (charcode >>18),
@@ -2322,7 +2292,7 @@ import { logoUrl } from "../config/logo";
   return qrcode;
   })();
 
-  /* ---------- QR → SVG (verbatim: Doner প্যানেল) ---------- */
+  
   export function qrSVG(txt,size=72,opt={}){
     const ecl=opt.ecl||"M", dark=opt.dark||"#0b1f19", light=opt.light||"#ffffff", quiet=opt.quiet??2;
     let q=null;
@@ -2335,22 +2305,21 @@ import { logoUrl } from "../config/logo";
       +`<rect width="${t}" height="${t}" fill="${light}"/><path d="${d}" fill="${dark}"/></svg>`;
   }
 
-  /* ---------- ছোট helpers (verbatim: Doner প্যানেল) ---------- */
+  
   const D9=["০","১","২","৩","৪","৫","৬","৭","৮","৯"];
   const bnDigits=v=>String(v??"").replace(/\d/g,d=>D9[d]);
   const dayDiff=a=>Math.floor((new Date().setHours(0,0,0,0)-new Date(a+"T00:00:00").setHours(0,0,0,0))/864e5);
 
-  /* ডিফল্ট অবতার — ছবি না থাকলে (verbatim: Doner প্যানেলের AV) */
+  
   export const AV=(g,p)=>p||("data:image/svg+xml;utf8,"+encodeURIComponent(g==="মহিলা"
    ?`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect width="80" height="80" fill="#ffe4ef"/><path d="M18 25c0-9 7-13 22-13s22 4 22 13v8c0 9-7 13-22 13S18 42 18 33z" fill="#d76a9a"/><circle cx="40" cy="53" r="14" fill="#e8a8c2"/><path d="M22 70c0-11 8-17 18-17s18 6 18 17z" fill="#d76a9a"/></svg>`
    :`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect width="80" height="80" fill="#dcedfb"/><circle cx="40" cy="29" r="17" fill="#4a90d9"/><path d="M20 69c0-14 9-22 20-22s20 8 20 22z" fill="#4a90d9"/></svg>`));
 
-  /* ক্লাবের তথ্য — SITE কনফিগ থেকে (Doner প্যানেলের CLUB-এর হুবহু গঠন) */
+  
   export const CARD_CLUB={name:SITE.name,en:SITE.nameEn,
     phone:SITE.phone,site:SITE.website,addr:SITE.address};
 
-  /* কার্ডের স্ট্যাটাস — Doner প্যানেলের cardStat()-এর হুবহু নিয়ম।
-     tp(bn,en) অনুবাদক ঐচ্ছিক (Doner প্যানেল নিজের i18n tp পাঠায়)। */
+  
   export function cardStatFor(sub,tp){
     const t2=tp||((b)=>b);
     const rest=sub.lastDonation?Math.max(0,90-dayDiff(sub.lastDonation)):0;
@@ -2358,7 +2327,7 @@ import { logoUrl } from "../config/logo";
       :sub.available!==false?{t:"রক্তদানে প্রস্তুত",c:""}:{t:"আপাতত বন্ধ",c:"off"};
   }
 
-  /* subject-এ ডিফল্ট বসানো — stat/club/logo না দিলে এখান থেকে আসে */
+  
   export function withCardDefaults(subject){
     const s=Object.assign({},subject||{});
     s.club=s.club||CARD_CLUB;
@@ -2368,11 +2337,7 @@ import { logoUrl } from "../config/logo";
     return s;
   }
 
-  /* vCard payload — scanning saves the donor as a phone contact.
-     Kept compact on purpose: Bangla is 3 bytes/char in UTF-8, and a smaller
-     payload means fewer QR modules, which is what makes the printed
-     22mm card QR reliably scannable by a phone camera.
-     (verbatim নিয়ম — এখন কার্ডের subject-এর তথ্য থেকেই তৈরি হয়) */
+  
   export function vcardTextOf(sub){
     const ec=v=>String(v??"").replace(/([,;\\])/g,"\\$1").replace(/\n/g,"\\n");
     const ph=String(sub.phone||"").replace(/\D/g,""), intl=ph.length===11?"+88"+ph:ph;
@@ -2387,7 +2352,7 @@ import { logoUrl } from "../config/logo";
     return L.join("\r\n");
   }
 
-  /* ══════════ CARD → PNG (verbatim: Doner প্যানেলের drawFront/drawBack/drawTall) ══════════ */
+  
   const CF='"SolaimanLipi","Noto Sans Bengali","Hind Siliguri","Nirmala UI",sans-serif';
   function themeCols(t){return{green:["#0d7a52","#075c3c","#03301f"],red:["#c62630","#8d1017","#4d060b"],
     dark:["#2b3a35","#18241f","#0a110e"]}[t||"green"]}
@@ -2406,8 +2371,7 @@ import { logoUrl } from "../config/logo";
     if(cur)out.push(cur);return out;
   }
 
-  /* 86×54mm @ ~300dpi → 1016×638. All positions derive from W so the
-     layout stays correct at any output size. */
+  
   export async function drawCardFront(x,W,H,S,subject){
     const sub=withCardDefaults(subject),st=sub.stat,c=themeCols(sub.cardTheme),CLUB=sub.club;
     const pad=W*.033;
@@ -2421,13 +2385,13 @@ import { logoUrl } from "../config/logo";
     x.strokeStyle="rgba(255,255,255,.05)";x.lineWidth=W*.026;
     x.beginPath();x.arc(W*1.05,H*1.16,W*.21,0,7);x.stroke();x.restore();
 
-    /* ── header ── */
+    
     const hH=H*.145, hcy=hH/2;
     const lgR=W*.0165;
     x.fillStyle="#fff";x.beginPath();x.arc(pad+lgR,hcy,lgR,0,7);x.fill();
     const lg=await svgImg(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="60" height="60"><path d="M12 3.4s6.2 6.1 6.2 10.1a6.2 6.2 0 1 1-12.4 0C5.8 9.5 12 3.4 12 3.4z" fill="#c8101d"/></svg>`);
     if(lg)x.drawImage(lg,pad+lgR*.42,hcy-lgR*.62,lgR*1.16,lgR*1.16);
-    /* verified pill (right) */
+    
     const vt="যাচাইকৃত";
     x.font=`800 ${W*.0165}px `+CF;
     const vw=x.measureText(vt).width+W*.052, vh=H*.052, vx=W-pad-vw, vy=hcy-vh/2;
@@ -2437,7 +2401,7 @@ import { logoUrl } from "../config/logo";
     x.strokeStyle=c[1];x.lineWidth=W*.0026;x.lineCap="round";x.lineJoin="round";
     x.beginPath();x.moveTo(ccx-cr*.45,hcy);x.lineTo(ccx-cr*.05,hcy+cr*.42);x.lineTo(ccx+cr*.5,hcy-cr*.38);x.stroke();
     x.textAlign="left";x.textBaseline="middle";x.fillStyle="#fff";x.fillText(vt,ccx+cr+W*.007,hcy+W*.001);
-    /* club name (fills space between logo and pill) */
+    
     const nx=pad+lgR*2+W*.011, navail=vx-nx-W*.012;
     x.fillStyle="#fff";
     const cs=fitText(x,CLUB.name,navail,W*.0285,W*.019,"800");
@@ -2448,10 +2412,10 @@ import { logoUrl } from "../config/logo";
     x.strokeStyle="rgba(255,255,255,.16)";x.lineWidth=Math.max(1,W*.001);
     x.beginPath();x.moveTo(0,hH);x.lineTo(W,hH);x.stroke();
 
-    /* ── footer band (reserve first) ── */
+    
     const fH=H*.108, fY=H-fH;
 
-    /* ── QR column (right), vertically inside body ── */
+    
     const bodyBot=fY-H*.028;
     const capH=H*.058;
     const qs=Math.min(bodyBot-hH-H*.045-capH, W*.255);
@@ -2463,7 +2427,7 @@ import { logoUrl } from "../config/logo";
     x.textAlign="center";x.fillStyle="rgba(255,255,255,.7)";x.font=`700 ${H*.028}px `+CF;
     x.fillText("স্ক্যান করুন",qx+qs/2,qy+qs+capH*.68);
 
-    /* ── photo + blood chip (left) ── */
+    
     const ps=H*.375, chH=H*.105, chGap=H*.026;
     const leftH=ps+chGap+chH;
     const px=pad, py=hH+(bodyBot-hH-leftH)/2;
@@ -2478,7 +2442,7 @@ import { logoUrl } from "../config/logo";
     x.textAlign="center";x.font=`800 ${H*.072}px `+CF;
     x.fillText(sub.bloodGroup,px+ps/2,chY+chH*.74);
 
-    /* ── centre column (vertically centred) ── */
+    
     const tx=px+ps+W*.028, tw=qx-tx-W*.026;
     x.textAlign="left";
     const ns=fitText(x,sub.name,tw,H*.095,H*.052,"800");
@@ -2504,7 +2468,7 @@ import { logoUrl } from "../config/logo";
       x.beginPath();x.moveTo(tx,ty+rowH*.28);x.lineTo(tx+tw,ty+rowH*.28);x.stroke();
       ty+=rowH});
 
-    /* ── footer ── */
+    
     x.fillStyle="rgba(0,0,0,.26)";x.fillRect(0,fY,W,fH);
     x.textBaseline="middle";
     x.textAlign="left";x.fillStyle="#fff";x.font=`800 ${W*.0205}px ui-monospace,Menlo,monospace`;
@@ -2529,7 +2493,7 @@ import { logoUrl } from "../config/logo";
     x.fillStyle=dk;x.fillRect(0,0,W,bh);
     x.textAlign="center";x.fillStyle="#fff";x.font=`800 ${13*S}px `+CF;
     x.fillText("রক্ত দিন · জীবন বাঁচান",W/2,bh/2+5*S);
-    /* QR block sized to fit between header and footer */
+    
     const capH=26*S, avail=H-bh-ftH-16*S-capH;
     const qs=Math.min(avail,168*S), qx=W-pad-qs, qy=bh+(H-bh-ftH-qs-capH)/2;
     x.fillStyle="#fff";x.shadowColor="rgba(6,60,40,.18)";x.shadowBlur=13*S;x.shadowOffsetY=3*S;
@@ -2539,7 +2503,7 @@ import { logoUrl } from "../config/logo";
     if(qi)x.drawImage(qi,qx+qpad,qy+qpad,qs-qpad*2,qs-qpad*2);
     x.fillStyle=ink;x.globalAlpha=.62;x.font=`800 ${9.5*S}px `+CF;
     x.fillText("স্ক্যান করলে সব তথ্য পাবেন",qx+qs/2,qy+qs+15*S);x.globalAlpha=1;
-    /* left column */
+    
     const lx=pad, lw=qx-lx-20*S;
     let y=bh+30*S;
     x.textAlign="left";
@@ -2556,11 +2520,11 @@ import { logoUrl } from "../config/logo";
     y+=16*S;x.font=`600 ${10*S}px `+CF;x.fillStyle=ink;
     wrapLines(x,"QR স্ক্যান করে কার্ডধারীর সাথে যোগাযোগ করুন অথবা উপরের হটলাইনে জানান।",lw)
       .forEach(t=>{x.fillText(t,lx,y);y+=14*S});
-    /* footer */
+    
     x.textAlign="center";x.globalAlpha=.5;x.font=`700 ${9*S}px `+CF;x.fillStyle=ink;
     x.fillText("এই কার্ড "+CLUB.name+"-এর সম্পত্তি · হস্তান্তরযোগ্য নয়",W/2,H-9*S);x.globalAlpha=1;
   }
-  /* 900×1600 share card */
+  
   export async function drawCardTall(x,W,H,S,subject){
     const sub=withCardDefaults(subject),st=sub.stat,c=themeCols(sub.cardTheme),CLUB=sub.club;
     const g=x.createLinearGradient(0,0,W,H);g.addColorStop(0,c[0]);g.addColorStop(.5,c[1]);g.addColorStop(1,c[2]);
@@ -2569,7 +2533,7 @@ import { logoUrl } from "../config/logo";
     rg.addColorStop(0,"rgba(255,255,255,.16)");rg.addColorStop(1,"rgba(255,255,255,0)");
     x.fillStyle=rg;x.fillRect(0,0,W,H);
     const pad=W*.055;
-    /* bottom-anchored QR block */
+    
     const qs=W*.30, capGap=W*.042, qy=H-pad*1.1-capGap-qs;
     x.fillStyle="#fff";rr(x,W/2-qs/2,qy,qs,qs,W*.014);x.fill();
     const qp=qs*.075;
@@ -2577,7 +2541,7 @@ import { logoUrl } from "../config/logo";
     if(qi)x.drawImage(qi,W/2-qs/2+qp,qy+qp,qs-qp*2,qs-qp*2);
     x.textAlign="center";x.fillStyle="rgba(255,255,255,.75)";x.font=`700 ${W*.0285}px `+CF;
     x.fillText("স্ক্যান করে কন্টাক্টে যোগ করুন",W/2,qy+qs+capGap*.85);
-    /* header */
+    
     const tl=await loadImg(sub.logo), tlR=W*.082, tly=H*.052;
     if(tl){x.save();x.beginPath();x.arc(W/2,tly,tlR,0,7);x.fillStyle="#fff";x.fill();x.clip();
       x.drawImage(tl,W/2-tlR,tly-tlR,tlR*2,tlR*2);x.restore();}
@@ -2585,24 +2549,24 @@ import { logoUrl } from "../config/logo";
     x.fillText(CLUB.name,W/2,tly+tlR+W*.055);
     x.fillStyle="rgba(255,255,255,.66)";x.font=`700 ${W*.031}px `+CF;
     x.fillText("ডিজিটাল ডোনার কার্ড",W/2,tly+tlR+W*.095);
-    /* photo */
+    
     const pr=W*.152,pcy=H*.245;
     const im=await loadImg(AV(sub.gender,sub.photo));
     x.save();x.beginPath();x.arc(W/2,pcy,pr,0,7);x.clip();
     if(im)x.drawImage(im,W/2-pr,pcy-pr,pr*2,pr*2);
     else{x.fillStyle="rgba(255,255,255,.2)";x.fillRect(W/2-pr,pcy-pr,pr*2,pr*2)}x.restore();
     x.strokeStyle="rgba(255,255,255,.88)";x.lineWidth=W*.0095;x.beginPath();x.arc(W/2,pcy,pr,0,7);x.stroke();
-    /* name */
+    
     x.fillStyle="#fff";const ns=fitText(x,sub.name,W-pad*2.4,W*.068,W*.04,"800");
     x.fillText(sub.name,W/2,pcy+pr+ns*.95);
     x.fillStyle="rgba(255,255,255,.7)";x.font=`700 ${W*.031}px `+CF;
     x.fillText("স্বেচ্ছায় রক্তদাতা",W/2,pcy+pr+ns*.95+W*.045);
-    /* blood */
+    
     const br=W*.093,bcy=pcy+pr+ns*.95+W*.045+br+W*.05;
     x.fillStyle="#fff";x.beginPath();x.arc(W/2,bcy,br,0,7);x.fill();
     x.fillStyle=(sub.cardTheme==="red")?"#8d1017":"#c8101d";x.font=`800 ${W*.075}px `+CF;
     x.fillText(sub.bloodGroup,W/2,bcy+W*.027);
-    /* info rows spread between blood circle and QR */
+    
     const rows=[["আইডি",sub.donorId],["এলাকা",sub.area],["মোবাইল",sub.phone],["অবস্থা",st.t]];
     const top=bcy+br+W*.055, bot=qy-W*.045, step=Math.min((bot-top)/rows.length,W*.082);
     let y=top+step*.62;
@@ -2614,18 +2578,15 @@ import { logoUrl } from "../config/logo";
       y+=step});
   }
 
-  /* ---------- ফাইলনাম + ব্রাউজার ডাউনলোড (verbatim: Doner প্যানেল) ---------- */
-  /* Browsers silently drop a download filename that is not ASCII-safe, so a
-     Bangla name used to arrive as "download". Transliterate the donor id /
-     name into a safe slug and keep the readable part in the card itself. */
+  
+  
   export function safeCardFileName(name,fallback="donor"){
     const ascii=String(name||"").replace(/[^\x20-\x7E]/g,"").replace(/\s+/g,"-")
       .replace(/-+/g,"-").replace(/^-|-$/g,"");
     return ascii.length>=2?ascii:fallback;
   }
   export function dlBlob(blob,name){
-    /* the anchor must be in the document for the download attribute to be
-       honoured — a detached <a> loses the filename in several browsers */
+    
     const a=document.createElement("a");
     a.href=URL.createObjectURL(blob);
     a.download=name||"download";
@@ -2635,10 +2596,7 @@ import { logoUrl } from "../config/logo";
     setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},2000);
   }
 
-  /* ══════════ ডাউনলোড flow (verbatim: Doner প্যানেলের dlCard) ══════════
-     kind: "both" | "front" | "back" | "tall"
-     hooks.toast(msg, kind) — kind: "" | "ok" | "er" (পেজ নিজের toast-এ ম্যাপ করে)
-     সফল হলে true ফেরত দেয় (ব্যস্ত/ব্যর্থ হলে false)। */
+  
   let cardBusy=false;
   export async function downloadDonorCardImages(kind,subject,hooks={}){
     const toast=hooks.toast||(()=>{});
@@ -2667,8 +2625,8 @@ import { logoUrl } from "../config/logo";
     return done;
   }
 
-  /* ══════════ "কার্ড নামান" sheet ══════════ */
-  /* আইকন — Doner প্যানেলের ICON.info/down/x-এর হুবহু SVG */
+  
+  
   const SHEET_I=(p,sz=22)=>`<svg width="${sz}" height="${sz}" viewBox="0 0 24 24" fill="none" stroke="currentColor"
     stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
   const SHEET_ICON={
@@ -2677,9 +2635,7 @@ import { logoUrl } from "../config/logo";
     x:s=>SHEET_I(`<path d="M18 6 6 18M6 6l12 12"/>`,s)
   };
 
-  /* sheet-এর ভেতরের ৩টি অপশন + নোট — একক মার্কআপ (Doner প্যানেলের sheetDownload-এর body)।
-     Doner প্যানেল নিজের sheet()-এ এই body বসায়; মেইন ওয়েবসাইট নিচের
-     openDonorCardDownloadSheet() ব্যবহার করে — মার্কআপ এক জায়গাতেই থাকে। */
+  
   export function donorCardSheetBodyHTML(infoIcon){
     return `<div class="opt on" data-k="both"><i></i><div><b>ছাপানোর কার্ড — দুই পাশ</b>
          <small>৮৬×৫৪ মিমি, ATM কার্ডের মাপ · ১০১৬×৬৩৮ px</small>
@@ -2691,9 +2647,7 @@ import { logoUrl } from "../config/logo";
        <div class="note i" style="margin-top:11px">${infoIcon||SHEET_ICON.info(16)}<span>যেকোনো কার্ডের QR স্ক্যান করলে নাম, মোবাইল, রক্তের গ্রুপ, এলাকা ও আইডি দেখা যাবে এবং ফোনে কন্টাক্ট হিসেবে সেভ করা যাবে।</span></div>`;
   }
 
-  /* মেইন ওয়েবসাইটের জন্য sheet-এর scoped CSS — Doner প্যানেলের .ov/.sheet/.opt/.note/.btn
-     রুলের হুবহু কপি, শুধু .cdk- prefix-এ scope করা যাতে সাইটের নিজস্ব ক্লাসের সাথে
-     কোনো সংঘর্ষ না হয় (z-index সাইটের modal(100)-এর উপরে)। */
+  
   const SHEET_CSS=`
 .cdk-ov{position:fixed;inset:0;z-index:140;background:rgba(8,20,16,.5);animation:cdkfade .16s;backdrop-filter:blur(2px)}
 @keyframes cdkfade{from{opacity:0}to{opacity:1}}
@@ -2750,9 +2704,7 @@ import { logoUrl } from "../config/logo";
     document.head.appendChild(st);
   }
 
-  /* মেইন ওয়েবসাইটে "কার্ড নামান" sheet খোলে — Doner প্যানেলের sheetDownload()-এর
-     হুবহু আচরণ: ৩টি অপশন (ডিফল্ট "both"), বাতিল/ওভারলে-ক্লিকে বন্ধ,
-     "নামান" চাপলে onDownload(kind)। */
+  
   export function openDonorCardDownloadSheet(onDownload){
     ensureSheetCss();
     const ov=document.createElement("div");ov.className="cdk-ov";

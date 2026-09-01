@@ -1,20 +1,4 @@
-/**
- * CBDC — Realtime Database access layer
- * ═══════════════════════════════════════════════════════════════════════════
- *
- *  অ্যাপের **একমাত্র** ডাটাবেস হলো Firebase Realtime Database। Firestore আর
- *  ব্যবহার হয় না। পেজগুলো সরাসরি `firebase/database` আমদানি না করে এখানকার
- *  ছোট, টাইপ-করা helper গুলো ব্যবহার করে — ফলে:
- *
- *    • সব জায়গায় একই data source ও একই normalisation নিয়ম থাকে,
- *    • Add / Edit / Delete করলে `watchList()` এর মাধ্যমে যুক্ত সব স্ক্রিনে
- *      সঙ্গে সঙ্গে Live Update হয় (কোনো manual refresh বা দ্বিতীয়বার লেখা লাগে না),
- *    • কোনো hardcoded / demo data নেই — যা দেখা যায়, তার সবই ডাটাবেসের বাস্তব তথ্য।
- *
- *  Data shape: প্রতিটি top-level node একটি map — `donors/{id} = {...}`।
- *  পড়ার সময় সেটি `{ id, ...value }` অবজেক্টের array-তে রূপান্তরিত হয়, যাতে
- *  পুরোনো (Firestore-যুগের) কোড অপরিবর্তিত থাকে।
- */
+
 
 import {
   ref,
@@ -38,22 +22,17 @@ import { getRtdb } from "./firebase";
 
 export type Row = Record<string, any> & { id: string };
 
-/** সার্ভার-সময় (RTDB placeholder) — createdAt/updatedAt-এ ব্যবহার করুন। */
+
 export const serverTime = rtdbServerTimestamp;
 
-/** ISO string — RTDB-তে টাইমস্ট্যাম্প পড়া সহজ রাখতে অনেক জায়গায় এটাই যথেষ্ট। */
+
 export const nowIso = (): string => new Date().toISOString();
 
 function db(): Database | null {
   return getRtdb();
 }
 
-/**
- * RTDB Security Rules-এর কারণে read ব্লক হয়েছে কি না।
- * SDK-তে error.code = "PERMISSION_DENIED" (v8-style) অথবা "database/permission-denied"
- * (modular) — দুটোই ধরা হয়। Denied read আবার চেষ্টা করা নিরর্থক — ফলে অপ্রয়োজনীয়
- * network round-trip ও দীর্ঘ loading এড়ানো যায়।
- */
+
 export function isPermissionDenied(err: unknown): boolean {
   try {
     const anyErr = err as any;
@@ -70,11 +49,7 @@ export function isPermissionDenied(err: unknown): boolean {
   }
 }
 
-/**
- * `getRow`-এর মতোই একটি রেকর্ড পড়া, কিন্তু error গিলে ফেলে না —
- * `{ row, denied }` ফেরত দেয়। এতে caller জানতে পারে রেকর্ড সত্যিই নেই,
- * নাকি rules-এর কারণে পড়াই যায়নি (তখন পরবর্তী fallback query বাদ দেওয়া যায়)।
- */
+
 export async function probeRow(
   node: string,
   id: string
@@ -94,22 +69,22 @@ export async function probeRow(
   }
 }
 
-/** Legacy year counter — নতুন ইস্যুতে ব্যবহার হয় না; পুরোনো rules-এর সাথে সামঞ্জস্য। */
+
 export const DONOR_COUNTER_NODE = "_meta/donorCounter";
-/** In-flight serial reservation — `_meta/donorSerials/<0001>`। Occupancy নয়; শুধু concurrent claim। */
+
 export const DONOR_SERIALS_NODE = "_meta/donorSerials";
 
 const DONOR_ID_RE = /^CBDC-(\d{4})-(\d{4})$/i;
-/** তাজা in-flight claim — এই সময়ের মধ্যে দ্বিতীয় registration একই serial নেয় না। */
+
 const CLAIM_FRESH_MS = 45_000;
 
-/** RTDB-তে ফরম্যাট করা Donor UID: CBDC-<issueYear>-<global 4-digit serial>। */
+
 export function formatDonorId(seq: number | string, year: number = new Date().getFullYear()): string {
   const n = Math.max(0, Math.floor(Number(seq) || 0));
   return `CBDC-${year}-${String(n).padStart(4, "0")}`;
 }
 
-/** CBDC-YYYY-XXXX থেকে global serial (XXXX)। malformed হলে 0। Existing ID বদলায় না। */
+
 export function parseDonorSerial(id: unknown): number {
   const m = String(id || "").trim().match(DONOR_ID_RE);
   if (!m) return 0;
@@ -133,14 +108,11 @@ function parseClaimKey(k: string): number {
 function isFreshClaim(val: any): boolean {
   if (!val) return false;
   const at = Date.parse(String((val && (val.at || val.claimedAt)) || ""));
-  if (!Number.isFinite(at)) return false; // পুরোনো/অসম্পূর্ণ claim গ্যাপ আটকায় না
+  if (!Number.isFinite(at)) return false; 
   return Date.now() - at < CLAIM_FRESH_MS;
 }
 
-/**
- * Occupancy = শুধু বিদ্যমান donor রেকর্ডের ID (id / donorId)।
- * পুরোনো ID কখনো rewrite হয় না; শুধু serial বের করে used set তৈরি।
- */
+
 function collectSerialsFromDonors(rows: Row[]): { used: Set<number>; malformed: string[]; duplicates: string[] } {
   const used = new Set<number>();
   const seen = new Map<number, string>();
@@ -172,7 +144,7 @@ async function readDonorsOrThrow(): Promise<Row[]> {
   return snapToList(snap.val());
 }
 
-/** Existing ID audit — কখনোই existing ID বদলায় না; শুধু console report। */
+
 export async function auditDonorIds(): Promise<{ used: number[]; gaps: number[]; malformed: string[]; duplicates: string[] }> {
   const rows = await readDonorsOrThrow();
   const { used, malformed, duplicates } = collectSerialsFromDonors(rows);
@@ -189,7 +161,7 @@ export async function auditDonorIds(): Promise<{ used: number[]; gaps: number[];
       malformed,
       duplicates,
     });
-  } catch { /* ignore */ }
+  } catch {  }
   return { used: nums, gaps, malformed, duplicates };
 }
 
@@ -207,11 +179,7 @@ function mergeFreshClaims(used: Set<number>, claims: any): void {
   }
 }
 
-/**
- * পরবর্তী Donor UID: CBDC-<currentYear>-<global serial>।
- * Serial বছর বদলালে reset হয় না। Missing serial (delete/gap) সবচেয়ে ছোটটা আগে।
- * সব gap শেষে max+1। Concurrent claim atomic। Existing donor ID অপরিবর্তিত।
- */
+
 export async function nextDonorId(year: number = new Date().getFullYear()): Promise<string> {
   const d = db();
   if (!d) throw new Error("Realtime Database সংযোগ নেই।");
@@ -249,10 +217,10 @@ export async function nextDonorId(year: number = new Date().getFullYear()): Prom
       }, { applyLocally: false });
       if (!res?.committed) continue;
 
-      // Claim-এর পর আবার living donors চেক — কেউ এই serial ধরে থাকলে ছাড়িয়ে পরেরটা।
+      
       const again = collectSerialsFromDonors(await readDonorsOrThrow());
       if (again.used.has(seq)) {
-        try { await remove(claimRef); } catch { /* ignore */ }
+        try { await remove(claimRef); } catch {  }
         continue;
       }
       return formatDonorId(seq, year);
@@ -264,7 +232,7 @@ export async function nextDonorId(year: number = new Date().getFullYear()): Prom
   throw new Error("Donor UID তৈরি করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।");
 }
 
-/** Donor delete হলে serial সাথে সাথে ব্যবহারযোগ্য। অন্য ID স্পর্শ করে না। */
+
 export async function releaseDonorSerial(id: unknown): Promise<void> {
   const serial = parseDonorSerial(id);
   if (!serial) return;
@@ -277,7 +245,7 @@ export async function releaseDonorSerial(id: unknown): Promise<void> {
   }
 }
 
-/** RTDB snapshot map → `{id, ...value}` array (নাল-নিরাপদ)। */
+
 export function snapToList(value: any): Row[] {
   if (!value || typeof value !== "object") return [];
   return Object.keys(value)
@@ -289,7 +257,7 @@ export function snapToList(value: any): Row[] {
     .filter(Boolean);
 }
 
-/** এক-বার পড়া: পুরো node → array। */
+
 export async function listOnce(node: string): Promise<Row[]> {
   const d = db();
   if (!d) return [];
@@ -302,7 +270,7 @@ export async function listOnce(node: string): Promise<Row[]> {
   }
 }
 
-/** এক-বার পড়া: একটি রেকর্ড। */
+
 export async function getRow(node: string, id: string): Promise<Row | null> {
   const d = db();
   if (!d || !id) return null;
@@ -317,10 +285,7 @@ export async function getRow(node: string, id: string): Promise<Row | null> {
   }
 }
 
-/**
- * Live listener — node-এর ডেটা বদলালেই callback আবার চলে।
- * রিটার্ন করা function ডাকলে listener বন্ধ হয়।
- */
+
 export function watchList(
   node: string,
   cb: (rows: Row[]) => void,
@@ -360,7 +325,7 @@ export function watchList(
   }
 }
 
-/** একটি রেকর্ডে live listener। */
+
 export function watchRow(node: string, id: string, cb: (row: Row | null) => void): () => void {
   const d = db();
   if (!d || !id) return () => undefined;
@@ -379,7 +344,7 @@ export function watchRow(node: string, id: string, cb: (row: Row | null) => void
   }
 }
 
-/** নতুন রেকর্ড — key নিজে তৈরি হয়; নতুন id ফেরত দেয়। */
+
 export async function addRow(node: string, data: Record<string, any>): Promise<string> {
   const d = db();
   if (!d) throw new Error("Realtime Database সংযোগ নেই।");
@@ -389,7 +354,7 @@ export async function addRow(node: string, data: Record<string, any>): Promise<s
   return id;
 }
 
-/** নির্দিষ্ট id-তে রেকর্ড লেখা / সম্পূর্ণ প্রতিস্থাপন। */
+
 export async function setRow(node: string, id: string, data: Record<string, any>): Promise<void> {
   const d = db();
   if (!d) throw new Error("Realtime Database সংযোগ নেই।");
@@ -400,21 +365,21 @@ export async function setRow(node: string, id: string, data: Record<string, any>
   });
 }
 
-/** আংশিক আপডেট (merge) — অন্য ফিল্ড অক্ষত থাকে। */
+
 export async function updateRow(node: string, id: string, patch: Record<string, any>): Promise<void> {
   const d = db();
   if (!d) throw new Error("Realtime Database সংযোগ নেই।");
   await rtdbUpdate(child(ref(d, node), String(id)), { ...stripUndefined(patch), updatedAt: nowIso() });
 }
 
-/** রেকর্ড মুছে ফেলা — যুক্ত সব স্ক্রিন থেকেই সঙ্গে সঙ্গে চলে যায়। */
+
 export async function removeRow(node: string, id: string): Promise<void> {
   const d = db();
   if (!d) throw new Error("Realtime Database সংযোগ নেই।");
   await remove(child(ref(d, node), String(id)));
 }
 
-/** একটি রেকর্ডের numeric field atomic ভাবে বাড়ায় — যেমন applicationCount। */
+
 export async function incrementField(node: string, id: string, field: string, amount = 1): Promise<number> {
   const d = db();
   if (!d) throw new Error("Realtime Database সংযোগ নেই。");
@@ -427,7 +392,7 @@ export async function incrementField(node: string, id: string, field: string, am
   return Number(result.snapshot.val() ?? 0) || 0;
 }
 
-/** numeric field-কে কমপক্ষে নির্দিষ্ট মানে atomic ভাবে আনে। */
+
 export async function ensureFieldAtLeast(node: string, id: string, field: string, minimum: number): Promise<number> {
   const d = db();
   if (!d) throw new Error("Realtime Database সংযোগ নেই。");
@@ -441,19 +406,15 @@ export async function ensureFieldAtLeast(node: string, id: string, field: string
   return Number(result.snapshot.val() ?? 0) || 0;
 }
 
-/** একাধিক path একসাথে (atomic) আপডেট — যেমন `{"users/u1/role":"admin"}`। */
+
 export async function updatePaths(paths: Record<string, any>): Promise<void> {
   const d = db();
   if (!d) throw new Error("Realtime Database সংযোগ নেই।");
   await rtdbUpdate(ref(d), paths);
 }
 
-/* ══════════ Generic path helpers (Database Manager) ══════════
-   উপরের helper গুলো node/id-ভিত্তিক; এগুলো যেকোনো root-relative path-এ
-   কাজ করে। অ্যাডমিন প্যানেলের Database Manager-এ ব্যবহৃত হয়। Security Rules
-   যথারীতি প্রযোজ্য — permission না থাকলে Firebase সরাসরি error ফেরত দেয়,
-   কোনো bypass নয়। */
-/** যেকোনো path একবার পড়া — সম্পূর্ণ raw মান (object/array/scalar/null)। */
+
+
 export async function getPath(path: string): Promise<any> {
   const d = db();
   if (!d) throw new Error("Realtime Database সংযোগ নেই।");
@@ -462,8 +423,7 @@ export async function getPath(path: string): Promise<any> {
   return snap.val();
 }
 
-/** যেকোনো path-এ মান লেখা (সম্পূর্ণ প্রতিস্থাপন)। value যেকোনো JSON-compatible।
- *  null লিখলে সেই পথ মুছে যায় (RTDB-এ null = অস্তিত্বহীন)। */
+
 export async function setPath(path: string, value: any): Promise<void> {
   const d = db();
   if (!d) throw new Error("Realtime Database সংযোগ নেই।");
@@ -471,7 +431,7 @@ export async function setPath(path: string, value: any): Promise<void> {
   await set(ref(d, p), value === undefined ? null : value);
 }
 
-/** যেকোনো path মুছে ফেলা (সহ সব child)। */
+
 export async function removePath(path: string): Promise<void> {
   const d = db();
   if (!d) throw new Error("Realtime Database সংযোগ নেই।");
@@ -479,19 +439,13 @@ export async function removePath(path: string): Promise<void> {
   await remove(ref(d, p));
 }
 
-/**
- * যেকোনো path-এ live listener — raw মান বদলালেই callback চলে; unsubscribe ফেরত দেয়।
- *
- * `onErr` দিলে permission/rules-এর error সরাসরি caller-এর কাছে যায় (যেমন Database
- * Manager যাতে "অ্যাক্সেস নেই" অবস্থা দেখাতে পারে); না দিলে আগের মতো console.warn।
- */
+
 export function watchPath(
   path: string,
   cb: (value: any) => void,
   onErr?: (err: Error) => void
 ): () => void {
-  /* কোনো silent failure নয় — যদি database instance না থাকে বা setup ব্যর্থ হয়,
-     caller-কে সরাসরি error জানানো হয়, যাতে UI "লোড হচ্ছে…"-এ চিরকাল আটকে না থাকে। */
+  
   const d = db();
   if (!d) {
     const err = new Error("Firebase Realtime Database প্রস্তুত নয় (init হয়নি)।");
@@ -502,7 +456,7 @@ export function watchPath(
     return () => undefined;
   }
   const p = String(path || "").replace(/^\/+/, "");
-  const target = p ? ref(d, p) : ref(d);   /* "" → নির্দিষ্ট root reference (path edge-case এড়াতে) */
+  const target = p ? ref(d, p) : ref(d);   
   try {
     return onValue(
       target,
@@ -510,7 +464,7 @@ export function watchPath(
         try {
           cb(snap.val());
         } catch (e) {
-          /* caller-এর render error লুকিয়ে রাখা হয় না — console-এ দৃশ্যমান */
+          
           console.error("watchPath cb (" + p + "):", (e as Error)?.message);
         }
       },
@@ -524,13 +478,13 @@ export function watchPath(
     const err = new Error("watchPath setup failed: " + ((e as Error)?.message || e));
     console.error(err.message);
     if (typeof onErr === "function") {
-      try { onErr(err); } catch (_) { /* ignore */ }
+      try { onErr(err); } catch (_) {  }
     }
     return () => undefined;
   }
 }
 
-/** একটি ফিল্ডের মান দিয়ে প্রথম মিলে যাওয়া রেকর্ড খোঁজা (index দরকার)। */
+
 export async function findBy(
   node: string,
   field: string,
@@ -543,20 +497,19 @@ export async function findBy(
     const rows = snapToList(snap.val());
     return rows[0] || null;
   } catch (e) {
-    /* Rules-এ read ব্লক হলে fallback full-node read-ও অবশ্যই denied হবে —
-       নিরর্থক দ্বিতীয় round-trip এড়িয়ে সাথে সাথেই ফিরে আসি (দ্রুত loading)। */
+    
     if (isPermissionDenied(e)) {
       console.warn("rtdb findBy denied:", node, field, (e as Error)?.message);
       return null;
     }
-    // index না থাকলে RTDB warning দেয় — তখন client-side filter-এ fallback
+    
     console.warn("rtdb findBy:", node, field, (e as Error)?.message);
     const all = await listOnce(node);
     return all.find((r) => r[field] === value) || null;
   }
 }
 
-/** `undefined` মান RTDB গ্রহণ করে না — লেখার আগে সেগুলো বাদ দেওয়া হয়। */
+
 export function stripUndefined<T extends Record<string, any>>(obj: T): T {
   const out: Record<string, any> = Array.isArray(obj) ? [] : {};
   for (const k of Object.keys(obj || {})) {

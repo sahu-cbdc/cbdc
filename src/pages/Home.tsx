@@ -1,11 +1,8 @@
 // @ts-nocheck — এই ফাইলটি মূল HTML-এর JavaScript-এর verbatim (হুবহু) port।
-// রূপান্তরের সময় runtime আচরণ ১০০% অপরিবর্তিত রাখাই লক্ষ্য; তাই legacy logic-কে
-// TypeScript টাইপ-চেকিং থেকে মুক্ত রাখা হয়েছে। React shell ও shared store সম্পূর্ণ
-// typed (src/lib/store.ts ও src/lib/firebase.ts দেখুন)।
-/**
- * Home.tsx
- * React + TypeScript port of index.html — পাবলিক ওয়েবসাইট + লগইন (ডোনার সার্চ, নিবন্ধন, ইমারজেন্সি আবেদন, গ্যালারি)।
- */
+
+
+
+
 import { useEffect } from "react";
 import "../lib/store";
 import { claimEmailIdentity, lookupEmailOwner, claimLoginEntries } from "../lib/identity";
@@ -42,13 +39,10 @@ import { validateForm, clearFormErrors, attachLiveClear, setFieldError, clearFie
 import { ageFromDob, ageText, dobBounds, isValidDob, toBanglaDigits } from "../lib/age";
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
-/* প্রোফাইল কার্ড ডাউনলোড — Doner প্যানেলের working system-এর shared port
-   (src/lib/donorCard.ts)। দুই জায়গা থেকেই হুবহু একই কার্ড তৈরি হয়। */
+
 import { openDonorCardDownloadSheet, downloadDonorCardImages } from "../lib/donorCard";
 
-/* ═══════════════════════════════════════════════════════════════════
-   CSS — মূল index.html-এর <style> ব্লক হুবহু কপি
-   ═══════════════════════════════════════════════════════════════════ */
+
 const pageCss = `    @font-face {
       font-family: 'SolaimanLipi';
       font-display: swap;
@@ -1394,9 +1388,7 @@ const pageCss = `    @font-face {
     [data-theme="dark"] .website-notice-card{background:#2a2109;border-color:#67501b;color:#ead7a5}
     [data-theme="dark"] .website-notice-card h3{color:#f1cb68}`;
 
-/* ═══════════════════════════════════════════════════════════════════
-   Static UI — মূল index.html-এর <body> মার্কআপ হুবহু JSX-এ
-   ═══════════════════════════════════════════════════════════════════ */
+
 function StaticShell() {
   return (
     <>
@@ -1466,7 +1458,7 @@ function StaticShell() {
       {" "}
       <main>
         {" "}
-        {/* HOME */}
+        {}
         {" "}
         <section className="view active" id="view-home" data-view="home">
           {" "}
@@ -1730,7 +1722,7 @@ function StaticShell() {
                 {" "}
               </div>
               {" "}
-              {/* গ্যালারি সেকশন (হাত দিয়ে সোয়াইপযোগ্য স্লাইডার) */}
+              {}
               {" "}
               <div id="gallery" style={{ marginBottom: "34px" }}>
                 {" "}
@@ -1746,7 +1738,7 @@ function StaticShell() {
                 {" "}
               </div>
               {" "}
-              {/* তারপর: বাকি অংশ */}
+              {}
               {" "}
               <div className="about-grid">
                 {" "}
@@ -1894,7 +1886,7 @@ function StaticShell() {
           {" "}
         </section>
         {" "}
-        {/* REGISTER */}
+        {}
         {" "}
         <section className="view" id="view-register" data-view="register">
           <div className="page-hero">
@@ -2114,9 +2106,9 @@ function StaticShell() {
           </section>
         </section>
         {" "}
-        {/* ELIGIBILITY */}
+        {}
         {" "}
-        {/* রক্তদাতা প্রোফাইল — নিজস্ব পেজ (#profile/ID)। মেনুতে নেই, তালিকা থেকে খোলে। */}
+        {}
         {" "}
         <section className="view" id="view-profile" data-view="profile">
           {" "}
@@ -2250,7 +2242,7 @@ function StaticShell() {
           </section>
         </section>
         {" "}
-        {/* EMERGENCY */}
+        {}
         {" "}
         <section className="view" id="view-emergency" data-view="emergency">
           <div className="page-hero">
@@ -2481,7 +2473,7 @@ function StaticShell() {
           </section>
         </section>
         {" "}
-        {/* LOGIN */}
+        {}
         {" "}
         <section className="view" id="view-login" data-view="login">
           <div className="admin-wrap">
@@ -2608,7 +2600,7 @@ function StaticShell() {
           </div>
         </section>
         {" "}
-        {/* FORGOT PASSWORD — আলাদা full-page UI (Firebase built-in reset link) */}
+        {}
         {" "}
         <section className="view" id="view-forgot" data-view="forgot-password">
           <div className="reset-wrap">
@@ -2693,7 +2685,7 @@ function StaticShell() {
           </div>
         </section>
         {" "}
-        {/* RESET PASSWORD — Firebase রিসেট লিংক থেকে নতুন পাসওয়ার্ড */}
+        {}
         {" "}
         <section className="view" id="view-reset" data-view="reset-password">
           <div className="reset-wrap">
@@ -2807,7 +2799,7 @@ function StaticShell() {
           </div>
         </section>
         {" "}
-        {/* SIGNUP / নতুন অ্যাকাউন্ট তৈরি */}
+        {}
         {" "}
         <section className="view" id="view-signup" data-view="signup">
           <div className="page-hero">
@@ -3339,23 +3331,17 @@ function StaticShell() {
         </i>
       </a>
       {" "}
-      {/* Shared live state: same donors, requests and moderation queue across all pages (Realtime Database) */}
+      {}
       {" "}
     </>
   );
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   Page logic — মূল index.html-এর <script type="module"> হুবহু port
-   ═══════════════════════════════════════════════════════════════════ */
+
 function initPage() {
-  /* ==========================================================================
-     CBDC — index.html (পাবলিক ওয়েবসাইট + লগইন)
-     Main Website • Donor Search • Registration • Emergency Request • Gallery • Login
-     Firebase Login সফল হলে role অনুযায়ী পেজ: admin → অ্যাডমিন প্যানেল, moderator → মডারেটর প্যানেল
-     ========================================================================== */
   
-      /* লোগো — একমাত্র কেন্দ্রীয় উৎস (src/config/logo.ts)। কোনো পেজে আলাদা path নেই। */
+  
+      
       const LOGO_SRC = logoUrl();
   
       const BANGLA = "০১২৩৪৫৬৭৮৯";
@@ -3373,13 +3359,13 @@ function initPage() {
       const id = prefix => prefix + "-" + Date.now().toString(36).toUpperCase() + "-" + Math.random().toString(36).slice(2,6).toUpperCase();
       const toast = (message, error=false) => {
         const box = $("#toasts");
-        // একই বার্তা পরপর দেখানো ঠেকায় (ডুপ্লিকেট toast fix)
+        
         const last = box.lastElementChild;
         if(last && last.textContent === message) return;
         const item=document.createElement("div"); item.className="toast"+(error?" error":""); item.textContent=message;
         box.append(item); setTimeout(()=>item.remove(), 3800);
       };
-      /* Custom Confirm/Alert modal (replaces native confirm/alert/prompt) */
+      
       let _cmResolve=null;
       function uiDialog({type="info", title="নোটিশ", desc="", okText="ঠিক আছে", cancelText=null}){
         return new Promise(resolve=>{
@@ -3419,10 +3405,7 @@ function initPage() {
       let db=null,auth=null,storage=null;
       let fbReady=false;
 
-      /* ===== Firebase init — shared instance (src/lib/firebase.ts) =====
-         ডেটা সোর্স এখন **Firebase Realtime Database**: donors / requests / queue /
-         gallery / notices / accounts সব src/lib/store.ts-এর মাধ্যমে RTDB থেকে
-         লাইভ সিঙ্ক হয় — কোথাও কিছু বদলালে সব dashboard-এ সাথে সাথে দেখা যায়। */
+      
       async function initFirebase(){
         try{
           const shared = initSharedFirebase();
@@ -3449,16 +3432,16 @@ function initPage() {
         const s=sharedState();
         return s&&s.gallery.length ? s.gallery.filter(g=>g.status!=="draft").map(g=>({...g,imageUrl:g.imageUrl||g.url})) : [];
       };
-      const setDonors = async (list) => { /* deprecated: writes go straight to RTDB via src/lib/rtdb.ts */ };
+      const setDonors = async (list) => {  };
       const setRequests = async (list) => { };
-      // Realtime Database is the single source of truth — no demo/mock data anywhere
+      
       const daysSince = date => { if(!date)return null; const d=new Date(date+"T00:00:00"); if(Number.isNaN(d.getTime()))return null; const n=new Date(); const a=new Date(n.getFullYear(),n.getMonth(),n.getDate()); const b=new Date(d.getFullYear(),d.getMonth(),d.getDate()); return Math.floor((a-b)/86400000); };
       const canDonate = donor => donor.available !== false && !donor.suspended
         && (!donor.lastDonationDate || (daysSince(donor.lastDonationDate) !== null && daysSince(donor.lastDonationDate) >= 90));
       const statusText = status => ({pending:"অপেক্ষমাণ",approved:"অনুমোদিত",rejected:"বাতিল",resolved:"সমাধান হয়েছে"}[status] || status);
       const statusBadge = status => `<span class="status ${esc(status)}">${esc(statusText(status))}</span>`;
   
-      /* ===== Session helpers (লগইন গেট) ===== */
+      
       function clearSession(){ ["cbdcAdmin","cbdcUserEmail","cbdcUserName","cbdcUserRole","cbdcUserPermissions","cbdcAuthMode"].forEach(k=>sessionStorage.removeItem(k)); }
       function saveSession(email,name,role,perms,mode){
         sessionStorage.setItem("cbdcAdmin","1");
@@ -3468,13 +3451,10 @@ function initPage() {
         sessionStorage.setItem("cbdcUserPermissions",JSON.stringify(perms||{}));
         sessionStorage.setItem("cbdcAuthMode",mode);
       }
-      /* প্যানেল লিংক — clean path URL ("/admin" ইত্যাদি; src/lib/router.ts) */
+      
       function dashPage(role){ return role==="admin" ? pagePath("admin") : role==="moderator" ? pagePath("moderator") : appBase(); }
-      // RTDB `admins/{uid}`-এর role ফিল্ড বদলালেই ব্যবহারকারীর প্যানেল বদলে যায় (real-time)
-      /* শুধু Login ভিউ খোলার সময়ই run করা হয় (Home boot থেকে কখনোই না) —
-         নাহলে লগইন থাকা অবস্থায় Main Website/Home-এ গেলেই আবার Panel-এ
-         auto-redirect (loop) হয়ে যেত। Login-এর সময় role-based redirect
-         আগের মতোই কাজ করে (`routeClick` → dashboard/login + finishLogin)। */
+      
+      
       function renderLoginGate(){
         const role = sessionStorage.getItem("cbdcUserRole");
         const box = $("#alreadyBox"), card = $("#loginBox");
@@ -3495,21 +3475,17 @@ function initPage() {
       });
   
   
-      /* মোট রক্তদান — শুধু RTDB-র বাস্তব `donations`/`totalDonations` ফিল্ড থেকে
-         গণনা। কোনো hardcoded/demo সংখ্যা নয় (আগের `(n % 9)+1`-এর মতো invented
-         fallback সরানো হয়েছে)। ফিল্ড না থাকলে ০। নিয়মটি Doner প্যানেলের
-         toDonerDonor/toAdminDonor রূপান্তরের সাথে সঙ্গতিপূর্ণ — একই RTDB source। */
+      
       const donationCount = d => {
         const n = Number(d.donations ?? d.totalDonations);
         return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
       };
-      /* রক্তদান event-সংখ্যা = জীবন বাঁচিয়েছেন। মোট ব্যাগ আলাদা statistic। */
+      
       const totalBagCount = d => {
         const n = Number(d.totalBags ?? 0);
         return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
       };
-      /* ডোনার রেকর্ডে আদৌ রক্তদানের সংখ্যা লেখা আছে কি না — "তথ্য" সেকশনে সংখ্যা
-         না থাকলে "দেওয়া হয়নি" দেখানোর জন্য (0 থেকে "তথ্য নেই" আলাদা করতে)। */
+      
       const hasDonationCount = d => {
         const v = d.donations ?? d.totalDonations;
         return v !== undefined && v !== null && v !== "";
@@ -3560,8 +3536,7 @@ function initPage() {
         if(route==="homeAbout"){showView("home","#about");return}
         if(route==="homeGallery"){showView("home","#gallery");return}
         if(route==="dashboard"||route==="login"){
-          /* ইতিমধ্যে লগইন করা থাকলে "লগইন সক্রিয় আছে" পেজ না দেখিয়ে নিজ নিজ প্যানেলে
-             সরাসরি পাঠানো হয় — Doner→Doner, Moderator→Moderator, Admin→Admin (আইটেম ৯)। */
+          
           const _role=sessionStorage.getItem("cbdcUserRole");
           const _isStaff=sessionStorage.getItem("cbdcAdmin")==="1" && (_role==="admin"||_role==="moderator");
           if(_isStaff){ navigateToPage(_role==="admin"?"admin":"moderator"); return; }
@@ -3578,7 +3553,7 @@ function initPage() {
       $("#menuBtn")?.addEventListener("click",e=>{ e.preventDefault(); e.stopPropagation(); toggleMenu(); });
       $("#navOverlay")?.addEventListener("click",()=>closeMenu());
   
-      // Auto-close mobile menu on scroll while preserving exact scroll position
+      
       let _lastNavScrollY = window.scrollY;
       window.addEventListener("scroll", () => {
         const nav = document.getElementById("mainNav");
@@ -3607,13 +3582,13 @@ function initPage() {
       function formatDonorId(d, index=0){
         if(d.donorId && /^CBDC-\d{4}-\d+/i.test(d.donorId)) return d.donorId;
         if(d.id && /^CBDC-\d{4}-\d+/i.test(d.id)) return d.id;
-        /* Display fallback — শুধু পুরোনো/অসম্পূর্ণ ডেটার জন্য; real UID সবসময় RTDB থেকে আসে */
+        
         return `CBDC-${new Date().getFullYear()}-${String(index+1).padStart(4, '0')}`;
       }
   
       function donorCard(d, index=0){
         const donorIdVal = formatDonorId(d, index);
-        /* বয়স জন্ম তারিখ (dob) থেকে হিসাব হয় — কোনো hardcoded ডিফল্ট নেই */
+        
         const ageStr = ageText(d);
         const ageVal = ageStr === "—" ? "" : `বয়স ${ageStr}`;
         const lastDon = d.lastDonationDate ? dateText(d.lastDonationDate) : "নতুন দাতা";
@@ -3729,7 +3704,7 @@ function initPage() {
         }
       });
   
-      /* Touch Swipe & Mouse Drag (হাত দিয়ে ছবিতে যাওয়া) */
+      
       (function initGallerySwipe(){
         let startX = 0, currentX = 0, isTouching = false, isMouseDown = false, startTime = 0;
         const getSlider = () => document.getElementById('gallerySlider') || document.querySelector('.gslider');
@@ -3754,8 +3729,8 @@ function initPage() {
           const diff = currentX - startX;
           const timeTaken = Date.now() - startTime;
           if(Math.abs(diff) > 35 || (Math.abs(diff) > 15 && timeTaken < 220)){
-            if(diff < 0) moveGallery(1);   // swipe left -> next
-            else moveGallery(-1);          // swipe right -> prev
+            if(diff < 0) moveGallery(1);   
+            else moveGallery(-1);          
           }
         });
   
@@ -3811,7 +3786,7 @@ function initPage() {
           ? pageDonors.map((d, i) => donorCard(d, start + i)).join("")
           : `<div class="empty"><div class="empty-icon">🩸</div><strong>দুঃখিত, কোনো রক্তদাতা পাওয়া যায়নি!</strong><br><span>অন্য রক্তের গ্রুপ বা এলাকা নির্বাচন করে আবার চেষ্টা করুন।</span></div>`;
         
-        // Pagination controls
+        
         let pag = document.getElementById("donorPagination");
         if(!pag){
           pag = document.createElement("div");
@@ -3905,7 +3880,7 @@ function initPage() {
           : `<div class="empty"><div class="empty-icon">📋</div><strong>এই মুহূর্তে কোনো সক্রিয় জরুরি রক্তের আবেদন নেই।</strong><br><span>জরুরি প্রয়োজনে আবেদন করুন বা হেল্পলাইনে যোগাযোগ করুন।</span></div>`;
       }
       
-      // Auto-update emergency board every 15 seconds to countdown and auto-delete expired requests
+      
       setInterval(() => {
         renderBoard();
       }, 15000);
@@ -3917,11 +3892,10 @@ function initPage() {
         box.hidden=!notices.length;
       }
       function renderPublic(){ renderStats();renderSearch();renderBoard();renderWebsiteNotices();
-        /* keep the profile-page hand-off in sync with whatever is on screen (RTDB live data) */
+        
         try{ publishDonors(); }catch(e){}
         try{ syncSearchAreaOptions(); }catch(e){}
-        /* খোলা ডোনার প্রোফাইল পেজটিও live update হয় — RTDB listener-এর কল্যাণে
-           ডোনার/অ্যাডমিন তথ্য বদলালে রিলোড ছাড়াই নতুন তথ্য দেখায় */
+        
         if(currentProfId&&document.getElementById("profileBody")){
           try{ renderProfile(currentProfId); }catch(e){}
         }
@@ -3930,30 +3904,19 @@ function initPage() {
       let currentDcardId=null;
       function dcardHTML(d){
         const last= d.lastDonationDate?dateText(d.lastDonationDate):"নতুন দাতা";
-        /* প্রোফাইল ছবি — Doner প্যানেলের মতোই RTDB-র photo (ImgBB link) থেকে;
-           না থাকলে বা লোড ব্যর্থ হলে আগের gender-ভিত্তিক avatar-এ fallback */
+        
         const ph=String(d.photo||d.photoURL||"").trim();
         return `<div class="dcard"><div class="dcard-topbar"><img class="dcard-logo" src="${LOGO_SRC}" alt=""><span>${SITE.name}</span></div><div class="dcard-photo"><img src="${ph?esc(ph):avatarData(d.gender)}" alt="" data-ph="${avatarData(d.gender)}" onerror="this.onerror=null;this.src=this.dataset.ph"></div><h3 class="dcard-name">${esc(d.name)}</h3><div class="dcard-group">${esc(d.bloodGroup)}</div><div class="dcard-rows"><div>📍 এলাকা <strong>${esc(d.area)}</strong></div><div>🗓 শেষ রক্তদান <strong>${esc(last)}</strong></div><div>☎ মোবাইল <strong>${esc(d.phone)}</strong></div><div>🪪 কার্ড নং <strong>${esc(d.id)}</strong></div></div><div class="dcard-footer">✓ অনুমোদিত রক্তদাতা • রক্ত দিন, জীবন বাঁচান 🩸</div></div>`;
       }
       function openDonorCard(idv){ const d=publicDonors().find(x=>x.id===idv); if(!d)return; currentDcardId=idv; $("#dcardPreview").innerHTML=dcardHTML(d); $("#donorCardModalBg").classList.remove("hidden"); document.body.classList.add("lock"); }
       function closeDonorCard(){ $("#donorCardModalBg").classList.add("hidden"); document.body.classList.remove("lock"); currentDcardId=null; }
   
-      /* ══════════ DONOR PROFILE ══════════
-         The same profile the donor app shows, rendered here as a modal so a
-         visitor never has to log in. It builds one normalised view object
-         first and applies privacy while building it — a hidden WhatsApp number
-         is absent from the object, so it cannot reach the DOM or the source. */
+      
       $("#dcardClose").addEventListener("click",closeDonorCard);
       $("#donorCardModalBg").addEventListener("click",e=>{ if(e.target.id==="donorCardModalBg") closeDonorCard(); });
-      /* ══════════ ডোনার কার্ড ডাউনলোড ══════════
-         Doner প্যানেলের Card Download System-ই এখন এখানে ব্যবহার হয় —
-         shared module (src/lib/donorCard.ts) থেকে। আগের আলাদা canvas
-         implementation সরানো হয়েছে; এখন দুই জায়গা থেকেই একই ডোনারের
-         একই design/size/QR-এর কার্ড, একই "কার্ড নামান" অপশন sheet
-         (দুই পাশ / শুধু সামনে / শেয়ার-লম্বা) এবং একই ফাইল তৈরি হয়।
-         ডেটা আগের মতোই Firebase RTDB-র donors থেকে (publicDonors)। */
+      
       function cardSubjectFromDonor(d, index=0){
-        /* বয়স জন্ম তারিখ (dob) থেকে — Doner প্যানেলের নিয়মে; অজানা হলে ফাঁকা */
+        
         const at = ageText(d);
         return {
           name: d.name || "",
@@ -3979,32 +3942,24 @@ function initPage() {
         const d = list.find(x=>x.id===idv || x.donorId===idv) || list.find((x, i)=> formatDonorId(x, i)===idv) || list[0];
         if(!d) return;
         const sub = cardSubjectFromDonor(d, list.indexOf(d));
-        /* Doner প্যানেলের মতোই — আগে "কার্ড নামান" sheet, তারপর ডাউনলোড।
-           downloadDonorCardImages ভেতরেই busy-guard, "কার্ড তৈরি হচ্ছে…" স্টেটাস
-           ও ব্রাউজারের ডাউনলোড সিস্টেম ব্যবহার করে। */
+        
         openDonorCardDownloadSheet(kind=>{
           downloadDonorCardImages(kind, sub, { toast:(m,k)=>toast(m, k==="er") });
         });
       };
       const downloadDonorCard = window.downloadDonorCard;
   
-      /* ══════════ রক্তদাতা প্রোফাইল পেজ ══════════
-         এটি সাইটের নিজস্ব একটি ভিউ (#profile/ID) — ডোনার নিবন্ধন পেজের মতোই।
-         মেনুতে নেই; শুধু রক্তদাতা তালিকার প্রোফাইল বাটন থেকে খোলে।
-         ডিজাইন ডোনার অ্যাপের প্রোফাইলের অনুরূপ, ডেটা এখানকার নিজস্ব। */
+      
       function profileViewOf(d, index=0){
         const gap = daysSince(d.lastDonationDate);
         const ready = canDonate(d);
         const total = donationCount(d);
         return {
           id: d.id,
-          /* Doner প্যানেলের profileView-এর মতো একই RTDB source (donors/{id}) থেকে।
-             username/email পাবলিক donors রেকর্ডে থাকে না (গোপনীয়তা নীতি) — তাই
-             সেগুলো "তথ্য" সেকশনে দেখানো হয় না; বাকি সব donor তথ্য এখান থেকেই আসে। */
+          
           name: d.name || "নাম নেই",
           gender: d.gender || "",
-          /* প্রোফাইল ছবি — Doner প্যানেলের profileView-এর মতোই একই RTDB field
-             (photo, পুরোনো রেকর্ডে photoURL) থেকে */
+          
           photo: String(d.photo || d.photoURL || "").trim(),
           group: d.bloodGroup || d.group || "",
           area: d.area || "",
@@ -4012,7 +3967,7 @@ function initPage() {
           age: ageText(d) === "—" ? "" : ageText(d),
           occupation: d.occupation || "",
           phone: d.phone || "",
-          /* WhatsApp গোপন রাখা থাকলে সেটি অবজেক্টেই আসে না — DOM বা সোর্সে পৌঁছাতে পারে না */
+          
           whatsapp: d.whatsapp ? d.whatsapp : null,
           last: d.lastDonationDate || d.lastDonation || "",
           joined: d.joined || "",
@@ -4036,8 +3991,7 @@ function initPage() {
         const row = (k, val, dim) =>
           `<div class="prow"><b>${esc(k)}</b><span class="${dim?"dim":""}">${esc(val)}</span></div>`;
         const NA = "দেওয়া হয়নি";
-        /* রক্তদানে প্রস্তুত/Availability status — chips-এর একই নিয়মে, একই RTDB
-           তথ্য (available + lastDonationDate) থেকে হিসাব হয়। */
+        
         const availLabel = v.ready ? "রক্তদানে প্রস্তুত"
           : (v.available ? `বিশ্রামে · আর ${bn(v.rest)} দিন` : "প্রাপ্যতা বন্ধ");
         return `
@@ -4115,8 +4069,7 @@ function initPage() {
         body.querySelector('[data-pa="nophone"]')?.addEventListener("click",
           ()=>toast("এই রক্তদাতা নম্বর প্রকাশ করেননি", true));
       }
-      /* তালিকা থেকে প্রোফাইল খোলা — URL-এ পরিষ্কার "/profile/<id>" পাথ বসে
-         (কোনো "#" নয়); Back চাপলে আগের ভিউতে ফেরত। */
+      
       window.openDonorProfile = function(idv){
         const target = appBase() + "profile/" + encodeURIComponent(idv);
         try{ if(location.pathname !== target) history.pushState(null, "", target + location.search); }catch(e){}
@@ -4138,7 +4091,7 @@ function initPage() {
       }
       $("#dcardDownload").addEventListener("click",()=>{ if(currentDcardId) downloadDonorCard(currentDcardId); });
       $("#dcardShare").addEventListener("click",()=>{ if(currentDcardId) shareDonorCard(currentDcardId); });
-      // পাবলিক ডোনার কার্ড (openDcard) বাটন হ্যান্ডলার
+      
       document.addEventListener("click", e=>{
         const b = e.target.closest("[data-action='openDcard']"); if(!b) return;
         openDonorCard(b.dataset.id);
@@ -4151,7 +4104,7 @@ function initPage() {
   
       function formObj(form){ return Object.fromEntries(new FormData(form).entries()); }
       function normalizeFormPhones(obj){ if(obj.phone)obj.phone=digits(obj.phone);if(obj.whatsapp)obj.whatsapp=digits(obj.whatsapp);return obj; }
-      /* Register — inline validation (কোনো popup নয়) + Realtime Database (`members`, pending) */
+      
       let donorRegistrationBusy = false;
       $("#registerForm").addEventListener("submit", async e => {
         e.preventDefault();
@@ -4176,9 +4129,7 @@ function initPage() {
 
         try{
           if(!fbReady) throw new Error("ডাটাবেস সংযোগ নেই। ইন্টারনেট সংযোগ পরীক্ষা করুন।");
-          /* একই Firebase Auth account-এর approved donor বা pending application
-             আগে থেকেই থাকলে নতুন push record তৈরি করা যাবে না। UID-ই প্রধান
-             পরিচয়; পুরোনো record-এ UID না থাকলে phone/email fallback থাকে। */
+          
           if(registrationUid){
             const [existingDonors, existingMembers] = await Promise.all([
               listOnce(NODES.donors),
@@ -4188,8 +4139,7 @@ function initPage() {
             const sameAccount = (row) => {
               if(!row) return false;
               if(String(row.ownerUid || row.uid || row.userId || "").trim() === registrationUid) return true;
-              /* পুরোনো registration record-এ UID না থাকলেও একই Auth account-এর
-                 email/এই donor form-এর phone দিয়ে সেটি শনাক্ত করা যায়। */
+              
               return (!!authEmail && String(row.email || "").trim().toLowerCase() === authEmail)
                 || (!!o.phone && String(row.phone || "").replace(/\s+/g, "") === String(o.phone).replace(/\s+/g, ""));
             };
@@ -4204,16 +4154,14 @@ function initPage() {
             ...o,
             ...(registrationUid ? {uid:registrationUid, ownerUid:registrationUid} : {}),
             dob: o.dob || "",
-            /* জেলা → থানা/এলাকা নির্ভরশীল নির্বাচন (src/lib/locations.ts) */
+            
             district: String($("#district").value || o.district || DEFAULT_DISTRICT).trim(),
             status: "pending",
             createdAt: nowIso()
           };
-          /* RTDB-তে লেখা হলে listener-এর কল্যাণে Admin/Moderator প্যানেলে
-             সাথে সাথেই আবেদনটি দেখা যায় — আলাদা করে কিছু push করতে হয় না। */
+          
           const memberId = await addRow(NODES.members, newMember);
-          /* নিজের users record-এ member key রাখি, যাতে private members node
-             list না পড়েও account deletion-এ pending donor আবেদনটি সরানো যায়। */
+          
           if(registrationUid) await updateRow(NODES.users, registrationUid, {donorMemberId:memberId})
             .catch(err=>console.warn("donor member key:", err && err.message));
           await setRow(NODES.queue, memberId, {
@@ -4238,9 +4186,7 @@ function initPage() {
       });
       attachLiveClear($("#registerForm"));
 
-      /* ── জেলা → থানা/এলাকা dependent selection (নিবন্ধন + অ্যাকাউন্ট তৈরি) ──
-         একটি জেলা নির্বাচন করলে শুধু সেই জেলার এলাকাগুলোই দেখায়
-         (চট্টগ্রাম → ১৭টি, বান্দরবান → ৭টি)। কেন্দ্রীয় তালিকা: src/lib/locations.ts */
+      
       function wireDistrictArea(districtSel, areaSel){
         if(!districtSel || !areaSel) return;
         districtSel.addEventListener("change", ()=>{
@@ -4250,9 +4196,7 @@ function initPage() {
       wireDistrictArea($("#district"), $("#donorArea"));
       wireDistrictArea($("#suDistrict"), $("#suArea"));
 
-      /* Donor Search-এ দুই জেলার সব এলাকা থাকে; লাইভ ডোনার ডেটায় পুরোনো
-         এলাকার মান (যেমন "কেরানী হাট") থাকলে সেগুলোও ফিল্টারে যুক্ত থাকে —
-         বিদ্যমান ডোনার কখনো ফিল্টারের বাইরে যায় না। */
+      
       function syncSearchAreaOptions(){
         const sel=$("#searchArea");
         if(!sel) return;
@@ -4270,7 +4214,7 @@ function initPage() {
         if(changed && current) sel.value=current;
       }
 
-      /* যোগ্যতা যাচাই — বয়স জন্ম তারিখ থেকে হিসাব হয়; কোনো popup নয়, ইনলাইন এরর */
+      
       $("#eligibilityForm").addEventListener("submit",e=>{
         e.preventDefault();
         const form=e.currentTarget;
@@ -4298,12 +4242,9 @@ function initPage() {
       });
       attachLiveClear($("#eligibilityForm"));
   
-      /* জরুরি আবেদন স্বয়ংক্রিয় অনুমোদন — সেটিংসটি Realtime Database-এ
-         (`settings/app.autoApproveEmergency`) থাকে, অ্যাডমিন প্যানেল থেকে বদলানো যায়।
-         ডিফল্ট: বন্ধ (আবেদন আগে pending তালিকায় যায়)। */
+      
       let AUTO_APPROVE_EMERGENCY = false;
-      /* Live setting listener: emergency approval changes apply to new
-         applications without reloading. Existing requests are untouched. */
+      
       try{watchRow(NODES.settings,"app",st=>{
         const rules=st&&st.rules&&typeof st.rules==="object"?st.rules:{};
         AUTO_APPROVE_EMERGENCY=rules.emergencyApproval===false || st?.autoApproveEmergency===true;
@@ -4343,7 +4284,7 @@ function initPage() {
 
         const o = normalizeFormPhones({
           patientName: $("#patientName").value.trim(),
-          patientAge: Number(digits($("#patientAge").value.trim())) || null,   // সরাসরি বছর হিসেবে রোগীর বয়স
+          patientAge: Number(digits($("#patientAge").value.trim())) || null,   
           bloodGroup: $("#requestGroup").value,
           bags: Number(digits($("#bags").value)),
           hospitalName: $("#hospital").value.trim(),
@@ -4364,8 +4305,7 @@ function initPage() {
 
         try{
           if(!fbReady) throw new Error("ডাটাবেস সংযোগ নেই।");
-          /* RTDB-তে লেখা — approved হলে সরাসরি লাইভ বোর্ডে, না হলে queue-তে।
-             দুই ক্ষেত্রেই listener-এর কল্যাণে সব জায়গায় সঙ্গে সঙ্গে দেখা যায়। */
+          
           const memberUid = String((auth && auth.currentUser && auth.currentUser.uid)||"").trim();
           const reqId = await addRow(NODES.requests, {
             ...o, status:newStatus, createdAt, expiresAt: expiresAtDate.toISOString(),
@@ -4381,8 +4321,7 @@ function initPage() {
           }
           if(memberUid)incrementField(NODES.users,memberUid,"applicationCount",1)
             .catch(e=>console.warn("application count increment:",e&&e.message));
-          /* Notification RTDB-তে লেখা হয় না — আবেদন live হলে প্রতিটি ডোনারের
-             প্যানেল নিজে নিজে matching notification তৈরি করে (আলাদা storage-এ) */
+          
           form.reset();
           clearFormErrors(form);
           $("#requestAgree").checked = false;
@@ -4401,11 +4340,9 @@ function initPage() {
       attachLiveClear($("#emergencyForm"));
 
 
-      /* ==========================================================================
-         AUTH: লগইন • অ্যাকাউন্ট তৈরি • Google Sign-In • বাংলা নাম প্রস্তাব
-         ========================================================================== */
+      
   
-      /* --- পাসওয়ার্ড দেখান / লুকান --- */
+      
       document.addEventListener("click", e => {
         const btn = e.target.closest("[data-pw-toggle]");
         if(!btn) return;
@@ -4419,7 +4356,7 @@ function initPage() {
         btn.setAttribute("aria-pressed", String(show));
       });
   
-      /* --- ইংরেজি নাম → প্রস্তাবিত বাংলা নাম --- */
+      
       const BN_NAME_DICT = {
         md:"মোঃ", mohammad:"মোহাম্মদ", muhammad:"মুহাম্মদ", mohammed:"মোহাম্মদ", mohd:"মোঃ", mst:"মোছাঃ", mrs:"মিসেস", mr:"জনাব",
         shahadat:"শাহাদাত", sahu:"সাহু", arif:"আরিফ", arifur:"আরিফুর", rahman:"রহমান", rehman:"রহমান",
@@ -4464,7 +4401,7 @@ function initPage() {
           for(const [k,v] of BN_VOW){
             if(s.startsWith(k, i)){
               const isEnd = (i + k.length >= s.length);
-              // শব্দের শেষে 'a' থাকলে সাধারণত উচ্চারিত হয় না
+              
               if(k === "a" && isEnd && prevCons){ i += 1; matched = true; break; }
               out += prevCons ? v[1] : v[0];
               i += k.length; prevCons = false; matched = true; break;
@@ -4481,7 +4418,7 @@ function initPage() {
       function suggestBanglaName(name){
         const raw = String(name || "").trim();
         if(!raw) return "";
-        if(/[\u0980-\u09FF]/.test(raw)) return "";          // আগে থেকেই বাংলা
+        if(/[\u0980-\u09FF]/.test(raw)) return "";          
         return raw.split(/\s+/).map(word => {
           const key = word.toLowerCase().replace(/[^a-z]/g, "");
           if(!key) return "";
@@ -4495,7 +4432,7 @@ function initPage() {
         return base.slice(0, 20);
       }
   
-      /* --- বাংলা নাম প্রস্তাব UI (ইউজার চাইলে পরিবর্তন করতে পারবে) --- */
+      
       let _bnSuggestValue = "";
       function refreshNameSuggest(){
         const inp = $("#suName"), box = $("#suNameSuggest");
@@ -4518,28 +4455,19 @@ function initPage() {
       });
   
   
-      /* ==========================================================================
-         ROLE সিস্টেম — সম্পূর্ণ ডেটাবেস-নিয়ন্ত্রিত
-         donor     → ডিফল্ট (সাধারণ ব্যবহারকারী, ওয়েবসাইটেই থাকে)
-         moderator → মডারেটর প্যানেল (#/moderator)
-         admin     → অ্যাডমিন প্যানেল (#/admin)
-         role বদলাতে হলে Realtime Database-এ `admins/{uid}`-এর `role` ফিল্ড পরিবর্তন করতে হবে।
-         ========================================================================== */
+      
       const DEFAULT_ROLE = "donor";
       const ROLE_LABEL = {donor:"রক্তদাতা", moderator:"মডারেটর", admin:"অ্যাডমিন"};
       const roleLabel = r => ROLE_LABEL[r] || ROLE_LABEL[DEFAULT_ROLE];
   
-      /* ব্যবহারকারীর role শুধুমাত্র Realtime Database থেকে আসে —
-         `admins/{uid}` থাকলে admin/moderator, না থাকলে সবসময় donor।
-         যুক্তিটি এক জায়গায় (src/lib/authx.ts → resolveUserRole) রাখা,
-         তাই Home / Doner / Admin / Moderator — সবাই একই নিয়ম মানে। */
+      
       async function resolveRole(emailOrUser, fallbackName, knownProfile){
         const u = typeof emailOrUser === "string"
           ? {email: emailOrUser, name: fallbackName || ""}
           : {...(emailOrUser||{}), name: (emailOrUser && emailOrUser.name) || fallbackName || ""};
         if(!fbReady) return {role: DEFAULT_ROLE, name: u.name || "", permissions: {}};
         try{
-          /* knownProfile দিলে users/{uid} দ্বিতীয়বার পড়া হয় না — দ্রুত loading */
+          
           const opts = arguments.length > 2 ? {knownProfile: knownProfile || null} : {};
           const r = await resolveUserRole(u, opts);
           return {role: r.role, name: r.name || u.name || "", permissions: r.permissions || {}};
@@ -4549,13 +4477,11 @@ function initPage() {
         }
       }
 
-      // role অনুযায়ী সঠিক জায়গায় পাঠানো
-      /* role অনুযায়ী নিজ নিজ dashboard-এ পাঠানো —
-         Doner → Doner Dashboard, Moderator → Moderator Panel, Admin → Admin Panel।
-         Admin/Moderator কখনোই সাধারণ Doner dashboard ব্যবহার করে না। */
+      
+      
       function finishLogin({email, name, role, permissions, photo, uid, phone, dob, gender, area, username, address, photoSource, donorId}){
         const r = role || DEFAULT_ROLE;
-        const page = panelForRole(r);   // "doner" | "moderator" | "admin"
+        const page = panelForRole(r);   
         if(r === "admin" || r === "moderator"){
           saveSession(email, name || email, r, permissions || {}, "firebase");
           clearMemberSession();
@@ -4573,16 +4499,10 @@ function initPage() {
         navigateToPage("doner");
       }
 
-      /* --- Google প্রোফাইল স্টেট ---
-         Google থেকে Name, Email, Photo URL ও UID নেওয়া হয় (এই uid-এর)।
-         Name ও Email Google account থেকে automatically বসে —
-         Email পরিবর্তনযোগ্য নয় (readonly)। মোবাইল/জন্ম তারিখ ইত্যাদি বাকি
-         তথ্য ওয়েবসাইটের ফর্ম থেকেই আসে। */
-      let googleProfile = null;  // {uid,email,name,photo}
-      /* Google দিয়ে লগইন করলে ইমেইল/পাসওয়ার্ড অ্যাকাউন্টে `account-exists` হলে
-         সেই OAuth credential-টি মনে রাখা হয় — ইমেইল/পাসওয়ার্ড দিয়ে লগইনের পর
-         `linkWithCredential` দিয়ে একই account-এ Google যোগ করা হয় (duplicate নয়)। */
-      let pendingGoogleLink = null; // {email, credential}
+      
+      let googleProfile = null;  
+      
+      let pendingGoogleLink = null; 
       function setSignupGoogleMode(profile){
         googleProfile = profile || null;
         setPendingGoogleProfile(profile || null);
@@ -4594,10 +4514,9 @@ function initPage() {
           $("#sgAvatar").src = profile.photo || avatarData("পুরুষ");
           $("#sgName").textContent = profile.name || profile.email || "Google ব্যবহারকারী";
           $("#sgEmail").textContent = profile.email || "";
-          /* Name — Google account-এর displayName থেকে automatically বসে।
-             (খালি থাকলে ব্যবহারকারী নিজে লিখতে পারবেন; আগে থেকে কিছু লেখা থাকলে তা রাখা হয়।) */
+          
           if(nameInp && profile.name && !String(nameInp.value || "").trim()) nameInp.value = profile.name;
-          /* Email — Google-এ যাচাইকৃত; পরিবর্তনযোগ্য নয় (readonly)। */
+          
           emailInp.value = profile.email || "";
           emailInp.setAttribute("readonly", "readonly");
           emailNote?.classList.remove("hidden");
@@ -4613,17 +4532,10 @@ function initPage() {
         }
       }
   
-      /* Google সাইন-ইন — ডেস্কটপে popup, মোবাইল/WebView বা popup ব্লক হলে
-         স্বয়ংক্রিয় redirect fallback (src/lib/authx.ts)।
-         null ফেরত মানে redirect শুরু হয়েছে (পেজ Google-এ চলে যাচ্ছে) —
-         ফিরে এলে consumeGoogleRedirect() ফলাফল resume করে। */
-      /* Authentication সফল হওয়ার পরেও কিছু ব্রাউজারে (বিশেষত storage
-         partitioning / redirect ফেরার মুহূর্তে) `auth.currentUser` একটু দেরিতে
-         বসে। তাই ফ্লো এগনোর আগে ছোট একটি অপেক্ষা — এতে "সাইন-ইন হলো কিন্তু
-         সেশন তৈরি হলো না" সমস্যাটি থাকে না। */
+      
+      
       function awaitAuthUser(timeoutMs=500){
-        /* নতুন auth listener তৈরি হয় না — shared `src/lib/authState.ts`-এর
-           একটিমাত্র listener-এর `waitForAuthUser` ব্যবহার হয়। */
+        
         if(!auth) return Promise.resolve(null);
         if(auth.currentUser) return Promise.resolve(auth.currentUser);
         return waitForAuthUser(timeoutMs);
@@ -4634,31 +4546,29 @@ function initPage() {
           uiAlert("Google লগইনের জন্য Firebase সংযোগ প্রয়োজন। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।", {type:"error", title:"সংযোগ নেই"});
           return null;
         }
-        pendingGoogleLink = null; /* নতুন Google ফ্লো — আগের অর্ধেক link state বাদ */
+        pendingGoogleLink = null; 
         const res = await googleSignInWithFallback(auth, intent === "signup" ? "signup" : "login");
         if(!res) return null;
-        /* Firebase Auth session যাচাই — popup সফল হলে currentUser সাথে সাথেই বসে,
-           তাই এই অপেক্ষা সাধারণত ০ মিলিসেকেন্ড; শুধু ব্যতিক্রমী ব্রাউজারের জন্য। */
+        
         const sessionUser = await awaitAuthUser(500);
         const u = sessionUser || res.user;
         if(!u || !u.uid){
           throw Object.assign(new Error("session"),{code:"auth/internal-error"});
         }
-        /* Google থেকে Name, Email, Photo URL ও UID — displayName/photoURL খালি হলে
-           providerData থেকে পড়া হয় (src/lib/authx.ts → profileFromFirebaseUser)। */
+        
         const profile = profileFromFirebaseUser(u);
         setPendingGoogleProfile(profile);
         return profile;
       }
   
-      // ওয়েবসাইট অ্যাকাউন্ট খোঁজা (RTDB `users` নোড — ডোনার তালিকা থেকে সম্পূর্ণ আলাদা)
+      
       async function findUserByEmail(email){
         if(!fbReady || !email) return null;
         try{
           return await findBy(NODES.users, "email", String(email).toLowerCase());
         }catch(e){ console.warn("user lookup:", e && e.message); return null; }
       }
-      // uid দিয়ে সরাসরি প্রোফাইল (সবচেয়ে নির্ভরযোগ্য)
+      
       async function findUserByUid(uid){
         if(!fbReady || !uid) return null;
         try{ return await getRow(NODES.users, uid); }catch(e){ return null; }
@@ -4674,7 +4584,7 @@ function initPage() {
         if(profile.uid) localStorage.setItem("cbdcMemberUid", profile.uid);
         try{
           const app=JSON.parse(localStorage.getItem("cbdc.app")||"{}");
-          /* নতুন login-এর জন্য একদম fresh account — পুরোনো user-এর ছবি/তথ্য inherit হয় না */
+          
           app.account=Object.assign({uid:"",name:"",username:"",email:"",phone:"",photo:"",photoSource:"none",emailVerified:false,phoneVerified:false,dob:"",gender:"",area:"",address:"",joined:new Date().toISOString().slice(0,10)},
             {uid:profile.uid||"",name:profile.name||"",email:profile.email||"",photo:profile.photo||"",
              phone:profile.phone||"",gender:profile.gender||"",area:profile.area||"",
@@ -4690,7 +4600,7 @@ function initPage() {
       }
       const isLoggedIn = () => localStorage.getItem("cbdcMember")==="1";
   
-      /* নেভিগেশনে লগইন/লগআউট অবস্থা দেখানো */
+      
       function renderAuthState(){
         const loginLink = document.querySelector('#mainNav a[data-route="dashboard"]');
         const signupLink = document.querySelector('#mainNav a[data-route="signup"]');
@@ -4711,7 +4621,7 @@ function initPage() {
             loginLink.removeAttribute("title");
           }
         }
-        // signup ভিউতে থাকলে এবং লগইন থাকলে হোমে ফেরত
+        
         const su = $("#view-signup");
         if(logged && su && su.classList.contains("active")) showView("home");
       }
@@ -4750,7 +4660,7 @@ function initPage() {
         if(member.dob) $("#suDob").value = member.dob;
         if(member.gender) $("#suGender").value = member.gender;
         if(member.bloodGroup) $("#suBloodGroup").value = member.bloodGroup;
-        /* জেলা → এলাকা: আগের এলাকা কোন জেলার সেটি ধরে সঠিক তালিকা বসাই */
+        
         if(member.district || member.area){
           const dist = String(member.district || "").trim() || districtOfArea(member.area);
           if($("#suDistrict")) $("#suDistrict").value = dist;
@@ -4759,28 +4669,17 @@ function initPage() {
         if(member.address) $("#suAddress").value = member.address;
         if(member.whatsapp) $("#suWhatsapp").value = member.whatsapp;
       }
-      /* --- Google flow সম্পন্ন করা (popup এবং redirect-resume — দুই পথেই একই যুক্তি) ---
-         লগইন ও অ্যাকাউন্ট তৈরি — দুটোর জন্যই হুবহু একই ফ্লো:
-           ১. সফল authentication-এর পরেই ব্যবহারকারীর Firebase Auth session তৈরি হয়,
-           ২. আগে থেকে একই Google account / email-এ অ্যাকাউন্ট থাকলে নতুন
-              duplicate অ্যাকাউন্ট তৈরি হয় না — existing অ্যাকাউন্টেই লগইন হয়
-              এবং সরাসরি নির্ধারিত dashboard-এ যায়,
-           ৩. একদম নতুন Google হলে বিদ্যমান registration flow-এর ফর্মে যায়।
-         দ্রুততা: RTDB read একসাথে (parallel) পাঠানো হয় ও একই ডেটা দ্বিতীয়বার পড়া হয় না —
-         তাই Google account select-এর পর অপ্রয়োজনীয় দীর্ঘ loading হয় না। */
+      
       async function continueGoogleAuth(p, intent){
-        /* Google authentication সম্পন্ন হওয়ার পর অতিরিক্ত loading popup/loader
-           দেখানো হয় না — নিচের RTDB/role যাচাই ব্যাকগ্রাউন্ডে সম্পন্ন হয় এবং
-           সফল হলেই সরাসরি নির্ধারিত প্যানেলে নেভিগেট করা হয়। */
+        
         try{
-          /* uid দিয়ে প্রোফাইল + email দিয়ে legacy খোঁজা — দুটোই একসাথে শুরু হয় */
+          
           const memberByUidP = findUserByUid(p.uid);
           const memberByEmailP = findUserByEmail(p.email);
           const member = (await memberByUidP) || (await memberByEmailP);
-          /* existing হিসেবে তখনই পুনর্ব্যবহার হবে যখন রেকর্ডটি ঠিক এই Google uid-এরই
-             (legacy email-ম্যাচ হলে ensureUserProfile নিজে fresh read করবে) */
+          
           const ownMember = member && String(member.id || "") === String(p.uid) ? member : null;
-          /* role নির্ধারণ — ইতিমধ্যে পড়া প্রোফাইল পুনর্ব্যবহার হয় (duplicate read নেই) */
+          
           const {role, name, permissions} = await resolveRole({uid:p.uid, email:p.email, name:p.name}, p.name, ownMember);
           if(role === "admin" || role === "moderator"){
             if(p.uid){
@@ -4791,18 +4690,16 @@ function initPage() {
             finishLogin({email:p.email, name: name || p.name, role, permissions, photo:p.photo, uid:p.uid});
             return;
           }
-          /* ── Legacy duplicate যাচাই: ইমেইলটি identityIndex-এ অন্য UID দাবি করে
-             থাকলে duplicate অ্যাকাউন্ট তৈরি না করে পুরোনো রেকর্ড এই UID-এ
-             নিরাপদে মেলানোর চেষ্টা হয় (server-secure endpoint)। ── */
+          
           if(!ownMember){
-            /* ইমেইল দিয়ে পাওয়া রেকর্ড ভিন্ন uid-এর হলেও এটি legacy conflict */
+            
             const legacyByEmail = member && String(member.id || "") !== String(p.uid) ? member : null;
             const owner = legacyByEmail ? p.uid : await lookupEmailOwner(p.email);
             if(legacyByEmail || (owner && owner !== p.uid)){
               const merged = await resolveLegacyAccount().catch(() => null);
               const mergedOk = !!(merged && merged.ok && merged.merged);
               if(mergedOk){
-                /* পুরোনো রেকর্ড এই uid-এ মিলে গেছে — এবার স্বাভাবিক লগইন */
+                
                 try{
                   const fresh = await findUserByUid(p.uid);
                   if(fresh && isProfileComplete(fresh)){
@@ -4819,8 +4716,7 @@ function initPage() {
                     return;
                   }
                 }catch(e){ console.warn("post-merge login:", e&&e.message); }
-                /* মিলেছে কিন্তু প্রোফাইল অসম্পূর্ণ → স্বাভাবিক নিবন্ধন ধাপে
-                   (পুরোনো রেকর্ড ইতিমধ্যেই এই uid-এ মিলে গেছে — এখন লেখা নিরাপদ) */
+                
                 hideAppModal();
                 setSignupGoogleMode(p);
                 prefillSignupFromProfile(null);
@@ -4844,7 +4740,7 @@ function initPage() {
               }
             }
           }
-          /* একই অ্যাকাউন্ট, ডুপ্লিকেট নয় — আগে থেকে প্রোফাইল থাকলে সরাসরি লগইন */
+          
           if(member && isProfileComplete(member)){
             const photo = photoForUid(member, p.photo);
             try{
@@ -4858,7 +4754,7 @@ function initPage() {
             finishFromRtdb(p, member, {role: DEFAULT_ROLE, name: member.name, permissions:{}});
             return;
           }
-          /* নতুন Google অ্যাকাউন্ট (বা অসম্পূর্ণ প্রোফাইল) → বিদ্যমান নিবন্ধন flow */
+          
           hideAppModal();
           setSignupGoogleMode(p);
           prefillSignupFromProfile(member);
@@ -4878,7 +4774,7 @@ function initPage() {
       }
 
 
-      /* --- Google flow ব্যর্থ হলে পরিষ্কার বাংলা এরর + সঠিক পদক্ষেপ --- */
+      
       function startGooglePasswordLink(err){
         const pending = googleCredentialFromError(err);
         if(!pending || !pending.email || !pending.credential) return false;
@@ -4906,8 +4802,7 @@ function initPage() {
           return;
         }
         if(code === "auth/account-exists-with-different-credential"){
-          /* একই ইমেইলে আগেই ইমেইল/পাসওয়ার্ড অ্যাকাউন্ট আছে — ডুপ্লিকেট তৈরি না
-             করে পাসওয়ার্ড দিয়ে লগইন করালে Google credential-টি একই UID-এ যুক্ত হয়ে যায়। */
+          
           if(startGooglePasswordLink(err)) return;
           const exEmail = String((err && err.customData && err.customData.email) || "").toLowerCase();
           if(exEmail){
@@ -4921,54 +4816,46 @@ function initPage() {
         uiAlert(authErrorMessage(err), {type:"error", title:"ব্যর্থ হয়েছে"});
       }
 
-      /* --- Google দিয়ে লগইন --- */
+      
       $("#btnGoogleLogin")?.addEventListener("click", async () => {
         const btn = $("#btnGoogleLogin");
         const _orig = btn ? btn.innerHTML : "";
         try{
           if(btn){ btn.disabled = true; btn.innerHTML = "অপেক্ষা..."; }
           const p = await googleSignIn("login");
-          if(!p) return; // redirect শুরু হয়েছে — ফিরে এলে boot-এ flow resume হবে
+          if(!p) return; 
           await continueGoogleAuth(p, "login");
         }catch(err){
           handleGoogleAuthError(err, "লগইন");
         }finally{ if(btn){ btn.disabled = false; btn.innerHTML = _orig; } }
       });
 
-      /* --- Google দিয়ে অ্যাকাউন্ট তৈরি (একই flow) --- */
+      
       $("#btnGoogleSignup")?.addEventListener("click", async () => {
         const btn = $("#btnGoogleSignup");
         const _orig2 = btn ? btn.innerHTML : "";
         try{
           if(btn){ btn.disabled = true; btn.innerHTML = "অপেক্ষা..."; }
           const p = await googleSignIn("signup");
-          if(!p) return; // redirect শুরু হয়েছে — ফিরে এলে boot-এ flow resume হবে
+          if(!p) return; 
           await continueGoogleAuth(p, "signup");
         }catch(err){
           handleGoogleAuthError(err, "সাইন-আপ");
         }finally{ if(btn){ btn.disabled = false; btn.innerHTML = _orig2; } }
       });
   
-      /* ══════════════════════════════════════════════════════════════════
-         পাসওয়ার্ড রিসেট — সম্পূর্ণভাবে Firebase-এর built-in reset link
-         (কোনো custom OTP backend নেই)। UI: আলাদা full-page
-         `/forgot-password` ও `/reset-password`।
-         ══════════════════════════════════════════════════════════════════ */
+      
       function maskRecovery(v){
         v=String(v||"");
         if(v.includes("@")){const [a,b]=v.split("@");return (a.slice(0,2)||"*")+"***@"+b}
         return v;
       }
-      /* ইউজার নেইম বা মোবাইল দিয়ে লগইনের সময় ইমেইল বের করা (RTDB `users`) */
+      
       async function resolveEmailByIdentifier(identifier){
         if(!fbReady) return null;
         const q=String(identifier).trim().toLowerCase();
         try{
-          /* প্রথমে loginIndex — পাবলিক claim-once সূচি (লগইনের আগেই পড়া যায়)।
-             এটিই username/phone → email-এর একমাত্র pre-login উৎস: `users` নোডে
-             query করা যায় না (rules-এ admin ছাড়া read নেই — লগইনের আগে সেটি
-             সবসময় permission-denied; দুইটি অপ্রয়োজনীয় denied round-trip-এ
-             login ধীর হতো, তাই সেসব fallback বাদ দেওয়া হয়েছে)। */
+          
           const {lookupLoginKey}=await import("../lib/identity");
           if(!q.includes("@")){
             const byIndex=await lookupLoginKey("username",q);
@@ -4983,7 +4870,7 @@ function initPage() {
         return null;
       }
 
-      /* ── /forgot-password পেজ ── */
+      
       function resetForgotPage(prefill=""){
         const form=$("#forgotForm");
         if(!form) return;
@@ -5026,7 +4913,7 @@ function initPage() {
         resetForgotPage(typed);
       });
 
-      /* ── /reset-password পেজ (Firebase লিংক থেকে আসা oobCode) ── */
+      
       async function initResetPage(){
         const checking=$("#resetChecking"), invalid=$("#resetInvalid"),
               formBox=$("#resetForm"), done=$("#resetDone");
@@ -5074,12 +4961,7 @@ function initPage() {
         };
       }
 
-      /* --- অ্যাকাউন্ট তৈরি (Email/Password অথবা Google) ---
-         • ভুল থাকলে ঘরটি highlight হয়, নিচে বার্তা আসে।
-         • সফল হলে শুধু ১টি popup: "অনুগ্রহ করে অপেক্ষা করুন..." পরিবর্তন হয়ে
-           ছোট success popup দেখায়, ৩ সেকেন্ড পর বন্ধ হয়ে Login পেজে নিয়ে যায়।
-           Google প্রথমবার হলে সরাসরি Doner Panel-এ পাঠানো হয়।
-         • Account তৈরি করলে কোনো রক্তদাতা আবেদন/ডোনার হিসেবে যুক্ত হয় না। */
+      
       $("#signupForm")?.addEventListener("submit", async e => {
         e.preventDefault();
         const form = e.currentTarget, message = $("#signupMessage");
@@ -5115,9 +4997,7 @@ function initPage() {
         o.username = (o.username||"").trim().toLowerCase();
         o.email = (o.email||"").trim().toLowerCase();
 
-        /* ── Duplicate account রোধ (আইটেম ৭) ──
-           একই ইমেইল / মোবাইল নম্বর / ইউজারনেম দিয়ে দ্বিতীয় অ্যাকাউন্ট তৈরি
-           বন্ধ করা হয় — যথাযথ ঘরে inline error দেখানো হয়। */
+        
         const dupOwnerUid = isGoogle ? (googleProfile?.uid || (auth && auth.currentUser && auth.currentUser.uid) || "") : "";
         const dupIsSelf = (row) => !!dupOwnerUid && row && String(row.uid) === dupOwnerUid;
         let dupEmail=null, dupPhone=null, dupUser=null;
@@ -5125,11 +5005,10 @@ function initPage() {
           dupEmail = await findBy(NODES.users, "email", o.email);
           dupPhone = await findBy(NODES.users, "phone", digits(o.phone));
           dupUser  = await findBy(NODES.users, "username", o.username);
-          /* পুরোনো members-এও মোবাইল/ইউজারনেম থাকতে পারে (users-এ এখনো না আসলে) */
+          
           if(!dupPhone){ const m=await findBy(NODES.members, "phone", digits(o.phone)); if(m) dupPhone=m; }
           if(!dupUser){ const m=await findBy(NODES.members, "username", o.username); if(m) dupUser=m; }
-          /* loginIndex — সূচি অনুযায়ীও username কারো দাবিকৃত কি না (atomic
-             claim-once; unauthenticated read-ও rules-এ অনুমোদিত) */
+          
           if(!dupUser){
             const {lookupLoginKey}=await import("../lib/identity");
             const owner=await lookupLoginKey("username",o.username);
@@ -5143,9 +5022,7 @@ function initPage() {
         showAppLoading();
         const password = o.password || "";
         delete o.password;
-        /* Firebase Auth অ্যাকাউন্ট তৈরি হওয়ার পর RTDB প্রোফাইল লেখা ব্যর্থ হলে
-           catch-এ দুটো পরিস্থিতি আলাদা করা হয় — auth account হয়নি বনাম হয়েছে
-           কিন্তু প্রোফাইল লেখা হয়নি। */
+        
         let signupUid = null;
 
         try{
@@ -5162,11 +5039,7 @@ function initPage() {
           if(!uid) throw new Error("অ্যাকাউন্ট তৈরি করা যায়নি।");
           signupUid = uid;
 
-          /* ── ইমেইল ইউনিকনেস (ডুপ্লিকেট প্রতিরোধের চূড়ান্ত স্তর) ──
-             identityIndex-এ ইমেইলটি atomic দাবি করা হয়: প্রথম UID-ই পায়।
-             অন্য UID আগে দাবি করলে প্রথমে পুরোনো (legacy) রেকর্ড এই UID-এ
-             মেলানোর চেষ্টা হয় (server-secure); তবু দাবি না পেলে duplicate
-             অ্যাকাউন্ট তৈরি এখানেই বন্ধ। */
+          
           let claim = await claimEmailIdentity(o.email, uid);
           if(!claim.claimed && claim.ownerUid && claim.ownerUid !== uid){
             const merged = await resolveLegacyAccount().catch(() => null);
@@ -5175,8 +5048,7 @@ function initPage() {
             }
             if(!claim.claimed){
               if(!isGoogle && signupUid){
-                /* auth account তৈরি হয়ে গেছে — রেখে দেওয়া হয়, পরে ঐ ইমেইলেই
-                   লগইন/রিসেট করা যাবে; নতুন প্রোফাইল তৈরি করা হয় না। */
+                
                 try{ const {signOut} = await import("firebase/auth"); if(auth && auth.currentUser) await signOut(auth); }catch(_e){}
               }
               hideAppModal();
@@ -5193,10 +5065,7 @@ function initPage() {
 
           const existingProfile = await getRow(NODES.users, uid);
           const photoURL = photoForUid(existingProfile, googleProfile ? (googleProfile.photo||"") : "");
-          /* ১) ওয়েবসাইট অ্যাকাউন্ট — RTDB `users/{uid}` (সাথে সাথেই সক্রিয়)।
-                account তৈরি করার সময় কোনো রক্তদাতা আবেদন (donorStatus/members/queue)
-                স্বয়ংক্রিয়ভাবে তৈরি হয় না — donor নিজে আলাদাভাবে
-                "রক্তদাতা হিসেবে যুক্ত হন" দিয়ে আবেদন করবে (আইটেম ২)। */
+          
           const profilePayload = {
             uid,
             name: o.name,
@@ -5214,8 +5083,7 @@ function initPage() {
             status: "active"
           };
           if(existingProfile){
-            /* বিদ্যমান প্রোফাইল — শুধু account তথ্য আপডেট; donor তথ্য
-               (donorStatus/donorId/bloodGroup) অক্ষত থাকে — pending-এ ঠেলে দেওয়া হয় না। */
+            
             await ensureUserProfile({
               uid, email:o.email, name:o.name, photo:photoURL,
               phone:o.phone, dob:o.dob, gender:o.gender, area:o.area,
@@ -5223,8 +5091,7 @@ function initPage() {
               bloodGroup:o.bloodGroup
             }, {provider: isGoogle ? "google" : "password", existing: existingProfile});
           } else {
-            /* নতুন Account-এ Donor UID তৈরি হয় না — শুধু account record।
-               Donor UID কেবল "রক্তদাতা হিসেবে যুক্ত হন" → Admin Approve হলে নির্ধারিত হয়। */
+            
             await setRow(NODES.users, uid, {
               ...profilePayload,
               role: DEFAULT_ROLE,
@@ -5232,16 +5099,12 @@ function initPage() {
             });
           }
 
-          /* loginIndex — username/phone → email সূচি (username দিয়ে লগইনের জন্য)।
-             নতুন অ্যাকাউন্টে ensureUserProfile চলে না, তাই এখানেই atomic দাবি করা হয়;
-             idempotent (নিজের email-এ আবার দাবি no-op)। fail-open — ব্যর্থ হলেও
-             অ্যাকাউন্ট তৈরি আটকায় না। */
+          
           try{
             await claimLoginEntries(o.email, o.username, o.phone);
           }catch(e){ console.warn("loginIndex claim (signup):", e&&e.message); }
 
-          /* Google দিয়ে অ্যাকাউন্ট তৈরি হলে Name ও Photo URL Firebase Auth প্রোফাইলেও
-             সংরক্ষণ করা হয় (Email/UID ইতিমধ্যেই Auth-এ থাকে)। */
+          
           if(isGoogle && auth && auth.currentUser && auth.currentUser.uid === uid){
             try{
               const {updateProfile} = await import("firebase/auth");
@@ -5258,9 +5121,7 @@ function initPage() {
           const gp = googleProfile;
           setSignupGoogleMode(null);
 
-          /* ── Google: authentication ইতিমধ্যেই সফল — সরাসরি পরবর্তী ধাপে ──
-             Google সেশন জীবিত থাকলে আবার লগইনে বাধ্য করা হয় না;
-             অ্যাকাউন্ট তৈরির সাথে সাথেই নিজ প্যানেলে (Doner) প্রবেশ করানো হয়। */
+          
           if(isGoogle && auth && auth.currentUser && auth.currentUser.uid === uid){
             setPendingGoogleProfile(null);
             hideAppModal();
@@ -5279,15 +5140,13 @@ function initPage() {
             return;
           }
 
-          /* Email/Password — সফল flow:
-             Firebase Auth + RTDB Save → Success Popup → Auto Hide → Login Page →
-             Email Auto-Fill → ব্যবহারকারী নিজে লগইন করবে। */
+          
           try{
             const {signOut} = await import("firebase/auth");
             if(auth && auth.currentUser) await signOut(auth);
           }catch(e){}
           setPendingGoogleProfile(null);
-          /* Login ফর্মে শুধু ইমেইল auto-fill — পাসওয়ার্ড কখনো auto-fill/save হয় না। */
+          
           const _loginEmail = document.getElementById("username");
           if(_loginEmail) _loginEmail.value = o.email || "";
           const _loginMsg = document.getElementById("loginMessage");
@@ -5301,12 +5160,12 @@ function initPage() {
               false,
               "অ্যাকাউন্ট তৈরি হয়েছে!"
             );
-            /* popup ৩ সেকেন্ড পর নিজে থেকে বন্ধ হবে — Login পেজটি ইতিমধ্যে তার পেছনে আছে */
+            
             setTimeout(()=>{ try{ hideAppModal(); }catch(e){} }, 3000);
           }catch(e){ hideAppModal(); toast("অ্যাকাউন্ট তৈরি হয়েছে — এখন লগইন করুন"); }
         }catch(err){
           hideAppModal();
-          /* আসল error code/message কনসোলে — UI-তে কখনো raw Firebase টেক্সট নয়। */
+          
           console.warn("signup error:", (err && err.code) || "", (err && err.message) || "", err);
           const code = (err && err.code) || "";
           if(code === "auth/email-already-in-use" || code === "auth/invalid-email"){
@@ -5317,10 +5176,7 @@ function initPage() {
             setFieldError($("#suPassword"), authErrorMessage(err));
             return;
           }
-          /* Firebase Auth-এ account তৈরি হয়েছে, কিন্তু RTDB `users/{uid}` প্রোফাইল
-             লেখা যায়নি (Security Rules/সংযোগ) — একই uid-এ আবার লগইন করলে প্রোফাইল
-             স্বয়ংক্রিয়ভাবে তৈরি হয়, তাই বিভ্রান্তিকর "তৈরি করা যায়নি" না দেখিয়ে
-             পরিষ্কার কারণ দেখাই। */
+          
           if(signupUid){
             showMessage(message,
               "অ্যাকাউন্ট তৈরি হয়েছে, কিন্তু প্রোফাইল সংরক্ষণ করা যায়নি (ডাটাবেস অনুমতি বা সংযোগ সমস্যা)। আবার লগইন করলে প্রোফাইল স্বয়ংক্রিয়ভাবে তৈরি হয়ে যাবে — সমস্যা থাকলে অ্যাডমিনের সাথে যোগাযোগ করুন।",
@@ -5332,7 +5188,7 @@ function initPage() {
       });
       attachLiveClear($("#signupForm"));
 
-      /* ===== Login — Firebase Auth; role অনুযায়ী নিজ নিজ dashboard ===== */
+      
       $("#loginForm").addEventListener("submit", async e=>{
         e.preventDefault();
         const form = e.currentTarget;
@@ -5341,10 +5197,7 @@ function initPage() {
           password: {required:true, label:"পাসওয়ার্ড"}
         });
         if(!valid.ok){ $("#loginMessage").className="hidden"; $("#loginMessage").textContent=""; return; }
-        /* Identifier normalize: আগে-পরে থাকা extra space বাদ + lowercase।
-           Email ও Username — দুটোই একই নিয়মে মেলানো হয় (username case-insensitive
-           এবং সবসময় lowercase-এ সংরক্ষিত)। পাসওয়ার্ড কখনো trim/lowercase হয় না —
-           ব্যবহারকারী যা লিখেছে হুবহু পাঠানো হয়। */
+        
         const identifier=String($("#username").value||"").trim().toLowerCase();
         const password=$("#password").value;
         const _btn = form.querySelector('button[type="submit"]');
@@ -5353,13 +5206,7 @@ function initPage() {
         try{
           if(!fbReady || !auth) throw Object.assign(new Error("network"),{code:"auth/network-request-failed"});
           const {signInWithEmailAndPassword}=await import("firebase/auth");
-          /* Email + Password অথবা Username + Password — দুটোই একই Auth-এ শেষ হয়:
-             - ইমেইল হলে সরাসরি সাইন-ইন;
-             - username/phone হলে RTDB loginIndex (public read) দিয়ে email বের করে সাইন-ইন।
-             fetchSignInMethodsForEmail() precheck আর করা হয় না — Email Enumeration
-             Protection চালু থাকলে সেটি খালি list দেয় এবং সঠিক credential-এও ভুল করে
-             "কোনো অ্যাকাউন্ট পাওয়া যায়নি" দেখাত। Firebase-এর নিজস্ব error code-ই
-             (user-not-found / wrong-password / invalid-credential) সঠিক বার্তা দেয়। */
+          
           let email=identifier;
           if(!email.includes("@")){
             const found=await resolveEmailByIdentifier(email);
@@ -5367,10 +5214,7 @@ function initPage() {
             email=found;
           }
           const cred=await signInWithEmailAndPassword(auth,email,password);
-          /* Google → Email/Password account-এ যুক্ত করা:
-             Google select-এর সময় account-exists-এ OAuth credential জমা রাখা হয়;
-             একই ইমেইল + সঠিক পাসওয়ার্ড দিয়ে লগইন হলে সেই Google-কে একই UID-এ
-             link করা হয়, ফলে দুটো পদ্ধতিই এই অ্যাকাউন্টে কাজ করে (duplicate নয়)। */
+          
           if(pendingGoogleLink){
             if(cred && cred.user && cred.user.uid && pendingGoogleLink.email === email){
               try{
@@ -5383,9 +5227,7 @@ function initPage() {
             pendingGoogleLink = null;
           }
           const profile = await loadUserProfile(cred.user.uid);
-          /* loginIndex backfill — username/phone দিয়ে লগইনের সূচি না থাকলে (পুরোনো
-             অ্যাকাউন্ট) এখন authenticated অবস্থায় নিজের entry দাবি করে নিই, যাতে
-             পরবর্তীবার username দিয়েও লগইন করা যায়। fail-open: ব্যর্থ হলেও লগইন আটকায় না। */
+          
           if(profile && (profile.username || profile.phone)){
             try{
               await claimLoginEntries(email, profile.username, profile.phone);
@@ -5434,9 +5276,7 @@ function initPage() {
           let msg="লগইন করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।";
           if(code==="auth/user-not-found"){
             msg="এই তথ্য দিয়ে কোনো অ্যাকাউন্ট পাওয়া যায়নি।";
-            /* ইউজারনেম/ফোন দিয়ে না পাওয়া গেলে ইমেইল পথের পরামর্শ — পুরোনো
-               অ্যাকাউন্টের loginIndex entry না থাকলে ইমেইল দিয়েই লগইন হবে
-               (এবং সাথে সাথে সূচি backfill-ও হয়ে যাবে)। */
+            
             if(!String(identifier||"").includes("@"))msg+=" ইউজারনেম দিয়ে লগইন করা না গেলে আপনার ইমেইল ঠিকানা দিয়ে চেষ্টা করুন।";
           } else if(code==="auth/wrong-password"||code==="auth/invalid-login-credentials"){
             msg="পাসওয়ার্ড ভুল। পাসওয়ার্ড আবার যাচাই করে পুনরায় চেষ্টা করুন।";
@@ -5452,7 +5292,7 @@ function initPage() {
       });
       attachLiveClear($("#loginForm"));
 
-      /* Draggable Support Button */
+      
       (function(){
         const btn=document.querySelector(".support-btn"); if(!btn) return;
         let dragging=false, moved=false, sx=0, sy=0, ox=0, oy=0, cx=0, cy=0;
@@ -5493,13 +5333,11 @@ function initPage() {
       })();
     
   
-      /* ===== Boot ===== */
-      /* Google redirect-এ ফেরার পর ফলাফল resume — pending intent ("login"/"signup")
-         অনুযায়ী সঠিক flow শেষ করা হয় */
+      
+      
       async function resumeGoogleRedirect(){
         if(!fbReady || !auth) return;
-        /* ব্যবহারকারী সত্যিই Google redirect থেকে ফিরছেন কিনা — না হলে কিছুই করি না।
-           (আগে প্রতিটি page load-এ probe হতো, এবং কিছু পরিবেশে অকারণ popup আসত।) */
+        
         let pending = "";
         try{ pending = sessionStorage.getItem("cbdc.pendingGoogleIntent") || ""; }catch(e){}
         if(!pending) return;
@@ -5509,9 +5347,7 @@ function initPage() {
         }catch(err){
           console.warn("Google redirect resume:", err);
           setGoogleIntent(null);
-          /* এটি ব্যবহারকারীর নিজের শুরু করা flow — তাই কারণটি জানানো দরকার,
-             কিন্তু শুধু লগইন পেজে; হোমপেজে অকারণ popup নয়।
-             account-exists হলে পাসওয়ার্ড দিয়ে লগইন করালে একই অ্যাকাউন্টে Google যুক্ত হয়। */
+          
           if(authErrorCode(err) === "auth/account-exists-with-different-credential"){
             handleGoogleAuthError(err, "লগইন");
           } else {
@@ -5522,10 +5358,7 @@ function initPage() {
           return;
         }
         if(!red){
-          /* redirect শুরু হয়েছিল কিন্তু getRedirectResult() ফলাফল দেয়নি।
-             এটি "বাতিল" নয় — প্রকৃত কারণ কনসোলে [google-redirect] লগে দেখা যায়
-             (src/lib/authx.ts → consumeGoogleRedirect)। ভুল 'বাতিল' বার্তা না দেখিয়ে
-             সঠিক, পদক্ষেপযোগ্য বার্তা দেখাই। */
+          
           if(pending){
             showView("login");
             showMessage($("#loginMessage"),
@@ -5536,15 +5369,14 @@ function initPage() {
         }
         setGoogleIntent(null);
         try{
-          /* login/signup দুটোর জন্যই একই ফ্লো (intent শুধু প্রেক্ষাপটের জন্য) */
+          
           await continueGoogleAuth(red.profile, red.intent === "signup" ? "signup" : "login");
         }catch(err){
           console.warn("Google redirect flow:", err);
           handleGoogleAuthError(err, red.intent === "signup" ? "সাইন-আপ" : "লগইন");
         }
       }
-      /* Firebase auth state-এর প্রতিবিম্ব — অন্য ট্যাবে বা সেশন শেষে লগআউট হলে
-         স্থানীয় লগইন-ইঙ্গিত পরিষ্কার করে নেভিগেশন অবস্থা ঠিক রাখি */
+      
       function watchAuthMirror(){
         if(!fbReady || !auth) return;
         try{
@@ -5556,9 +5388,7 @@ function initPage() {
           });
         }catch(e){ console.warn("auth mirror:", e && e.message); }
       }
-      /* ── জন্ম তারিখ → বয়স (লাইভ) ──
-         যেখানেই জন্ম তারিখের ঘর আছে, টাইপ/নির্বাচন করার সাথে সাথেই নিচে
-         হিসাব করা বয়স দেখা যায়। বয়স আলাদা করে কোথাও লিখতে হয় না। */
+      
       (function wireDobFields(){
         const bounds = dobBounds(SITE.rules.minAge, SITE.rules.maxAge);
         const pairs = [["#donorDob","#donorAgeNote"],["#suDob","#suAgeNote"]];
@@ -5582,9 +5412,7 @@ function initPage() {
       setLogo();
       if(window.CBDCShared)CBDCShared.subscribe(()=>{ renderPublic(); renderGallery(); });
       initFirebase().then(()=>{
-        /* Home/root বুট-এ কোনো লগইন-গেট redirect নয় — ব্যবহারকারী Panel থেকে
-           সরাসরি Main Website-এ ফিরে আসতে পারবে। Role redirect শুধু Login ভিউ ও
-           Login সফলের সময় হয় (routeClick/finishLogin)। */
+        
         renderPublic(); renderGallery(); renderAuthState();
         try{
           const pending = getPendingGoogleProfile();
@@ -5598,9 +5426,7 @@ function initPage() {
       });
       renderAuthState();
   
-      /* Clean URL deep-link — "/dashboard", "/signup", "/profile/<id>" … (কোনো "#" নয়)
-         পুরোনো hash লিংক (#dashboard)ও কাজ করে এবং স্বয়ংক্রিয়ভাবে অ্যাড্রেস বারে
-         clean path বসে যায়। */
+      
       function applyRoute(){
         let rel = "";
         try{
@@ -5610,7 +5436,7 @@ function initPage() {
         }catch(e){}
         rel = rel.replace(/\/+$/, "");
         if(!rel && location.hash && location.hash.length>1){
-          /* পুরোনো hash লিংক compat — clean পাথে স্থানান্তর */
+          
           const raw = location.hash;
           const h = raw.toLowerCase();
           if(h.startsWith("#profile/")){ rel = "profile/" + raw.slice("#profile/".length); }
@@ -5625,7 +5451,7 @@ function initPage() {
           else if(h==="#gallery") rel = "gallery";
           else if(h==="#about") rel = "about";
           else if(h==="#home"||h==="#home-footer"||h==="#/home") rel = "";
-          else return; /* অচেনা hash — পুরোনো behavior-এর মতোই উপেক্ষা */
+          else return; 
           try{ history.replaceState(null,"",appBase()+rel+location.search); }catch(e){}
         }
         const seg = rel.split("/").filter(Boolean);
@@ -5648,7 +5474,7 @@ function initPage() {
         else showView("home");
       }
       window.addEventListener("popstate", applyRoute);
-      window.addEventListener("hashchange", applyRoute); /* পুরোনো hash লিংক compat */
+      window.addEventListener("hashchange", applyRoute); 
       applyRoute();
   
   

@@ -35,8 +35,11 @@ function makeIo({ callerUid = "ADMIN_0123456789abcdef", role = "admin", status =
 
 test("config-check: active admin gets an honest configured=true/false boolean", async () => {
   for (const configured of [true, false]) {
-    const out = await handleAdminConfigCheck({ idToken: "tok" }, makeIo(), { serviceAccountConfigured: configured });
-    assert.deepEqual(out, { ok: true, serviceAccountConfigured: configured });
+    const out = await handleAdminConfigCheck({ idToken: "tok" }, makeIo(), {
+      serviceAccountConfigured: configured,
+      imgbbConfigured: true,
+    });
+    assert.deepEqual(out, { ok: true, serviceAccountConfigured: configured, imgbbConfigured: true });
   }
 });
 
@@ -78,7 +81,7 @@ test("serviceAccountConfigured: detects raw JSON and base64 secrets, rejects gar
 test("worker + dev middleware both mount /api/admin/config-check", () => {
   const worker = read("server/index.ts");
   const vite = read("vite.config.ts");
-  assert.match(worker, /api\/admin\/config-check/);
+  assert.match(worker, /api[\\\/]+admin[\\\/]+config-check/);
   assert.match(worker, /handleAdminConfigCheck\(/);
   assert.match(worker, /serviceAccountConfigured\(env\)/);
   assert.match(vite, /api\/admin\/config-check/);

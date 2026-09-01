@@ -1,18 +1,6 @@
-/**
- * CBDC — Approved Donation Management (pure, testable core)
- * ═══════════════════════════════════════════════════════════════════════════
- *
- *  "1 approved donation event = 1 life" is the single rule for lives saved.
- *  Bag quantity is stored/displayed separately (`totalBags`) and never used
- *  to calculate lives saved.
- *
- *  This module is intentionally framework-agnostic: it does *not* import
- *  Firebase. It works on plain records and an injected `DonationIo` so the
- *  exact production logic can be unit/integration tested without real
- *  Firebase credentials.
- */
 
-/* ── record shapes ─────────────────────────────────────────────────────── */
+
+
 export type ApprovedDonation = {
   id: string;
   donorId: string;
@@ -42,30 +30,26 @@ export type DonorStats = {
   last: string;
 };
 
-/**
- * Minimal persistence adapter. Admin and Moderator inject their own RTDB
- * helpers here (getRow/listOnce/updatePaths); tests inject an in-memory mock.
- */
+
 export type DonationIo = {
   listOnce(node: string): Promise<any[]>;
   getRow(node: string, id: string): Promise<any | null>;
   updatePaths(paths: Record<string, any>): Promise<void>;
 };
 
-/* ── small helpers ──────────────────────────────────────────────────────── */
+
 export const donationNowIso = (): string => new Date().toISOString();
 
-/** Stable key for a user-side verified donation mirror (date|place). */
+
 export function donationVerKey(date: unknown, place: unknown): string {
-  /* trim — Doner প্যানেলের নিজস্ব হিসাবের সাথে হুবহু এক হতে হয়, নইলে
-     date/place-এ বাড়তি স্পেস থাকলে verified mirror key আলাদা হয়ে যায় */
+  
   const s = String(date || "").trim() + "|" + String(place || "").trim();
   let h = 0;
   for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
   return "v" + (h >>> 0).toString(36);
 }
 
-/** Safe RTDB key for a donation record. */
+
 export function safeDonationId(
   owner: unknown,
   date: unknown,
@@ -87,11 +71,7 @@ export function safeDonationId(
   );
 }
 
-/**
- * Return a string only when the value is genuinely usable as an `<img src>`.
- * booleans (`true`), the literal strings "true"/"false", empty/whitespace,
- * bare words and `javascript:` / `data:text/*` payloads are all rejected.
- */
+
 export function safeImageUrl(value: unknown): string {
   const s = typeof value === "string" ? value.trim() : "";
   if (!s || s === "true" || s === "false" || s === "null" || s === "undefined") return "";
@@ -99,31 +79,27 @@ export function safeImageUrl(value: unknown): string {
   return "";
 }
 
-/** proofUrl is preferred, then proof, then a safe empty string. */
+
 export function proofUrlOf(record: any): string {
   return safeImageUrl(record?.proofUrl) || safeImageUrl(record?.proof);
 }
 
-/** Stats derived from the authoritative approved-donation records. */
+
 export function donorStatsFromRecords(records: Array<any> | null | undefined): DonorStats {
   const recs = (records || []).filter(Boolean);
   return {
-    lives: recs.length, // 1 approved donation event = 1 life
+    lives: recs.length, 
     bags: recs.reduce((s, r) => s + Math.max(0, Math.floor(Number(r?.bags) || 0)), 0),
     last:
       recs
         .map((r) => String(r?.date || ""))
-        .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)) /* শুধু সঠিক YYYY-MM-DD — পুরোনো/ভুল timestamp `last`-এ ঢোকে না */
+        .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)) 
         .sort()
         .pop() || "",
   };
 }
 
-/**
- * Event identity for one approved donation: the same donor donating on the
- * same date at the same place is ONE event (matches the existing user-side
- * verifiedDonations mirror, whose key is date|place).
- */
+
 export function donationEventKey(record: any): string {
   return (
     String(record?.donorId || "") +
@@ -134,8 +110,7 @@ export function donationEventKey(record: any): string {
   );
 }
 
-/** Quality score used when duplicate records of the same event are found —
- *  the best record (real approval timestamp + proof + last update) survives. */
+
 function recordQuality(r: any): number {
   let q = 0;
   const at = String(r?.approvedAt || "");
@@ -172,11 +147,7 @@ function asDonor(d: any): ApprovedDonation | null {
   };
 }
 
-/**
- * Build the permanent approved-donation record from a queue item.
- * If the queue does not carry the proof URL, the owner's own user record is
- * read (same date+place) so the image survives the approval transition.
- */
+
 export async function makeApprovedDonationRecord(
   q: any,
   d: any | null,
@@ -185,10 +156,7 @@ export async function makeApprovedDonationRecord(
   at = donationNowIso()
 ): Promise<ApprovedDonation> {
   const owner = String(q?.ownerUid || q?.uid || "").trim();
-  /* proofUrl is the real URL; legacy queue items only carry `proof:true`
-     (boolean flag) and MUST fall back to the user's own record. Treating the
-     boolean as a URL stores literal "true", just like any wrong/empty value.
-     safeImageUrl rejects booleans, "true"/"false", empty and non-image URLs. */
+  
   let proof = proofUrlOf(q);
   if (!proof && owner) {
     try {
@@ -201,7 +169,7 @@ export async function makeApprovedDonationRecord(
       );
       proof = proofUrlOf(hit);
     } catch {
-      /* fall back to empty proof */
+      
     }
   }
   const donorId = (d && d.id) || String(q?.donorId || "");
@@ -230,13 +198,7 @@ export async function makeApprovedDonationRecord(
   };
 }
 
-/**
- * Build the atomic multi-path write for creating/editing a donation and for
- * synchronising the donor aggregate stats and the user-side verified mirror.
- *
- * Important: it *recomputes* donor stats from the authoritative records after
- * the change, rather than blindly incrementing, so edit/delete stay correct.
- */
+
 export async function writeApprovedDonation(
   record: ApprovedDonation,
   oldRecord: { id?: string; date?: string; place?: string } | null,
@@ -250,7 +212,7 @@ export async function writeApprovedDonation(
   const oid = String((oldRecord && oldRecord.id) || record.id || "");
   paths[`donations/${record.id}`] = record;
 
-  /* latest full list for this donor (RTDB + this record) */
+  
   let all: any[] = [];
   if (io.listOnce) all = ((await io.listOnce("donations")) || []).filter(
     (r) => r && String(r.donorId || "") === donorId
@@ -258,9 +220,7 @@ export async function writeApprovedDonation(
   all = all.filter((r) => String(r.id) !== String(record.id || oid));
   if (oid && oid !== record.id) paths[`donations/${oid}`] = null;
 
-  /* Duplicate cleanup: the same event (date|place) stored under another id
-     (পুরোনো random id / double approval) is the SAME donation — remove the
-     twin so the list, donor history and stats never count it twice. */
+  
   const deduped: any[] = [];
   for (const r of all) {
     const k = donationVerKey(r?.date, r?.place);
@@ -282,7 +242,7 @@ export async function writeApprovedDonation(
     paths[`donors/${donorId}/lastDonationDate`] = stats.last || "";
   }
 
-  /* user-side mirror: verifiedDonations + ok flags */
+  
   if (owner) {
     const u = await io.getRow("users", owner).catch(() => null);
     const arr = Array.isArray(u?.data?.donations) ? u.data.donations : [];
@@ -299,8 +259,7 @@ export async function writeApprovedDonation(
         matchedIdx = i;
       }
     });
-    /* admin date/place edit must also update the donor's own record so both
-       sides stay synchronised, not just visually hidden */
+    
     if (matchedIdx >= 0 && oldKey && oldKey !== curKey) {
       paths[`users/${owner}/data/donations/${matchedIdx}/date`] = record.date;
       paths[`users/${owner}/data/donations/${matchedIdx}/place`] = record.place;
@@ -327,7 +286,7 @@ export async function writeApprovedDonation(
   return { paths, stats, all };
 }
 
-/** Delete + recompute donor stats + remove user-side verified mirror. */
+
 export async function deleteApprovedDonation(
   record: ApprovedDonation,
   io: DonationIo
@@ -338,8 +297,7 @@ export async function deleteApprovedDonation(
   const oldKey = donationVerKey(record.date, record.place);
   paths[`donations/${record.id}`] = null;
 
-  /* Remove the (already approved) verification queue source so a page refresh
-     / next Doner sync cannot resurrect this record in রক্তদান যাচাই. */
+  
   paths[`queue/${record.id}`] = null;
   if (io.listOnce && owner) {
     try {
@@ -354,7 +312,7 @@ export async function deleteApprovedDonation(
         if (sameQueueItem) paths[`queue/${q.id}`] = null;
       }
     } catch {
-      /* queue is optional; a missing queue node is not an error */
+      
     }
   }
 
@@ -363,8 +321,7 @@ export async function deleteApprovedDonation(
     (r) => r && String(r.donorId || "") === donorId
   );
   all = all.filter((r) => String(r.id) !== String(record.id));
-  /* একই event-এর duplicate twin (ভিন্ন id) থাকলে সেটিও মুছে যায় — নইলে
-     Delete-এর পরেও তালিকায়/পরিসংখ্যানে event-টি থেকে যেত। */
+  
   const deduped: any[] = [];
   for (const r of all) {
     if (donationVerKey(r?.date, r?.place) === oldKey) {
@@ -384,9 +341,7 @@ export async function deleteApprovedDonation(
   }
   if (owner) {
     const u = await io.getRow("users", owner).catch(() => null);
-    /* Remove the donor's own old history entry completely (not just flip ok).
-       If only `ok:false` were kept, the next `publishPersonalShared` would
-       re-queue it into রক্তদান যাচাই. */
+    
     if (Array.isArray(u?.data?.donations)) {
       const kept = u.data.donations.filter(
         (x: any) => donationVerKey(x?.date, x?.place) !== oldKey
@@ -403,10 +358,7 @@ export async function deleteApprovedDonation(
   return { paths, stats };
 }
 
-/**
- * Backfill legacy `users/{uid}/data/verifiedDonations` entries into the
- * authoritative donations node. Idempotent by (donorId|date|place).
- */
+
 export async function backfillApprovedDonations(
   io: DonationIo,
   existingRecords: any[],
@@ -489,16 +441,7 @@ export async function backfillApprovedDonations(
   return { paths, newRecords, touched: [...new Set(touched)] };
 }
 
-/**
- * One-pass reconciliation of the approved-donation data:
- *  - duplicate records of the same event (donorId|date|place) are reduced to
- *    the single best record (the rest are removed from the donations node);
- *  - every donor's stored aggregate (donations/totalDonations/totalBags/
- *    lastDonationDate) is recomputed from the surviving records, so Donor
- *    history and the approved list can never drift apart.
- *
- * Only changed paths are returned — fully consistent data causes zero writes.
- */
+
 export async function reconcileApprovedDonations(
   io: DonationIo
 ): Promise<{ paths: Record<string, any>; statsByDonor: Record<string, DonorStats> }> {
@@ -506,7 +449,7 @@ export async function reconcileApprovedDonations(
   const statsByDonor: Record<string, DonorStats> = {};
   const all = ((await io.listOnce("donations")) || []).filter(Boolean);
 
-  /* group by event and keep the single best record per event */
+  
   const byEvent: Record<string, any[]> = {};
   for (const r of all) {
     const k = donationEventKey(r);
@@ -533,8 +476,7 @@ export async function reconcileApprovedDonations(
     }
   }
 
-  /* donor aggregates — recompute for every donor that has records OR stored
-     aggregates, so stale/missing counts are healed and consistent data is untouched */
+  
   const donors = ((await io.listOnce("donors")) || []).filter(Boolean);
   const donorsWithRecords = new Set<string>();
   for (const r of all) {
@@ -578,7 +520,7 @@ export async function reconcileApprovedDonations(
   return { paths, statsByDonor };
 }
 
-/* keep a usable default export for existing call sites */
+
 export default {
   donationVerKey,
   safeDonationId,

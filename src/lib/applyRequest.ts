@@ -1,17 +1,4 @@
-/**
- * CBDC — Approval-settings OFF → server-side direct processing (client caller)
- * ═══════════════════════════════════════════════════════════════════════════
- *
- *  «অনুমোদন ও সেটিংস»-এর কোনো সুইচ OFF থাকলে (donor / bloodGroup / donation)
- *  সরাসরি process-এর জন্য এই helper `POST <base>api/donor/apply`-এ অনুরোধ পাঠায়
- *  (server/applyApi.ts — privileged service-account IO)। সার্ভারই সেটিং পড়ে
- *  ঠিক করে: OFF → সরাসরি process, ON → approvalRequired (তখন ক্লায়েন্ট আগের মতো
- *  queue-তে যায়)।
- *
- *  ব্রাউজার নিজে `donors`, `verifiedDonations`, `bloodGroup`-এ লিখতে পারে না
- *  (rules staff-only), তাই এই path-টি server-নির্ভর — service-account secret
- *  কনফিগার না থাকলে স্পষ্ট error আসে এবং ক্লায়েন্ট queue path-এ ফিরে যায়।
- */
+
 
 import { getAuthInstance } from "./firebase";
 import { appBase } from "./router";

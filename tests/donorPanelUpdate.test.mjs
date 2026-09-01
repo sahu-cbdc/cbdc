@@ -84,7 +84,7 @@ test("Language: English select shows Coming Soon and never switches", () => {
 test("Donor panel always renders Bangla (English UI removed)", () => {
   /* boot-এ lang জোর করে বাংলা — পুরোনো cached "en" দিয়েও English UI আসে না */
   assert.match(doner, /STORE\.prefs\.lang="bn";/);
-  assert.match(doner, /Donor Panel-এ English UI এখনো চালু নয়/);
+  assert.match(doner, /document\.documentElement\.lang="bn"/);
 });
 
 /* ══════════ 4. রক্তদান যোগ করুন ══════════ */

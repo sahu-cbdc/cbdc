@@ -1,12 +1,4 @@
-/**
- * Notice targeting and per-user read state.
- *
- * Notice content is shared (`notices/{id}`), while read state is deliberately
- * private to the signed-in account (`users/{uid}/data/noticeReads/{noticeId}`).
- * Keeping these two concerns separate means publishing a notice never marks it
- * read for everybody else and old notices are not destroyed when a setting is
- * changed.
- */
+
 import { updatePaths, watchRow } from "./rtdb";
 
 export type NoticeTarget = "all" | "donor" | "moderator" | "website";
@@ -35,7 +27,7 @@ export function noticeIsPublished(n: NoticeRecord | null | undefined): boolean {
   return !!n && String(n.status || "").toLowerCase() === "published";
 }
 
-/** Date range is inclusive. Empty dates mean no bound. */
+
 export function noticeIsActive(n: NoticeRecord | null | undefined, at = new Date()): boolean {
   if (!n || !noticeIsPublished(n)) return false;
   const today = at.toISOString().slice(0, 10);
@@ -52,8 +44,7 @@ export function noticeVisibleTo(
   return target === "all" || target === audience;
 }
 
-/* RTDB keys cannot contain . # $ [ ] /; notice IDs made by the admin are
-   already safe, but this keeps legacy IDs safe too. */
+
 export function noticeReadKey(id: unknown): string {
   return String(id || "").replace(/[.#$\[\]/]/g, "_").slice(0, 120);
 }
@@ -76,7 +67,7 @@ export async function markAllNoticesRead(uid: string, ids: string[]): Promise<vo
   if (Object.keys(paths).length) await updatePaths(paths);
 }
 
-/** One listener per signed-in user; no repeated fetches on every render. */
+
 export function watchNoticeReads(
   uid: string,
   callback: (reads: Record<string, boolean>) => void
