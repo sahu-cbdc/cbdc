@@ -32,7 +32,7 @@ export interface AuthFlowIo {
   createProfile(uid: string, data: Record<string, any>): Promise<void>;
   updateProfile(uid: string, data: Record<string, any>, existing: Record<string, any>): Promise<void>;
   claimLogin(email: string, username: string, phone: string): Promise<void>;
-  lookupLoginKey(kind: "username" | "phone", value: unknown): Promise<string | null>;
+  lookupLoginKey(kind: "username", value: unknown): Promise<string | null>;
 }
 
 export const EMAIL_CONFLICT_MESSAGE =
@@ -138,10 +138,5 @@ export async function resolveEmailForLogin(
   if (q.includes("@")) return normalizeEmail(q);
   const byUsername = await io.lookupLoginKey("username", q);
   if (byUsername && String(byUsername).includes("@")) return normalizeEmail(byUsername);
-  const dq = normalizePhone(q);
-  if (/^[0-9]{11}$/.test(dq)) {
-    const byPhone = await io.lookupLoginKey("phone", dq);
-    if (byPhone && String(byPhone).includes("@")) return normalizeEmail(byPhone);
-  }
   return null;
 }

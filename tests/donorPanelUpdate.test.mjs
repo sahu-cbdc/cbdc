@@ -312,11 +312,12 @@ test("identity.ts: atomic claim-once login index helpers", () => {
   assert.match(identity, /export async function releaseLoginEntries/);
 });
 
-test("Login resolves username/phone via loginIndex first (works pre-auth)", () => {
+test("Login resolves username via loginIndex first (works pre-auth; no phone identifier)", () => {
   const flow = read("src/lib/authFlow.ts");
   assert.match(flow, /export async function resolveEmailForLogin/);
   assert.match(flow, /lookupLoginKey\("username",/);
-  assert.match(flow, /lookupLoginKey\("phone",/);
+  // phone is no longer a login identifier — resolution must not look it up
+  assert.doesNotMatch(flow, /lookupLoginKey\("phone",/);
   assert.match(home, /resolveEmailForLogin\s*\(\s*authFlowIo\s*,\s*identifier\s*\)/);
   // users-node query fallback নেই — লগইনের আগে (unauthenticated) `users` read
   // rules-এ সবসময় permission-denied; authFlow শুধু loginIndex দিয়েই কাজ করে।

@@ -5,7 +5,7 @@
  * so the critical account-creation / login-resolution steps are tested without
  * a real browser or Firebase. All DB primitives are injected via a fake io.
  *
- * Covers: successful signup wiring, email/username/phone login resolution,
+ * Covers: successful signup wiring, email/username login resolution,
  * duplicate email handling, profile-write failure, loginIndex failure,
  * normalized email/phone/username, Google-signup path, and the requirement
  * that login never depends on fetchSignInMethodsForEmail.
@@ -204,11 +204,13 @@ test("username login: resolves email via loginIndex", async () => {
   assert.equal(email, "rahim@example.com");
 });
 
-test("phone login: bangla/space-normalized phone resolves via loginIndex", async () => {
+test("phone is NOT a login identifier (even if a phone loginIndex entry exists)", async () => {
+  // Per product decision, login resolves email or username only; a phone number
+  // typed into the login field must not be treated as an identifier.
   const io = makeIo();
   io.state.loginIndex.phone["01812345678"] = "rahim@example.com";
   const email = await resolveEmailForLogin(io, "০১৮ ১২৩৪ ৫৬৭৮");
-  assert.equal(email, "rahim@example.com");
+  assert.equal(email, null);
 });
 
 test("username login missing index → null (caller reports not-found), no crash", async () => {
