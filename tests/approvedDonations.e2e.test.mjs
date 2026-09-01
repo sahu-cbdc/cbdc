@@ -411,14 +411,15 @@ test("11. Deleting one donation does not harm another donor/account", async () =
 test("12. Security: non-admin cannot access the section or perform edit/delete", async () => {
   const rules = JSON.parse(readFileSync(path.join(process.cwd(), "database.rules.json"), "utf8"));
   const donRule = rules.rules.donations;
-  const donIdRule = donRule && donRule["$id"];
   assert.ok(donRule, "donations node exists in rules");
   assert.match(donRule[".read"], /auth != null/);
   assert.match(donRule[".read"], /admins/);
-  assert.ok(donIdRule, "donations/$id rule exists");
-  assert.match(donIdRule[".write"], /auth != null/);
-  assert.match(donIdRule[".write"], /admins/);
-  assert.match(donIdRule[".write"], /role.*admin|moderator/);
+  assert.equal(rules.rules[".write"], false, "clients can no longer write RTDB directly (API-only writes)");
+  const guard = readFileSync(path.join(process.cwd(), "server/writeGuard.ts"), "utf8");
+  const don = guard.slice(guard.indexOf("function guardDonations"), guard.indexOf("function guardAccounts"));
+  assert.match(don, /caller\.admin \|\| \(isPlainObject\(current\) && ownerUidOf\(current\) === caller\.uid\)/, "owner delete-only");
+  assert.match(don, /caller\.role === "moderator" && !current/, "moderator create-only");
+  assert.match(don, /\(merged as any\)\.livesSaved === 1/, "record shape validated server-side");
 
   const admin = readFileSync(path.join(process.cwd(), "src/pages/Admin.tsx"), "utf8");
   assert.match(admin, /approved:\{title:"অনুমোদিত রক্তদান",perm:"donation.manage"\}/);

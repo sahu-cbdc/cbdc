@@ -20,10 +20,11 @@ import {
   requestPasswordReset,
   setOrChangePassword,
 } from "../lib/authx";
-import { getRow, setRow, updateRow, watchRow, watchList, addRow, findBy, listOnce, nowIso, updatePaths, removeRow, incrementField, ensureFieldAtLeast, serverTime, nextDonorId, releaseDonorSerial } from "../lib/rtdb";
+import { getRow, setRow, updateRow, watchRow, watchList, addRow, findBy, listOnce, nowIso, updatePaths, removeRow, incrementField, ensureFieldAtLeast, serverTime, nextDonorId, releaseDonorSerial, isPermissionDenied } from "../lib/rtdb";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
 import { requestDirectApply } from "../lib/applyRequest";
+import { authCurrentUser, reauthenticateCurrentWithPassword, updateAuthEmail, deleteAuthCurrentUser, authSignOut } from "../lib/authActions";
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage } from "../lib/imgbb";
@@ -2458,7 +2459,7 @@ function initPage() {
         try{ await saveData(); }
         catch(saveErr){
           console.warn("resend save:",saveErr&&saveErr.message);
-          toast("সংরক্ষণ করা যায়নি — ইন্টারনেট সংযোগ দেখে আবার চেষ্টা করুন","er");
+          toast(isPermissionDenied(saveErr)?"সংরক্ষণ করার অনুমতি নেই — অ্যাকাউন্ট রিফ্রেশ করে আবার চেষ্টা করুন":(saveErr&&saveErr.message?saveErr.message:"সংরক্ষণ করা যায়নি — আবার চেষ্টা করুন"),"er");
           return;
         }
         await logAct("রক্তদান পুনরায় পাঠানো",(x.date||"")+" · "+(x.place||""),"donor");
@@ -2893,7 +2894,7 @@ function initPage() {
       }catch(err){
         d.is=false;d.status="none";d.bloodGroup=accountBloodGroup();d.donorId="";
         btn.disabled=false;btn.textContent="রক্তদাতা হিসেবে আবেদন জমা দিন";
-        toast(err&&err.settingsOff&&err.message?err.message:"আবেদন জমা দেওয়া যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।","er");
+        return toast(isPermissionDenied(err)?"আবেদন জমা দেওয়ার অনুমতি নেই — অ্যাকাউন্ট রিফ্রেশ করে আবার চেষ্টা করুন":(err&&err.message?err.message:"আবেদন জমা দেওয়া যায়নি — আবার চেষ্টা করুন।"),"er");
         console.warn("donor application submit:",err&&err.message);
         return;
       }
@@ -2992,7 +2993,7 @@ function initPage() {
       }catch(err){
         btn.disabled=false;btn.textContent="আবেদন জমা দিন";
         console.warn("doner emergency write:",err&&err.message);
-        return toast("আবেদন জমা দেওয়া যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।","er");
+        return toast(isPermissionDenied(err)?"আবেদন জমা দেওয়ার অনুমতি নেই — অ্যাকাউন্ট রিফ্রেশ করে আবার চেষ্টা করুন":(err&&err.message?err.message:"আবেদন জমা দেওয়া যায়নি — আবার চেষ্টা করুন।"),"er");
       }
       await logAct("জরুরি রক্তের আবেদন",m.group+" · "+m.bags+" ব্যাগ","donor");
       
@@ -3056,7 +3057,7 @@ function initPage() {
         try{ await saveData(); }
         catch(saveErr){
           console.warn("donation save:",saveErr&&saveErr.message);
-          toast("সংরক্ষণ করা যায়নি — ইন্টারনেট সংযোগ দেখে আবার চেষ্টা করুন","er");
+          toast(isPermissionDenied(saveErr)?"সংরক্ষণ করার অনুমতি নেই — অ্যাকাউন্ট রিফ্রেশ করে আবার চেষ্টা করুন":(saveErr&&saveErr.message?saveErr.message:"সংরক্ষণ করা যায়নি — আবার চেষ্টা করুন"),"er");
           return;
         }
         await logAct("রক্তদান যোগ",date+" · "+place,"donor");
@@ -3108,7 +3109,7 @@ function initPage() {
     try{ await saveData(); }
     catch(e){
       console.warn("donation delete save:",e&&e.message);
-      toast("রেকর্ড সংরক্ষণ করা যায়নি — ইন্টারনেট সংযোগ দেখে আবার চেষ্টা করুন","er");
+          toast(isPermissionDenied(e)?"সংরক্ষণ করার অনুমতি নেই — অ্যাকাউন্ট রিফ্রেশ করে আবার চেষ্টা করুন":(e&&e.message?e.message:"সংরক্ষণ করা যায়নি — আবার চেষ্টা করুন"),"er");
       return false;
     }
     
@@ -3773,17 +3774,15 @@ function initPage() {
       const btn=s.q("#go"),orig=btn.innerHTML;
       btn.disabled=true;btn.textContent="পরিবর্তন হচ্ছে…";
       try{
-        const shared=initSharedFirebase();
-        const user=shared.auth&&shared.auth.currentUser;
-        if(!user)throw new Error("লগইন অবস্থায় নেই। আবার লগইন করুন।");
+        const me=authCurrentUser();
+        if(!me)throw new Error("লগইন অবস্থায় নেই। আবার লগইন করুন।");
         
         const owner=await lookupEmailOwner(v);
-        if(owner&&String(owner)!==String(user.uid))throw new Error("এই ইমেইল অন্য একটি অ্যাকাউন্টে ব্যবহৃত");
+        if(owner&&String(owner)!==String(me.uid))throw new Error("এই ইমেইল অন্য একটি অ্যাকাউন্টে ব্যবহৃত");
         
-        const {EmailAuthProvider,reauthenticateWithCredential,updateEmail}=await import("firebase/auth");
-        await reauthenticateWithCredential(user,EmailAuthProvider.credential(user.email||a.email,p));
+        await reauthenticateCurrentWithPassword(p, me.email||a.email);
         
-        await updateEmail(user,v);
+        await updateAuthEmail(v);
         
         const old=a.email;
         
@@ -3792,8 +3791,8 @@ function initPage() {
         }catch(e){ console.warn("login release old:",e&&e.message); }
         a.email=v;a.emailVerified=false;
         try{ await pushAccountToRtdb(); }catch(e){ console.warn("email rtdb push:",e&&e.message); }
-        try{ await releaseEmailIdentity(old,user.uid); }catch(e){ console.warn("identity release:",e&&e.message); }
-        try{ await claimEmailIdentity(v,user.uid); }catch(e){ console.warn("identity claim:",e&&e.message); }
+        try{ await releaseEmailIdentity(old,me.uid); }catch(e){ console.warn("identity release:",e&&e.message); }
+        try{ await claimEmailIdentity(v,me.uid); }catch(e){ console.warn("identity claim:",e&&e.message); }
         try{ await claimLoginEntries(v,a.username,a.phone); }catch(e){ console.warn("login claim new:",e&&e.message); }
         await save();
         await logAct("ইমেইল পরিবর্তন",v,"security");
@@ -3886,8 +3885,7 @@ function initPage() {
   
   async function doLogout(){
     try{
-      const shared=initSharedFirebase();const {signOut}=await import("firebase/auth");
-      if(shared.auth)await signOut(shared.auth);
+      await authSignOut();
       await logAct("লগআউট","এই ডিভাইস থেকে","security");
       sessionStorage.clear();
       localStorage.removeItem("cbdc.session");
@@ -4057,22 +4055,20 @@ function initPage() {
   async function deleteAccountNow(currentPassword){
     const shared=initSharedFirebase();
     if(!shared.auth) throw new Error("Firebase সংযোগ নেই। ইন্টারনেট সংযোগ পরীক্ষা করুন।");
-    const user=shared.auth.currentUser;
-    if(!user) throw new Error("লগইন অবস্থায় নেই। আবার লগইন করুন।");
-    const uid=String(user.uid || STORE.account.uid || "").trim();
-    const email=String(user.email || STORE.account.email || "").trim().toLowerCase();
+    const me=authCurrentUser();
+    if(!me) throw new Error("লগইন অবস্থায় নেই। আবার লগইন করুন।");
+    const uid=String(me.uid || STORE.account.uid || "").trim();
+    const email=String(me.email || STORE.account.email || "").trim().toLowerCase();
     const phone=String(STORE.account.phone || "").replace(/\s+/g,"");
     if(!uid) throw new Error("অ্যাকাউন্টের UID পাওয়া যায়নি।");
     if(!email) throw new Error("এই অ্যাকাউন্টে ইমেইল নেই — অ্যাকাউন্ট মুছে ফেলা যাবে না।");
 
     
-    const providers=Array.isArray(user.providerData)?user.providerData.map(p=>String(p&&p.providerId||"")):[];
-    const hasPasswordProvider=providers.includes("password") || providers.includes("firebase");
+    const hasPasswordProvider=me.providerIds.includes("password") || me.providerIds.includes("firebase");
     if(!hasPasswordProvider) throw new Error("এই অ্যাকাউন্টে পাসওয়ার্ড সেট নেই। পাসওয়ার্ড দিয়ে যাচাই করা সম্ভব নয়।");
 
     
-    const {EmailAuthProvider, reauthenticateWithCredential}=await import("firebase/auth");
-    await reauthenticateWithCredential(user, EmailAuthProvider.credential(email, currentPassword));
+    await reauthenticateCurrentWithPassword(currentPassword, email);
 
     
     const paths={};
@@ -4174,8 +4170,7 @@ function initPage() {
 
     
     try{
-      const {deleteUser}=await import("firebase/auth");
-      await deleteUser(user);
+      await deleteAuthCurrentUser();
     }catch(e){
       
       throw new Error(authErrorMessage(e,{fallback:"Firebase Authentication থেকে অ্যাকাউন্ট মুছে ফেলা যায়নি। আবার চেষ্টা করুন।"}));

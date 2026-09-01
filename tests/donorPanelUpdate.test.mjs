@@ -57,9 +57,12 @@ test("Email sheet: direct change flow, no verification-email popup", () => {
   assert.match(sheet, /<label>নতুন ইমেইল <i>\*<\/i><\/label><input id="ne" type="email">/);
   assert.match(sheet, /<label>পাসওয়ার্ড দিয়ে নিশ্চিত করুন <i>\*<\/i><\/label>/);
   assert.match(sheet, /id="go">পরিবর্তন করুন</);
-  /* password সঠিক হলেই ইমেইল পরিবর্তন — re-auth + updateEmail */
-  assert.match(sheet, /reauthenticateWithCredential/);
-  assert.match(sheet, /updateEmail\(user,v\)/);
+  /* password সঠিক হলেই ইমেইল পরিবর্তন — re-auth + updateEmail (centralized helper) */
+  assert.match(sheet, /reauthenticateCurrentWithPassword\(p, me\.email\|\|a\.email\)/);
+  assert.match(sheet, /updateAuthEmail\(v\)/);
+  const actions = read("src/lib/authActions.ts");
+  assert.match(actions, /reauthenticateWithCredential\(user, EmailAuthProvider\.credential/);
+  assert.match(actions, /updateEmail\(user, newEmail\)/);
   /* RTDB + identity index sync */
   assert.match(sheet, /pushAccountToRtdb\(\)/);
   assert.match(sheet, /releaseEmailIdentity\(old/);
@@ -233,20 +236,20 @@ test("Account delete cascades: approved donation log + reports + all previous sc
   assert.match(del, /reports\.filter\(x=>ownerMatches\(x\)\)/);
   assert.match(del, /paths\[`reports\/\$\{x\.id\}`\]=null/);
   /* Auth delete + local cache cleanup অক্ষত */
-  assert.match(del, /deleteUser\(user\)/);
+  assert.match(del, /deleteAuthCurrentUser\(\)/);
   assert.match(del, /cbdcMemberUsername/);
 });
 
-test("RTDB rules: owner may DELETE (only) own approved donation records", () => {
-  const parsed = JSON.parse(rules);
-  const w = parsed.rules.donations.$id[".write"];
-  assert.match(w, /!newData\.exists\(\) && auth != null && data\.child\('ownerUid'\)\.val\(\) === auth\.uid/);
+test("Write guard: owner may DELETE (only) own approved donation records", () => {
+  const guard = read("server/writeGuard.ts");
+  const don = guard.slice(guard.indexOf("function guardDonations"), guard.indexOf("function guardAccounts"));
+  /* owner delete-only branch */
+  assert.match(don, /value === null\) \{[\s\S]*?caller\.admin \|\| \(isPlainObject\(current\) && ownerUidOf\(current\) === caller\.uid\)/);
   /* admin/moderator পুরোনো অনুমতি অক্ষত */
-  assert.match(w, /role'\)\.val\(\) === 'admin'/);
-  assert.match(w, /role'\)\.val\(\) === 'moderator'/);
-  /* validate অক্ষত — create/edit নিয়ম বদলায় না */
-  const v = parsed.rules.donations.$id[".validate"];
-  assert.match(v, /newData\.child\('livesSaved'\)\.val\(\) === 1/);
+  assert.match(don, /caller\.admin \|\| \(caller\.role === "moderator" && !current\)/);
+  /* validate অক্ষত — create/edit নিয়ম বদলায় না (server-side shape check) */
+  assert.match(don, /\(merged as any\)\.livesSaved === 1/);
+  assert.match(don, /typeof \(merged as any\)\.donorId === "string"/);
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -258,56 +261,65 @@ const authx = read("src/lib/authx.ts");
 const notify = read("src/lib/notify.ts");
 const donationLog = read("src/lib/donationLog.ts");
 
-test("Rules: donors may write ONLY their own accounts row (owner-uid scoped)", () => {
-  const parsed = JSON.parse(rules);
-  const w = parsed.rules.accounts.$id[".write"];
+test("Write guard: donors may write ONLY their own accounts row (owner-uid scoped)", () => {
+  const guard = read("server/writeGuard.ts");
+  const acc = guard.slice(guard.indexOf("function guardAccounts"), guard.indexOf("function guardAdmins"));
   /* admin full access অক্ষত */
-  assert.match(w, /role'\)\.val\(\) === 'admin'/);
+  assert.match(acc, /if \(caller\.admin\) return;/);
   /* delete শুধু নিজের row */
-  assert.match(w, /!newData\.exists\(\) && data\.exists\(\) && data\.child\('uid'\)\.val\(\) === auth\.uid/);
+  assert.match(acc, /value === null\) \{[\s\S]*?String\(\(current as any\)\.uid \?\? ""\) === caller\.uid/);
   /* create/update শুধু নিজের uid দিয়ে */
-  assert.match(w, /newData\.exists\(\) && newData\.child\('uid'\)\.val\(\) === auth\.uid && \(!data\.exists\(\) \|\| data\.child\('uid'\)\.val\(\) === auth\.uid\)/);
+  assert.match(acc, /String\(\(merged as any\)\.uid \?\? ""\) === caller\.uid/);
+  assert.match(acc, /!current \|\| String\(\(current as any\)\.uid \?\? ""\) === caller\.uid/);
 });
 
-test("Rules: users/{uid}/data is staff-writable (moderator write-backs must not fail)", () => {
-  const parsed = JSON.parse(rules);
-  const w = parsed.rules.users.$uid.data[".write"];
-  assert.match(w, /\$uid === auth\.uid \|\| root\.child\('admins'\)\.child\(auth\.uid\)\.exists\(\)/);
+test("Write guard: users/{uid}/data is staff-writable (moderator write-backs must not fail)", () => {
+  const guard = read("server/writeGuard.ts");
+  const usr = guard.slice(guard.indexOf("function guardUsersSubtree"), guard.indexOf("function sameJsonValue"));
+  assert.match(usr, /uid === caller\.uid \|\| caller\.staff/);
 });
 
-test("Rules: owner may decrement donor stats by exactly one verified donation", () => {
-  const parsed = JSON.parse(rules);
-  const v = parsed.rules.donors.$id[".validate"];
+test("Write guard: owner may decrement donor stats by exactly one verified donation", () => {
+  const guard = read("server/writeGuard.ts");
+  const don = guard.slice(guard.indexOf("function guardDonors"), guard.indexOf("function guardRequests"));
   /* identity fields equality-locked থাকে */
-  assert.match(v, /newData\.child\('ownerUid'\)\.val\(\) === data\.child\('ownerUid'\)\.val\(\)/);
+  assert.match(don, /for \(const key of PROTECTED\)/);
+  assert.match(don, /sameValue\(\(merged as any\)\[key\], \(current as any\)\[key\]\)/);
   /* decrement branch: donations ও totalDonations -1, totalBags clamp, lastDonationDate unchanged */
-  assert.match(v, /newData\.child\('donations'\)\.val\(\) === data\.child\('donations'\)\.val\(\) - 1/);
-  assert.match(v, /newData\.child\('totalDonations'\)\.val\(\) === data\.child\('totalDonations'\)\.val\(\) - 1/);
-  assert.match(v, /newData\.child\('totalBags'\)\.val\(\) >= 0 && newData\.child\('totalBags'\)\.val\(\) <= data\.child\('totalBags'\)\.val\(\)/);
-  assert.match(v, /newData\.child\('lastDonationDate'\)\.val\(\) === data\.child\('lastDonationDate'\)\.val\(\)/);
+  assert.match(don, /nextDonations === curDonations - 1/);
+  assert.match(don, /nextTotal === curTotal - 1/);
+  assert.match(don, /nextBags >= 0 &&[\s\S]*?nextBags <= curBags/);
+  assert.match(don, /sameValue\(\(merged as any\)\.lastDonationDate, \(current as any\)\.lastDonationDate\)/);
 });
 
-test("Rules: loginIndex is public-read, claim-once, owned by the claiming email", () => {
+test("loginIndex is public-read; claims are claim-once and email-owned (server-side)", () => {
   const parsed = JSON.parse(rules);
-  assert.equal(parsed.rules.loginIndex[".read"], true);
-  for (const kind of ["username", "phone"]) {
-    const w = parsed.rules.loginIndex[kind].$key[".write"];
-    /* create-if-absent (claim-once); overwrite/delete শুধু দাবিকারী email-ই পারে */
-    assert.match(w, /newData\.isString\(\) && newData\.val\(\)\.contains\('@'/);
-    assert.match(w, /!data\.exists\(\) \|\| data\.val\(\) === auth\.token\.email/);
-    assert.match(w, /!newData\.exists\(\) && \(data\.val\(\) === auth\.token\.email/);
-  }
+  assert.equal(parsed.rules.loginIndex[".read"], true, "username→email login lookup stays public");
+  assert.equal(parsed.rules[".write"], false, "no direct client writes anymore");
+  const guard = read("server/writeGuard.ts");
+  assert.match(guard, /case "loginIndex":[\s\S]*?requireCondition\(caller\.admin/, "loginIndex writes are API-claim-only (admin)");
+  const profile = read("server/profileApi.ts");
+  const claim = profile.slice(profile.indexOf("async function claimOneLoginKey"), profile.indexOf("async function releaseOneLoginKey"));
+  /* create-if-absent (claim-once); অন্যের email থাকলে conflict */
+  assert.match(claim, /cur !== mail\) return "conflict"/);
+  /* লেখার পর পুনঃপাঠ করে যাচাই — race-safe claim */
+  assert.match(claim, /const verify = await io\.get\(path\)/);
+  assert.match(claim, /verify === mail\) return "claimed"/);
+  const rel = profile.slice(profile.indexOf("async function releaseOneLoginKey"), profile.indexOf("export async function handleClaimEmail"));
+  /* নিজের email ছাড়া কারো entry মুছে না */
+  assert.match(rel, /if \(cur === mail\) await io\.patch/);
 });
 
-test("identity.ts: atomic claim-once login index helpers", () => {
+test("identity.ts: login index helpers route claims through the secure API", () => {
   assert.match(identity, /export function loginIndexKey/);
   assert.match(identity, /export async function lookupLoginKey/);
   const claim = fnSource(identity, "export async function claimLoginKey(");
-  /* অন্যের email থাকলে abort — race-safe claim */
-  assert.match(claim, /current !== mail\) return undefined/);
+  /* ক্লেইম এখন সার্ভারে হয় — ক্লায়েন্ট শুধু ফলাফল ম্যাপ করে */
+  assert.match(claim, /apiClaimLogin\(mail, String\(value \?\? ""\), ""\)/);
+  assert.match(claim, /outcome === "conflict"\) return \{ claimed: false, reason: "conflict" \}/);
   const rel = fnSource(identity, "export async function releaseLoginKey(");
-  /* নিজের email ছাড়া কারো entry মুছে না */
-  assert.match(rel, /snap\.val\(\) !== mail\) return false/);
+  /* রিলিজও সার্ভারে — শুধু নিজের email-এর entry মুছে (server-side check) */
+  assert.match(rel, /apiReleaseLogin\(mail/);
   assert.match(identity, /export async function claimLoginEntries/);
   assert.match(identity, /export async function releaseLoginEntries/);
 });
@@ -333,10 +345,13 @@ test("Signup blocks a username already claimed in loginIndex", () => {
   assert.match(seg, /NODES\.members, "username", o\.username/);
 });
 
-test("ensureUserProfile claims the login index (fail-open)", () => {
+test("ensureUserProfile claims the login index on the server (fail-open)", () => {
   const i = authx.indexOf("export async function ensureUserProfile(");
-  const fn = authx.slice(i, i + 5000);
-  assert.match(fn, /claimLoginEntries\(base\.email, username, phone\)/);
+  const fn = authx.slice(i, i + 900);
+  assert.match(fn, /apiUpsertProfile\(user as Record<string, any>/);
+  const profile = read("server/profileApi.ts");
+  const up = profile.slice(profile.indexOf("export async function handleProfileUpsert"), profile.indexOf("async function claimOneLoginKey"));
+  assert.match(up, /claimLoginIndexes\(io, claimEmail, username, phone\)\.catch\(\(\) => undefined\)/);
 });
 
 test("Account delete cascade: deterministic queue/approved-log ids + groupChange + loginIndex", () => {
@@ -359,13 +374,13 @@ test("Resend clears the staff rejection note and re-queues", () => {
   assert.match(bind, /delete \(RAW\.donationNotes as any\)\[donationVerKey\(x\)\];/);
   assert.match(bind, /data\/donationNotes\/\$\{donationVerKey\(x\)\}`\]:null/);
   /* save ব্যর্থতায় স্পষ্ট বার্তা */
-  assert.match(bind, /সংরক্ষণ করা যায়নি — ইন্টারনেট সংযোগ দেখে আবার চেষ্টা করুন/);
+  assert.match(bind, /isPermissionDenied\(saveErr\)[\s\S]*?সংরক্ষণ করা যায়নি[\s\S]*?"er"\)/);
 });
 
 test("Add-donation surfaces save failures instead of silently succeeding", () => {
   const bind = fnSource(doner, "function bindAddDonation()");
   assert.match(bind, /try\{ await saveData\(\); \}\s*\n\s*catch\(saveErr\)\{/);
-  assert.match(bind, /toast\("সংরক্ষণ করা যায়নি — ইন্টারনেট সংযোগ দেখে আবার চেষ্টা করুন","er"\)/);
+  assert.match(bind, /toast\(isPermissionDenied\(saveErr\).*?সংরক্ষণ করা যায়নি.*?"er"\)/);
 });
 
 test("Cancellation notifies the donor (with reason) exactly once per record", () => {

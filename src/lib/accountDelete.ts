@@ -2,6 +2,7 @@
 
 import { getAuthInstance } from "./firebase";
 import { appBase } from "./router";
+import { API_GATEWAYS, API_TIMEOUTS } from "../config/api";
 import { toBanglaDigits } from "./age";
 
 
@@ -29,10 +30,10 @@ export async function resolveLegacyAccount(): Promise<{
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     let res: Response | null = null;
     try {
-      res = await fetch(`${appBase()}api/account/resolve-legacy`, {
+      res = await fetch(`${appBase()}${API_GATEWAYS.auth}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ op: "resolve-legacy" }),
         signal: controller.signal,
       });
     } finally {
@@ -95,13 +96,13 @@ export async function runDedupeScan(apply: boolean): Promise<DedupeReportInfo> {
     if (!user || typeof user.getIdToken !== "function") return fail("লগইন করা নেই — অ্যাডমিন হিসেবে লগইন করুন।");
     const token = await user.getIdToken();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30000);
+    const timer = setTimeout(() => controller.abort(), API_TIMEOUTS.dedupeScan);
     let res: Response | null = null;
     try {
-      res = await fetch(`${appBase()}api/admin/dedupe`, {
+      res = await fetch(`${appBase()}${API_GATEWAYS.admin}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ apply }),
+        body: JSON.stringify({ op: "dedupe", apply }),
         signal: controller.signal,
       });
     } finally {
@@ -174,9 +175,9 @@ export function isAuthUid(value: unknown): boolean {
   return AUTH_UID_RE.test(String(value ?? "").trim());
 }
 
-const ENDPOINT = "api/admin/delete";
-const CONFIG_ENDPOINT = "api/admin/config-check";
-const TIMEOUT_MS = 20000;
+const ENDPOINT = API_GATEWAYS.admin;
+const CONFIG_ENDPOINT = API_GATEWAYS.admin;
+const TIMEOUT_MS = API_TIMEOUTS.accountDelete;
 
 
 export async function checkDeleteServerConfig(): Promise<{ configured: boolean | null; error?: string }> {
@@ -186,13 +187,13 @@ export async function checkDeleteServerConfig(): Promise<{ configured: boolean |
     if (!user || typeof user.getIdToken !== "function") return { configured: null, error: "লগইন করা নেই।" };
     const token = await user.getIdToken();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10000);
+    const timer = setTimeout(() => controller.abort(), API_TIMEOUTS.statusCheck);
     let res: Response | null = null;
     try {
       res = await fetch(`${appBase()}${CONFIG_ENDPOINT}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ op: "config-check" }),
         signal: controller.signal,
       });
     } finally {
@@ -242,7 +243,7 @@ export async function serverDeleteEntity(req: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ scope, donorId, uid, name }),
+        body: JSON.stringify({ op: "delete", scope, donorId, uid, name }),
         signal: controller.signal,
       });
     } finally {

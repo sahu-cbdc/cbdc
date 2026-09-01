@@ -5,7 +5,7 @@
 
 import { useEffect } from "react";
 import "../lib/store";
-import { initFirebase as initSharedFirebase, NODES, getAuthInstance } from "../lib/firebase";
+import { initFirebase as initSharedFirebase, NODES } from "../lib/firebase";
 import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
 import { authErrorMessage, authErrorCode, resolveUserRole, panelForRole, setOrChangePassword, requestPasswordReset } from "../lib/authx";
 import { getRow, setRow, updateRow, removeRow, listOnce, watchList, watchRow, findBy, nowIso, nextDonorId, updatePaths, serverTime, getPath, setPath, removePath, watchPath, releaseDonorSerial } from "../lib/rtdb";
@@ -14,6 +14,8 @@ import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERR
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage, getImgbbStatus } from "../lib/imgbb";
+import { currentAuthUid, hasAuthCurrentUser, authSignOut } from "../lib/authActions";
+import { saveSiteConfigToSource } from "../lib/siteConfig";
 import {
   donationVerKey,
   safeDonationId,
@@ -1852,7 +1854,7 @@ function initPage() {
       if(!v.ok)return;
       const btn=s.q("#ad_save");btn.disabled=true;btn.textContent="সংরক্ষণ হচ্ছে…";
       try{
-        const authUid=String((getAuthInstance()&&getAuthInstance().currentUser&&getAuthInstance().currentUser.uid)||"");
+        const authUid=currentAuthUid();
         const uid=String(ME.uid||"");
         if(!uid||authUid!==uid)throw new Error("অ্যাডমিন লগইন সেশন পাওয়া যায়নি");
         const current=(await getRow(NODES.users,uid))||{};
@@ -1935,7 +1937,7 @@ function initPage() {
     if(!await confirmS({title:"ডোনার তালিকা থেকে সরে যাবেন?",
       desc:"অ্যাকাউন্ট ও অ্যাডমিন প্রোফাইল থাকবে; শুধু ডোনার তথ্য ও পাবলিক কার্ড সরে যাবে।",ok:"সরে যান",danger:true}))return;
     try{
-      const uid=String(ME.uid||""),authUid=String((getAuthInstance()&&getAuthInstance().currentUser&&getAuthInstance().currentUser.uid)||"");
+      const uid=String(ME.uid||""),authUid=currentAuthUid();
       if(!uid||authUid!==uid)throw new Error("অ্যাডমিন লগইন সেশন পাওয়া যায়নি");
       const donor=await ownAdminDonorRow(),id=String((donor&&(donor.id||donor.donorId))||"");
       const paths={};if(id)paths[`donors/${id}`]=null;
@@ -3173,7 +3175,7 @@ function initPage() {
       localStorage.removeItem(ACC_LS);
       sessionStorage.clear();
     }catch(e){}
-    try{(async()=>{try{const shared=initSharedFirebase();const {signOut}=await import("firebase/auth");if(shared.auth)await signOut(shared.auth)}catch(e){}})()}catch(e){}
+    try{(async()=>{try{await authSignOut()}catch(e){}})()}catch(e){}
     toast("লগআউট হয়েছে — মূল ওয়েবসাইটে ফিরে যাচ্ছেন","ok");
     setTimeout(()=>{navigateToPage("home")},700);
   }
@@ -3936,7 +3938,7 @@ function initPage() {
       if(cfg.configured===false){
         toast("সার্ভারে service-account secret (FIREBASE_SERVICE_ACCOUNT) কনফিগার করা নেই — "
           +"লগইন অ্যাকাউন্টসহ সম্পূর্ণ ডিলিট সম্ভব নয়, তাই কিছুই মোছা হয়নি। "
-          +"ডিপ্লয়ে `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT` (বা dev-এ `.env`-এ) সেট করে আবার চেষ্টা করুন।","er");
+          +"ডিপ্লয়ে `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT` (dev-এ environment variable সেট করে) আবার চেষ্টা করুন।","er");
         return;
       }
     }
@@ -4599,15 +4601,9 @@ function initPage() {
   
   
   async function saveSiteToSource(s){
-    try{
-      const res=await fetch(appBase()+"__admin/site-config",{
-        method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({heroTitle:s.heroTitle,heroText:s.heroText,phone:s.phone,
-          email:s.email,address:s.address,facebook:s.facebook,
-          showStats:!!s.showStats,showGallery:!!s.showGallery,showEmergency:!!s.showEmergency})});
-      const data=await res.json().catch(()=>null);
-      return !!(data&&data.ok);
-    }catch(e){console.warn("site config save:",e&&e.message);return false}
+    return await saveSiteConfigToSource({heroTitle:s.heroTitle,heroText:s.heroText,phone:s.phone,
+      email:s.email,address:s.address,facebook:s.facebook,
+      showStats:!!s.showStats,showGallery:!!s.showGallery,showEmergency:!!s.showEmergency});
   }
   function previewDoc(){
     const s=DB.site,c=bloodCounts();
@@ -4788,8 +4784,7 @@ function initPage() {
     if(dbUnsub)return;
     if(dbWatchdog){clearTimeout(dbWatchdog);dbWatchdog=null;}
     
-    const au=getAuthInstance();
-    if(!au||!au.currentUser){
+    if(!hasAuthCurrentUser()){
       dbState="auth";dbErr="";dbRender();
       
       dbWatchdog=setTimeout(()=>{dbWatchdog=null;if(!dbUnsub)dbEnsureListener();},200);
@@ -5193,9 +5188,8 @@ function initPage() {
     +(may?`<button class="btn w" style="margin-top:12px" id="gUp">${SI.up(16)} ছবি যোগ করুন</button>`:"")
     +`<div class="sec-t">ImgBB সংযোগ</div>
       <div class="card"><div class="kv">
-        <div><span>অবস্থা</span><b id="gKeyState">${DB.integr.imgbbKey?"কী সংরক্ষিত":"কী দেওয়া হয়নি"}</b></div>
-        <div><span>সর্বোচ্চ আকার</span><b>৩২ MB</b></div></div>
-        <p class="hint2" style="margin-top:9px">নিয়ন্ত্রণ → অনুমোদন ও সেটিংস থেকে API কী দিলে সরাসরি আপলোড চালু হবে।</p></div>`;
+        <div><span>অবস্থা</span><b id="gKeyState">${DB.integr.imgbbKey?"সক্রিয়":"যাচাই হচ্ছে…"}</b></div></div>
+        <p class="hint2" style="margin-top:9px">ছবি সার্ভারের মাধ্যমে ImgBB-তে আপলোড হয় — কী সার্ভারে সুরক্ষিত থাকে।</p></div>`;
     getImgbbStatus().then(k=>{if(k){DB.integr.imgbbKey="1";const inp=$("#gKeyState");if(inp)inp.textContent="কী সংরক্ষিত";}});
     el.querySelectorAll("[data-gt]").forEach(b=>b.onclick=async()=>{
       const g=DB.gallery.find(x=>x.id===b.dataset.gt);if(!g)return;
@@ -5214,7 +5208,7 @@ function initPage() {
   function uploadSheet(){
     const s=sheet("ছবি যোগ করুন",`
       <div class="dz" id="dz"><span>${SI.up(24)}</span><b>ছবি বেছে নিন</b>
-        <small>JPG / PNG · সর্বোচ্চ ৩২ MB</small>
+        <small>JPG / PNG</small>
         <input type="file" id="fi" accept="image/*" hidden></div>
       <div class="f" style="margin-top:12px"><label>শিরোনাম</label>
         <input id="up_t"></div>
@@ -5229,7 +5223,7 @@ function initPage() {
     fi.onchange=()=>fi.files[0]&&take(fi.files[0]);
     function take(f){
       if(!/^image\//.test(f.type))return toast("ছবি ফাইল দিন","er");
-      if(f.size>32*1024*1024)return toast("ফাইল ৩২ MB-র বেশি","er");
+      if(f.size>32*1024*1024)return toast("ফাইলটি খুব বড় — ছোট ছবি দিন","er");
       file=f;url=URL.createObjectURL(f);
       dz.innerHTML=`<img src="${url}" style="max-height:110px;border-radius:9px"><b>${esc(f.name)}</b>
         <small>${bn((f.size/1024).toFixed(0))} KB</small>`;
