@@ -250,33 +250,4 @@ export function resetNotificationContext(uid: string): void {
 }
 
 
-export function donorMatchesRequest(
-  d: Record<string, any>,
-  group: string,
-  opts: { exceptUid?: string } = {}
-): boolean {
-  const uid = String(d && d.ownerUid || "").trim();
-  if (!uid) return false;
-  if (opts.exceptUid && String(opts.exceptUid) === uid) return false;
-  if (String(d.bloodGroup || d.group || "") !== String(group || "").trim()) return false;
-  if (d.available === false || d.suspended) return false;
-  if ((d.status || "approved") === "pending") return false;
-  return true;
-}
 
-export default {
-  addNotif,
-  loadNotifs,
-  markNotifRead,
-  markAllNotifsRead,
-  unreadNotifs,
-  pruneExpired,
-  subscribe,
-  loadSeen,
-  saveSeen,
-  resetNotificationContext,
-  donorMatchesRequest,
-  sanitizeKey,
-  notifExpiry,
-  NOTIF_EXPIRE_MS,
-};

@@ -22,13 +22,13 @@ import {
 } from "../lib/authx";
 import { getRow, setRow, updateRow, watchRow, watchList, addRow, findBy, listOnce, nowIso, updatePaths, removeRow, incrementField, ensureFieldAtLeast, serverTime, nextDonorId, releaseDonorSerial, isPermissionDenied } from "../lib/rtdb";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
-import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
+import { validateForm, attachLiveClear, FORM_ERROR_CSS } from "../lib/forms";
 import { requestDirectApply } from "../lib/applyRequest";
 import { authCurrentUser, reauthenticateCurrentWithPassword, updateAuthEmail, deleteAuthCurrentUser, authSignOut } from "../lib/authActions";
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage } from "../lib/imgbb";
-import { DISTRICTS, DEFAULT_DISTRICT, areasForDistrict, districtOfArea, ALL_AREAS, fillAreaSelect } from "../lib/locations";
+import { DISTRICTS, areasForDistrict, districtOfArea, fillAreaSelect } from "../lib/locations";
 import { noticeVisibleTo, noticeReadKey, markNoticeRead, markAllNoticesRead, watchNoticeReads } from "../lib/notice";
 
 import {

@@ -152,7 +152,7 @@ function checkUserDataObject(caller: Caller, uid: string, dataValue: any, curDat
   }
 }
 
-function checkUsersField(caller: Caller, uid: string, field: string, value: any, current: any): void {
+function checkUsersField(caller: Caller, field: string, value: any, current: any): void {
   const cur = isPlainObject(current) ? (current as any)[field] : undefined;
   if (field === "role") {
     requireCondition(caller.admin || value === "donor", 403, "role শুধু অ্যাডমিন বদলাতে পারেন।");
@@ -195,7 +195,7 @@ function guardUsersSubtree(ctx: Ctx, uid: string, sub: string[], value: any, cur
     requireCondition(value !== null, 403, "অ্যাকাউন্ট রেকর্ড এই পথে মোছা যায় না।");
     if (isPlainObject(value)) {
       for (const field of ["role", "donorStatus", "donorId", "bloodGroup"]) {
-        if (field in value) checkUsersField(caller, uid, field, value[field], current);
+        if (field in value) checkUsersField(caller, field, value[field], current);
       }
       if ("data" in value) {
         const curData = isPlainObject(current) ? (current as any).data : null;
@@ -208,7 +208,7 @@ function guardUsersSubtree(ctx: Ctx, uid: string, sub: string[], value: any, cur
   const field = sub[0];
   if (field === "role" || field === "donorStatus" || field === "donorId" || field === "bloodGroup") {
     requireCondition(sub.length === 1, 400, badPathMessage("users/" + uid + "/" + sub.join("/")));
-    checkUsersField(caller, uid, field, value, current);
+    checkUsersField(caller, field, value, current);
     return;
   }
 

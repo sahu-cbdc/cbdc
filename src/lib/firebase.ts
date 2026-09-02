@@ -30,8 +30,6 @@ export const NODES = {
 } as const;
 
 
-export const COLLECTIONS = NODES;
-
 let app: FirebaseApp | null = null;
 let rtdb: Database | null = null;
 let auth: Auth | null = null;
@@ -82,11 +80,6 @@ export function getRtdb(): Database | null {
 }
 
 
-export function getDb(): Database | null {
-  return getRtdb();
-}
-
-
 export function getAuthInstance(): Auth | null {
   if (!auth) initFirebase();
   return auth;
@@ -96,9 +89,4 @@ export function getAuthInstance(): Auth | null {
 export function isFirebaseReady(): boolean {
   if (!rtdb) initFirebase();
   return !!rtdb && !initError;
-}
-
-
-export function getFirebaseInitError(): Error | null {
-  return initError;
 }

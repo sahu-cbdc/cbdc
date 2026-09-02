@@ -1,16 +1,16 @@
 
 
 import { emailIndexPath } from "./identityKey.ts";
+import { type AuthDeleteOutcome as AuthDeleteIoOutcome } from "./authAdmin.ts";
 
 export type DeleteScope = "account" | "donor";
 
 
-export type AuthDeleteIoOutcome = "deleted" | "missing" | "failed" | "unconfigured";
+/** User-facing outcome: the IO "unconfigured" state surfaces as "skipped". */
+export type AuthDeleteStatus = "deleted" | "missing" | "failed" | "skipped";
 
-export type AuthDeleteOutcome = "deleted" | "missing" | "failed" | "skipped";
 
-
-function toAuthStatus(outcome: AuthDeleteIoOutcome): AuthDeleteOutcome {
+function toAuthStatus(outcome: AuthDeleteIoOutcome): AuthDeleteStatus {
   return outcome === "unconfigured" ? "skipped" : outcome;
 }
 
@@ -100,7 +100,7 @@ export type ServerDeleteResult = {
   
   rtdb: "ok" | "failed" | "skipped";
   
-  auth: AuthDeleteOutcome;
+  auth: AuthDeleteStatus;
   
   authUid: string;
   
@@ -348,7 +348,7 @@ async function deleteDonorIdEntity(
   }
 
   
-  let authOutcome: AuthDeleteOutcome = "missing";
+  let authOutcome: AuthDeleteStatus = "missing";
   let authUid = "";
   const isOwnDonor = !!uid && uid === callerUid;
   if (uid && isAuthUid(uid)) {

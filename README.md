@@ -36,13 +36,14 @@
 
 ## যেকোনো হোস্টিং সাইটে চালানো
 
-Build করলে **একটি `index.html` + assets** তৈরি হয় এবং সব asset
-**relative path** (`./assets/...`) ব্যবহার করে। ফলে `dist/` ফোল্ডারটি **যেকোনো স্ট্যাটিক
-হোস্টে** শুধু upload করলেই চলে:
+Build করলে **একটি `index.html` + assets** তৈরি হয়। Default build
+(`base: "/"`) asset-গুলো **domain-root absolute path** (`/assets/...`) ব্যবহার করে —
+অর্থাৎ `dist/` ফোল্ডারটি **যেকোনো স্ট্যাটিক হোস্টের root-এ** শুধু upload করলেই চলে:
 
-- GitHub Pages, Netlify, Vercel, Cloudflare Pages/Workers, Firebase Hosting
-- shared cPanel / FTP hosting, Apache, Nginx, S3/র static bucket
-- sub-directory-তে বসালেও চলে (যেমন `https://host/cbdc/`)
+- GitHub Pages (repository root), Netlify, Vercel, Cloudflare Pages/Workers, Firebase Hosting
+- shared cPanel / FTP hosting, Apache, Nginx, S3-র static bucket (bucket root-এ)
+- **sub-directory-তে** (যেমন `https://host/cbdc/`) বসাতে build-এর সময় base দিতে হবে:
+  `VITE_BASE=/cbdc/ npm run build`
 
 Cloudflare Workers-এ deploy-এর জন্য `wrangler.jsonc`-এ SPA fallback
 (`not_found_handling: single-page-application`) সেট করা আছে, আর Firebase
@@ -61,7 +62,7 @@ Hosting-এর জন্য `firebase.json`-এ rewrite (`** → /index.html`) �
 >
 > ```bash
 > npx wrangler secret put FIREBASE_SERVICE_ACCOUNT   # service-account JSON
-> npm run build && npx wrangler deploy
+> npm run deploy          # = npm run build && wrangler deploy (dist/ আগে তৈরি হয়)
 > ```
 >
 > নিরাপত্তা: লগইন অ্যাকাউন্ট মোছা হয় **ঠিক যাচাইকৃত লিংকড uid-টিই** — Donor ID
@@ -264,12 +265,28 @@ RTDB-এর পুরোনো URL/reference-ও update/remove হয়।
 sub-directory হোস্টিং-এ শুধু `VITE_BASE=/cbdc/` env (Firebase Hosting · Cloudflare Pages
 (wrangler.jsonc) · Netlify · Vercel · যেকোনো static host + SPA rewrite)।
 
-### Deploy checklist
+### Production deploy — Cloudflare **Worker** (SPA + `/api` gateway একসাথে)
 
-```bash
-npm ci && npm run build            # dist/ — যেকোনো host-এ serve করা যায়
-firebase deploy --only database    # RTDB Security Rules
-firebase deploy --only hosting     # (ঐচ্ছিক) Firebase Hosting ব্যবহার করলে
-```
-কোনো Cloud Function deploy করতে হয় না — পুরো সিস্টেম Auth + RTDB + ImgBB দিয়েই চলে।
+> ⚠️ Production-এ শুধু static host (Pages/Netlify/GitHub Pages…) দিয়ে সাইট
+> খুলে গেলে **`/api/*` gateway থাকে না** — ফলে লগইন-এর ডেটা সেভ, রেজিস্ট্রেশন,
+> জরুরি আবেদন, Admin/Moderator লেখা কিছুই কাজ করে না (শুধু পড়া চলে)।
+> এই অ্যাপের production target সবসময় Cloudflare **Worker**: `wrangler.jsonc`-এ
+> `main: server/index.ts` (API) + `assets: ./dist` (SPA) +
+> `run_worker_first: ["/api/*"]` — এক Worker-ই দুটোই serve করে।
+
+তিনোভাবে deploy করা যায় (যেকোনো একটি):
+
+1. **Cloudflare dashboard (Git integration)** — Workers & Pages → Create →
+   **Workers** (নাম `cbdc`) → Settings → Add a Git integration → এই repo,
+   branch `main` → Build command: `npm run build`। তারপর Settings →
+   Variables and Secrets-এ `FIREBASE_SERVICE_ACCOUNT` (service-account JSON)
+   ও Domains & Routes-এ `chawkbazarbloodclub.com` যোগ করুন।
+2. **GitHub Actions** — `.github/workflows/deploy.yml` ready আছে। GitHub repo-তে
+   Settings → Secrets and variables → Actions-এ `CF_API_TOKEN`
+   (scope: Edit Cloudflare Workers) + `CF_ACCOUNT_ID` [+ `FIREBASE_SERVICE_ACCOUNT`]
+   দিলে **main-এ push করলেই auto-deploy**। (Secret না দিলে workflow skip হয়।)
+3. **লোকাল / যেকোনো machine-এ:** `npm run deploy` (= build + `wrangler deploy`)।
+
+RTDB Security Rules আলাদা: `firebase deploy --only database`
+(`database.rules.json`)।
 

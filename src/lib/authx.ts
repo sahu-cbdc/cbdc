@@ -9,7 +9,6 @@ import {
   linkWithCredential,
   reauthenticateWithCredential,
   updatePassword,
-  fetchSignInMethodsForEmail,
   type Auth,
   type User,
   type UserCredential,
@@ -398,15 +397,6 @@ export function onAuthUserChanged(_auth: Auth, cb: (user: User | null) => void):
 }
 
 
-
-
-export async function signInMethodsForEmail(auth: Auth, email: string): Promise<string[]> {
-  try {
-    return await fetchSignInMethodsForEmail(auth, String(email || "").trim().toLowerCase());
-  } catch {
-    return [];
-  }
-}
 
 
 export function userHasPasswordProvider(

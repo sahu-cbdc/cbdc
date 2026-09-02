@@ -18,7 +18,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import apiHandler from "../server/index.ts";
 import { FIREBASE_PUBLIC_CONFIG } from "../src/config/firebase.ts";
-import { IMGBB_API_KEY } from "../server/config/imgbb.ts";
+import { IMGBB_API_KEY } from "../src/config/imgbb.ts";
 
 /* ─────────────────── fake service account (real RSA key) ─────────────────── */
 const keyPair = await crypto.subtle.generateKey(

@@ -21,7 +21,7 @@ export const SITE = {
   
   district: "চট্টগ্রাম",
   address: "চকবাজার, চট্টগ্রাম",
-  website: "cbdc-a9418.web.app", 
+  website: "https://chawkbazarbloodclub.com", 
 
   
   

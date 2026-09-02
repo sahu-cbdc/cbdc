@@ -1,7 +1,7 @@
 
 
 import { ApiError } from "./deleteApi.ts";
-import { IMGBB_UPLOAD_ENDPOINT, IMGBB_UPLOAD_MAX_BYTES } from "./config/imgbb.ts";
+import { IMGBB_UPLOAD_ENDPOINT, IMGBB_UPLOAD_MAX_BYTES } from "../src/config/imgbb.ts";
 
 
 export type ImagesIo = {
@@ -25,8 +25,6 @@ export type ImageUploadResult = {
 const IMGBB_URL = IMGBB_UPLOAD_ENDPOINT;
 
 export const MAX_UPLOAD_BYTES = IMGBB_UPLOAD_MAX_BYTES;
-
-const MAX_BYTES = MAX_UPLOAD_BYTES;
 
 const MAX_MIME_LEN = 80;
 
@@ -58,14 +56,14 @@ export async function handleImageUpload(
 
   const data = bytes && bytes.length ? bytes : new Uint8Array(0);
   if (!data.length) throw new ApiError(400, "ছবি ফাইল খালি।");
-  if (data.length > MAX_BYTES) throw new ApiError(413, "ছবিটি খুব বড় — ছোট ছবি দিন।");
+  if (data.length > MAX_UPLOAD_BYTES) throw new ApiError(413, "ছবিটি খুব বড় — ছোট ছবি দিন।");
 
   
   const key = await io.getImgbbKey().catch(() => "");
   if (!key) {
     throw new ApiError(
       503,
-      "সার্ভারে ImgBB API key কনফিগার করা নেই — সার্ভারের IMGBB_API_KEY secret দিন (server/config/imgbb.ts)।",
+      "সার্ভারে ImgBB API key কনফিগার করা নেই — সার্ভারের IMGBB_API_KEY secret দিন।",
     );
   }
 

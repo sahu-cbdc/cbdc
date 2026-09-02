@@ -362,15 +362,13 @@ test("pages: no direct Firebase SDK, ImgBB, or raw endpoint fetch in components"
   assert.match(siteCfg, /INTERNAL_ENDPOINTS\.siteConfigSource/, "site-config channel lives in a helper");
 });
 
-test("imgbb: key/endpoint/limit ONLY in server/config/imgbb.ts; src/config/imgbb.ts stays public-only", () => {
-  const central = read("server/config/imgbb.ts");
+test("imgbb: ONE central config (src/config/imgbb.ts); key never referenced from client code", () => {
+  const central = read("src/config/imgbb.ts");
   assert.match(central, /IMGBB_API_KEY = "[0-9a-f]{20,}"/, "the key lives here");
   assert.match(central, /IMGBB_UPLOAD_ENDPOINT = "https:\/\/api\.imgbb\.com/, "upload endpoint lives here");
   assert.match(central, /IMGBB_UPLOAD_MAX_BYTES/, "upload ceiling lives here");
-  /* src/config/imgbb.ts is allowed but must stay PUBLIC-ONLY (no key/endpoint/limit) */
-  const pub = read("src/config/imgbb.ts");
-  assert.match(pub, /compression/, "src/config/imgbb.ts carries the public compression settings");
-  assert.doesNotMatch(pub, /IMGBB_API_KEY|apiKey|api\.imgbb\.com|MAX_BYTES/i, "src/config/imgbb.ts must stay public-only");
+  assert.match(central, /compression/, "public compression settings live here");
+  /* the browser must keep importing ONLY the public config — never the key */
   for (const f of ["api", "rtdb", "authActions", "siteConfig", "applyRequest", "accountDelete", "firebase", "identity", "store"]) {
     const lib = read(`src/lib/${f}.ts`);
     assert.doesNotMatch(lib, /config\/imgbb|IMGBB_API_KEY/, `${f}.ts must not reach imgbb config`);
@@ -382,12 +380,12 @@ test("imgbb: key/endpoint/limit ONLY in server/config/imgbb.ts; src/config/imgbb
     const page = read(`src/pages/${f}.tsx`);
     assert.doesNotMatch(page, /config\/imgbb|IMGBB_API_KEY|api\.imgbb\.com/, `${f}.tsx must stay imgbb-clean`);
   }
-  /* the key VALUE exists in exactly one repo file and never under src/ */
+  /* the key VALUE exists in exactly one repo file */
   const hits = execFileSync("grep", ["-rl", "3c3dc9b98e063feb28ce6e1931582d51", "src", "server", "vite.config.ts", "wrangler.jsonc", "database.rules.json"]).toString().trim().split("\n").filter(Boolean);
-  assert.deepEqual(hits, ["server/config/imgbb.ts"], "key value only in server/config/imgbb.ts");
+  assert.deepEqual(hits, ["src/config/imgbb.ts"], "key value only in src/config/imgbb.ts");
   /* /api/media resolves key + endpoint + limit from the central file only */
   const cfg = read("server/config.ts");
-  assert.match(cfg, /\.\/config\/imgbb\.ts/, "server config imports the central imgbb config");
+  assert.match(cfg, /src\/config\/imgbb\.ts/, "server config imports the central imgbb config");
   assert.match(cfg, /CENTRAL_IMGBB_KEY/, "env override -> central key precedence");
   const api = read("server/imagesApi.ts");
   assert.match(api, /IMGBB_URL = IMGBB_UPLOAD_ENDPOINT/, "endpoint single-sourced");

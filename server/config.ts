@@ -4,15 +4,18 @@
  *   • PUBLIC values (Firebase web API key, database URL, project id) come
  *     from the single shared source src/config/firebase.ts — the same file
  *     the browser SDK uses. They are not duplicated here or in wrangler vars.
- *   • SECRETS (FIREBASE_SERVICE_ACCOUNT, IMGBB_API_KEY) and deployment
- *     tunables (ALLOWED_ORIGINS, guard limits) are read from the server
- *     environment ONLY — Cloudflare Worker secrets in production, process
- *     environment for local dev. They are never bundled, never returned by
- *     an API, and never appear in any checked-in file.
+ *   • SECRETS (FIREBASE_SERVICE_ACCOUNT) and deployment tunables
+ *     (ALLOWED_ORIGINS, guard limits) are read from the server environment
+ *     ONLY — Cloudflare Worker secrets in production, process environment
+ *     for local dev. The FIREBASE_SERVICE_ACCOUNT is never bundled and
+ *     never appears in any checked-in file.
+ *   • The ImgBB key lives in the single shared source src/config/imgbb.ts
+ *     (checked-in fallback); the IMGBB_API_KEY Worker secret overrides it
+ *     for rotation without a code change.
  */
 import { parseAllowedOrigins } from "./cors.ts";
 import { FIREBASE_PUBLIC_CONFIG } from "../src/config/firebase.ts";
-import { IMGBB_API_KEY as CENTRAL_IMGBB_KEY } from "./config/imgbb.ts";
+import { IMGBB_API_KEY as CENTRAL_IMGBB_KEY } from "../src/config/imgbb.ts";
 
 export const UNCONFIGURED_MSG =
   "সার্ভারে service-account secret (FIREBASE_SERVICE_ACCOUNT) কনফিগার করা নেই — " +
