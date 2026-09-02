@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { handleAdminEntityDelete, handleAdminConfigCheck, ApiError } from "./server/deleteApi";
 import { toUserSafeMessage } from "./server/index";
-import { IMGBB_UPLOAD_MAX_BYTES } from "./server/config/imgbb";
+import { IMGBB_UPLOAD_MAX_BYTES } from "./src/config/imgbb";
 import { handleAdminDedupe } from "./server/dedupeApi";
 import { handleDonorApply } from "./server/applyApi";
 import { handleResolveLegacy } from "./server/resolveLegacy";

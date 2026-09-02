@@ -1,7 +1,7 @@
 
 
 import { ApiError } from "./deleteApi.ts";
-import { IMGBB_UPLOAD_ENDPOINT, IMGBB_UPLOAD_MAX_BYTES } from "./config/imgbb.ts";
+import { IMGBB_UPLOAD_ENDPOINT, IMGBB_UPLOAD_MAX_BYTES } from "../src/config/imgbb.ts";
 
 
 export type ImagesIo = {
