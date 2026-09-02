@@ -7,6 +7,11 @@
   "name": "cbdc",
   "compatibility_date": "2026-08-16",
   "main": "server/index.ts",
+  // Cloudflare's deploy command runs `npx wrangler deploy` directly, which does
+  // NOT build the frontend. This hook makes wrangler produce ./dist first.
+  "build": {
+    "command": "npm run build"
+  },
   "assets": {
     "directory": "./dist",
     "not_found_handling": "single-page-application",

@@ -5,8 +5,7 @@
  *   • IMGBB_API_KEY / IMGBB_UPLOAD_ENDPOINT / IMGBB_UPLOAD_MAX_BYTES —
  *     SERVER-ONLY exports. No browser code imports them, so Vite
  *     tree-shakes them out of dist/ and they reach only the Worker bundle.
- *     tests/securityRegression.test.mjs pins this: client files must never
- *     reference IMGBB_API_KEY.
+ *     IMPORTANT: client files must never reference IMGBB_API_KEY.
  *
  * Key rotation without a code change: set the IMGBB_API_KEY Worker secret —
  * it overrides the key below (server/config.ts).
