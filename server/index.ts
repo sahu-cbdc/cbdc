@@ -129,7 +129,7 @@ function contentLength(request: Request): number {
 }
 
 const guards = new Map<string, ReturnType<typeof createAbuseGuard>>();
-function guardFor(env: any, bucket: string, max: number, windowMs: number) {
+function guardFor(bucket: string, max: number, windowMs: number) {
   const key = `${bucket}:${max}:${windowMs}`;
   let guard = guards.get(key);
   if (!guard) {
@@ -181,7 +181,7 @@ export default {
 
     try {
       if (gateway === "media") {
-        if (!guardFor(env, "media", cfg.abuseGuardMax, cfg.abuseGuardWindowMs).check(guardKey(clientKey(request), "media"))) {
+        if (!guardFor("media", cfg.abuseGuardMax, cfg.abuseGuardWindowMs).check(guardKey(clientKey(request), "media"))) {
           return jsonResponse({ ok: false, error: FLOOD_MSG }, { status: 429, corsHeaders: cors.headers });
         }
         if (!idToken) return jsonResponse({ ok: false, error: AUTH_MSG }, { status: 401, corsHeaders: cors.headers });
@@ -204,11 +204,11 @@ export default {
 
       const isPublicSubmit = gateway === "data" && op === "public-submit";
       if (isPublicSubmit) {
-        if (!guardFor(env, "public/submit", cfg.publicSubmitGuardMax, cfg.abuseGuardWindowMs).check(guardKey(clientKey(request), "public/submit"))) {
+        if (!guardFor("public/submit", cfg.publicSubmitGuardMax, cfg.abuseGuardWindowMs).check(guardKey(clientKey(request), "public/submit"))) {
           return jsonResponse({ ok: false, error: FLOOD_MSG }, { status: 429, corsHeaders: cors.headers });
         }
       } else {
-        if (!guardFor(env, "api", cfg.abuseGuardMax, cfg.abuseGuardWindowMs).check(guardKey(clientKey(request), gateway))) {
+        if (!guardFor("api", cfg.abuseGuardMax, cfg.abuseGuardWindowMs).check(guardKey(clientKey(request), gateway))) {
           return jsonResponse({ ok: false, error: FLOOD_MSG }, { status: 429, corsHeaders: cors.headers });
         }
         if (!idToken) return jsonResponse({ ok: false, error: AUTH_MSG }, { status: 401, corsHeaders: cors.headers });
@@ -223,7 +223,7 @@ export default {
         else throw new ApiError(400, UNKNOWN_OP_MSG);
       } else if (gateway === "data") {
         if (op === "write") result = await handleDataWrite({ ...body, idToken }, makeDataIo(env));
-        else if (op === "apply") result = await handleDonorApply({ ...body, idToken }, makeApplyIo(env, idToken));
+        else if (op === "apply") result = await handleDonorApply({ ...body, idToken }, makeApplyIo(env));
         else if (op === "public-submit") result = await handlePublicSubmit(body, makePublicIo(env), idToken);
         else throw new ApiError(400, UNKNOWN_OP_MSG);
       } else {

@@ -1,5 +1,6 @@
 
 
+import { apiPostRaw } from "./api";
 import { getAuthInstance } from "./firebase";
 import { appBase } from "./router";
 import { API_GATEWAYS, API_TIMEOUTS } from "../config/api";
@@ -15,24 +16,10 @@ const TIMEOUT_MS = API_TIMEOUTS.upload;
 
 export async function getImgbbStatus(): Promise<boolean> {
   try {
-    const auth = getAuthInstance();
-    const user = (auth?.currentUser ?? null) as any;
-    if (!user || typeof user.getIdToken !== "function") return false;
-    const token = await user.getIdToken();
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), API_TIMEOUTS.statusCheck);
-    let res: Response | null = null;
-    try {
-      res = await fetch(`${appBase()}${CONFIG_ENDPOINT}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ op: "config-check" }),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-    const data: any = await res.json().catch(() => null);
+    const res = await apiPostRaw(CONFIG_ENDPOINT, { op: "config-check" }, {
+      timeoutMs: API_TIMEOUTS.statusCheck,
+    });
+    const data: any = res.data;
     return !!(data && data.ok === true && data.imgbbConfigured === true);
   } catch {
     return false;

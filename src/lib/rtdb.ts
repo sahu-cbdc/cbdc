@@ -78,18 +78,9 @@ export async function probeRow(
   }
 }
 
-const DONOR_ID_RE = /^CBDC-(\d{4})-(\d{4})$/i;
-
 export function formatDonorId(seq: number | string, year: number = new Date().getFullYear()): string {
   const n = Math.max(0, Math.floor(Number(seq) || 0));
   return `CBDC-${year}-${String(n).padStart(4, "0")}`;
-}
-
-export function parseDonorSerial(id: unknown): number {
-  const m = String(id || "").trim().match(DONOR_ID_RE);
-  if (!m) return 0;
-  const n = Number(m[2]);
-  return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
 export function snapToList(value: any): Row[] {
@@ -254,14 +245,6 @@ export async function updatePaths(paths: Record<string, any>): Promise<void> {
   await apiWritePaths(paths);
 }
 
-export async function getPath(path: string): Promise<any> {
-  const d = db();
-  if (!d) throw new Error("Realtime Database সংযোগ নেই।");
-  const p = String(path || "").replace(/^\/+/, "");
-  const snap = await get(ref(d, p));
-  return snap.val();
-}
-
 export async function setPath(path: string, value: any): Promise<void> {
   const p = String(path || "").replace(/^\/+/, "");
   await apiWritePaths({ [p]: value === undefined ? null : value });
@@ -365,29 +348,4 @@ export function stripUndefined<T extends Record<string, any>>(obj: T): T {
   return out as T;
 }
 
-export default {
-  listOnce,
-  getRow,
-  probeRow,
-  isPermissionDenied,
-  watchList,
-  watchRow,
-  addRow,
-  setRow,
-  updateRow,
-  removeRow,
-  incrementField,
-  ensureFieldAtLeast,
-  updatePaths,
-  findBy,
-  snapToList,
-  stripUndefined,
-  serverTime,
-  nowIso,
-  getPath,
-  setPath,
-  removePath,
-  watchPath,
-  nextDonorId,
-  releaseDonorSerial,
-};
+

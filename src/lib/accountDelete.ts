@@ -1,7 +1,6 @@
 
 
-import { getAuthInstance } from "./firebase";
-import { appBase } from "./router";
+import { apiPostRaw } from "./api";
 import { API_GATEWAYS, API_TIMEOUTS } from "../config/api";
 import { toBanglaDigits } from "./age";
 
@@ -19,34 +18,16 @@ export async function resolveLegacyAccount(): Promise<{
   unconfigured?: boolean;
   error?: string;
 }> {
+  const fail = (status: number, message: string) => ({
+    ok: false, merged: false, uid: "", email: "",
+    unconfigured: status === 503 || /কনফিগার/i.test(message),
+    error: message,
+  });
   try {
-    const auth = getAuthInstance();
-    const user = (auth?.currentUser ?? null) as any;
-    if (!user || typeof user.getIdToken !== "function") {
-      return { ok: false, merged: false, uid: "", email: "", error: "লগইন করা নেই।" };
-    }
-    const token = await user.getIdToken();
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-    let res: Response | null = null;
-    try {
-      res = await fetch(`${appBase()}${API_GATEWAYS.auth}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ op: "resolve-legacy" }),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-    const data = await res.json().catch(() => null);
+    const res = await apiPostRaw(API_GATEWAYS.auth, { op: "resolve-legacy" }, { timeoutMs: TIMEOUT_MS });
+    const data = res.data as any;
     if (!res.ok || !data || data.ok === false) {
-      const message = String((data && data.error) || `সার্ভার অনুরোধ ব্যর্থ (HTTP ${res ? res.status : "—"})`);
-      return {
-        ok: false, merged: false, uid: "", email: "",
-        unconfigured: res.status === 503 || /কনফিগার/i.test(message),
-        error: message,
-      };
+      return fail(res.status, String(data?.error || `সার্ভার অনুরোধ ব্যর্থ (HTTP ${res.status || "—"})`));
     }
     return {
       ok: true,
@@ -57,12 +38,7 @@ export async function resolveLegacyAccount(): Promise<{
       donorId: data.donorId ? String(data.donorId) : undefined,
     };
   } catch (e) {
-    const message = (e as Error)?.message || "পুরোনো রেকর্ড মেলানো যায়নি।";
-    return {
-      ok: false, merged: false, uid: "", email: "",
-      unconfigured: /কনফিগার/i.test(message),
-      error: message.includes("abort") ? "অনুরোধের সময়সীমা পেরিয়ে গেছে।" : message,
-    };
+    return fail(0, (e as Error)?.message || "পুরোনো রেকর্ড মেলানো যায়নি।");
   }
 }
 
@@ -91,26 +67,10 @@ export async function runDedupeScan(apply: boolean): Promise<DedupeReportInfo> {
     groups: [], notes: [], changedPaths: 0, error,
   });
   try {
-    const auth = getAuthInstance();
-    const user = (auth?.currentUser ?? null) as any;
-    if (!user || typeof user.getIdToken !== "function") return fail("লগইন করা নেই — অ্যাডমিন হিসেবে লগইন করুন।");
-    const token = await user.getIdToken();
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), API_TIMEOUTS.dedupeScan);
-    let res: Response | null = null;
-    try {
-      res = await fetch(`${appBase()}${API_GATEWAYS.admin}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ op: "dedupe", apply }),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-    const data = await res.json().catch(() => null);
+    const res = await apiPostRaw(CONFIG_ENDPOINT, { op: "dedupe", apply }, { timeoutMs: API_TIMEOUTS.dedupeScan });
+    const data = res.data as any;
     if (!res.ok || !data || data.ok === false) {
-      return fail(String((data && data.error) || `সার্ভার অনুরোধ ব্যর্থ (HTTP ${res ? res.status : "—"})`));
+      return fail(String(data?.error || `সার্ভার অনুরোধ ব্যর্থ (HTTP ${res.status || "—"})`));
     }
     return {
       ok: true,
@@ -182,24 +142,8 @@ const TIMEOUT_MS = API_TIMEOUTS.accountDelete;
 
 export async function checkDeleteServerConfig(): Promise<{ configured: boolean | null; error?: string }> {
   try {
-    const auth = getAuthInstance();
-    const user = (auth?.currentUser ?? null) as any;
-    if (!user || typeof user.getIdToken !== "function") return { configured: null, error: "লগইন করা নেই।" };
-    const token = await user.getIdToken();
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), API_TIMEOUTS.statusCheck);
-    let res: Response | null = null;
-    try {
-      res = await fetch(`${appBase()}${CONFIG_ENDPOINT}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ op: "config-check" }),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-    const data: any = await res.json().catch(() => null);
+    const res = await apiPostRaw(CONFIG_ENDPOINT, { op: "config-check" }, { timeoutMs: API_TIMEOUTS.statusCheck });
+    const data: any = res.data;
     if (!res.ok || !data || data.ok !== true || typeof data.serviceAccountConfigured !== "boolean") {
       return { configured: null };
     }
@@ -221,68 +165,24 @@ export async function serverDeleteEntity(req: {
   const uid = String(req.uid ?? "").trim();
   const name = String(req.name ?? "").trim();
   try {
-    const auth = getAuthInstance();
-    const user = (auth?.currentUser ?? null) as any;
-    if (!user || typeof user.getIdToken !== "function") {
-      return clientFailure(scope, donorId, uid, name, "লগইন করা নেই — নিরাপদ সার্ভার ডিলিটের অনুমোদন পাওয়া যায়নি।");
-    }
-    let token = "";
-    try {
-      token = await user.getIdToken();
-    } catch (e) {
-      return clientFailure(scope, donorId, uid, name, `ID token পাওয়া যায়নি — ${(e as Error)?.message || "আবার লগইন করুন।"}`);
-    }
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-    let res: Response | null = null;
-    try {
-      res = await fetch(`${appBase()}${ENDPOINT}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ op: "delete", scope, donorId, uid, name }),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-
-    let data: any = null;
-    try {
-      data = await res.json();
-    } catch {
-      data = null;
-    }
-    if (!res || !res.ok) {
-      const message = String((data && data.error) || `সার্ভার অনুরোধ ব্যর্থ (HTTP ${res ? res.status : "—"})`);
+    const res = await apiPostRaw(ENDPOINT, { op: "delete", scope, donorId, uid, name }, { timeoutMs: TIMEOUT_MS });
+    const data: any = res.data;
+    if (!res.ok) {
+      const message = String(data?.error || `সার্ভার অনুরোধ ব্যর্থ (HTTP ${res.status || "—"})`);
       return clientFailure(scope, donorId, uid, name, message);
     }
     if (!data || data.ok === false) {
-      return clientFailure(scope, donorId, uid, name, String((data && data.error) || "সার্ভার delete ব্যর্থ হয়েছে।"));
+      return clientFailure(scope, donorId, uid, name, String(data?.error || "সার্ভার delete ব্যর্থ হয়েছে।"));
     }
     return normalize(data, scope, donorId, uid, name);
   } catch (e) {
     const message = (e as Error)?.message || "নিরাপদ সার্ভার ডিলিট করা যায়নি।";
-    return clientFailure(scope, donorId, uid, name, message.includes("abort") ? "অনুরোধের সময়সীমা পেরিয়ে গেছে — আবার চেষ্টা করুন।" : message);
+    return clientFailure(scope, donorId, uid, name, message);
   }
 }
 
 
-export function deleteDonorCompletely(
-  seed: { donorId?: string; uid?: string; name?: string },
-  _sources?: unknown,
-  opts?: { scope?: DeleteScope },
-): Promise<DonorDeletionResult> {
-  return serverDeleteEntity({
-    scope: opts?.scope === "account" ? "account" : "donor",
-    donorId: seed?.donorId,
-    uid: seed?.uid,
-    name: seed?.name,
-  });
-}
+
 
 
 function normalize(data: any, scope: DeleteScope, donorId: string, uid: string, name: string): DonorDeletionResult {

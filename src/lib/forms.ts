@@ -246,4 +246,3 @@ label.check.is-invalid,
 [data-theme="dark"] .field-error{color:#ff8f96}
 `;
 
-export default { validateForm, setFieldError, clearFieldError, clearFormErrors, attachLiveClear, FORM_ERROR_CSS };

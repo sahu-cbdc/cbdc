@@ -7,10 +7,10 @@ import { useEffect } from "react";
 import "../lib/store";
 import { initFirebase as initSharedFirebase, NODES } from "../lib/firebase";
 import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
-import { authErrorMessage, authErrorCode, resolveUserRole, panelForRole, setOrChangePassword, requestPasswordReset } from "../lib/authx";
-import { getRow, setRow, updateRow, removeRow, listOnce, watchList, watchRow, findBy, nowIso, nextDonorId, updatePaths, serverTime, getPath, setPath, removePath, watchPath, releaseDonorSerial } from "../lib/rtdb";
+import { authErrorMessage, resolveUserRole, panelForRole, setOrChangePassword, requestPasswordReset } from "../lib/authx";
+import { getRow, setRow, updateRow, removeRow, listOnce, watchList, watchRow, findBy, nowIso, nextDonorId, updatePaths, serverTime, setPath, removePath, watchPath, releaseDonorSerial } from "../lib/rtdb";
 import { ageText, ageFromDob, dobBounds, isValidDob } from "../lib/age";
-import { validateForm, clearFormErrors, attachLiveClear, setFieldError, FORM_ERROR_CSS } from "../lib/forms";
+import { validateForm, attachLiveClear, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
 import SITE from "../config/site";
 import { uploadImage as imgbbUploadImage, getImgbbStatus } from "../lib/imgbb";
@@ -27,7 +27,7 @@ import {
   reconcileApprovedDonations as reconcileDonationLog,
   proofUrlOf,
 } from "../lib/donationLog";
-import { serverDeleteEntity, deletionMessage, bulkDeletionMessage, describeDeletionFailure, isAuthUid, runDedupeScan, checkDeleteServerConfig, type DeletionStep, type DeleteScope } from "../lib/accountDelete";
+import { serverDeleteEntity, deletionMessage, bulkDeletionMessage, describeDeletionFailure, isAuthUid, runDedupeScan, checkDeleteServerConfig } from "../lib/accountDelete";
 import { noticeIsActive, noticeTarget } from "../lib/notice";
 
 

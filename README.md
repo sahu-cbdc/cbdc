@@ -36,13 +36,14 @@
 
 ## যেকোনো হোস্টিং সাইটে চালানো
 
-Build করলে **একটি `index.html` + assets** তৈরি হয় এবং সব asset
-**relative path** (`./assets/...`) ব্যবহার করে। ফলে `dist/` ফোল্ডারটি **যেকোনো স্ট্যাটিক
-হোস্টে** শুধু upload করলেই চলে:
+Build করলে **একটি `index.html` + assets** তৈরি হয়। Default build
+(`base: "/"`) asset-গুলো **domain-root absolute path** (`/assets/...`) ব্যবহার করে —
+অর্থাৎ `dist/` ফোল্ডারটি **যেকোনো স্ট্যাটিক হোস্টের root-এ** শুধু upload করলেই চলে:
 
-- GitHub Pages, Netlify, Vercel, Cloudflare Pages/Workers, Firebase Hosting
-- shared cPanel / FTP hosting, Apache, Nginx, S3/র static bucket
-- sub-directory-তে বসালেও চলে (যেমন `https://host/cbdc/`)
+- GitHub Pages (repository root), Netlify, Vercel, Cloudflare Pages/Workers, Firebase Hosting
+- shared cPanel / FTP hosting, Apache, Nginx, S3-র static bucket (bucket root-এ)
+- **sub-directory-তে** (যেমন `https://host/cbdc/`) বসাতে build-এর সময় base দিতে হবে:
+  `VITE_BASE=/cbdc/ npm run build`
 
 Cloudflare Workers-এ deploy-এর জন্য `wrangler.jsonc`-এ SPA fallback
 (`not_found_handling: single-page-application`) সেট করা আছে, আর Firebase
@@ -61,7 +62,7 @@ Hosting-এর জন্য `firebase.json`-এ rewrite (`** → /index.html`) �
 >
 > ```bash
 > npx wrangler secret put FIREBASE_SERVICE_ACCOUNT   # service-account JSON
-> npm run build && npx wrangler deploy
+> npm run deploy          # = npm run build && wrangler deploy (dist/ আগে তৈরি হয়)
 > ```
 >
 > নিরাপত্তা: লগইন অ্যাকাউন্ট মোছা হয় **ঠিক যাচাইকৃত লিংকড uid-টিই** — Donor ID

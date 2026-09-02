@@ -185,7 +185,7 @@ async function processApply(
     at: new Date().toISOString(),
   };
   const record: ApprovedDonation = await makeApprovedDonationRecord(q, donor, "সিস্টেম", io);
-  const { paths, stats } = await writeApprovedDonation(record, null, io);
+  const { paths } = await writeApprovedDonation(record, null, io);
   await io.updatePaths(paths);
   return {
     ok: true, action, approvalRequired: false,

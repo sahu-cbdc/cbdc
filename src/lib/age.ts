@@ -55,21 +55,6 @@ export function ageText(source: { dob?: unknown; age?: unknown } | string | numb
 }
 
 
-export function dobText(dob: unknown): string {
-  const s = toEnglishDigits(dob).trim();
-  if (!isValidDob(s)) return "—";
-  try {
-    return new Date(s + "T00:00:00").toLocaleDateString("bn-BD", {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
-  } catch {
-    return s;
-  }
-}
-
-
 export function dobBounds(minAge: number, maxAge: number): { min: string; max: string } {
   const now = new Date();
   const max = new Date(now.getFullYear() - minAge, now.getMonth(), now.getDate());
@@ -78,10 +63,3 @@ export function dobBounds(minAge: number, maxAge: number): { min: string; max: s
   return { min: fmt(min), max: fmt(max) };
 }
 
-
-export function isAgeEligible(dob: unknown, minAge: number, maxAge: number): boolean {
-  const a = ageFromDob(dob);
-  return a !== null && a >= minAge && a <= maxAge;
-}
-
-export default { ageFromDob, resolveAge, ageText, dobText, dobBounds, isValidDob, isAgeEligible };

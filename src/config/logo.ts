@@ -18,13 +18,9 @@ export function logoUrl(): string {
   return base + LOGO_FILE.replace(/^\.?\//, "");
 }
 
-export const LOGO_URL = /*#__PURE__*/ logoUrl();
-
 export function applyLogo(root: ParentNode = document): void {
   const src = logoUrl();
   root.querySelectorAll<HTMLImageElement>("[data-logo]").forEach((img) => {
     if (img.getAttribute("src") !== src) img.src = src;
   });
 }
-
-export default LOGO_URL;

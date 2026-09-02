@@ -238,7 +238,7 @@ export function makeImagesIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): Ima
 
 
 
-export function makeApplyIo(env: HttpEnv, idToken: string, fetchImpl: typeof fetch = fetch): ApplyIo {
+export function makeApplyIo(env: HttpEnv, fetchImpl: typeof fetch = fetch): ApplyIo {
   const priv = makePrivilegedIo(env, undefined, fetchImpl) as ResolveLegacyIo & { configured: boolean };
   return {
     verifyToken: (token: string) => priv.verifyCaller(token),

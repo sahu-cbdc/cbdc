@@ -272,34 +272,6 @@ export function stopRealtimeSync(): void {
 }
 
 
-async function writeDiff(name: string, oldList: any[], newList: any[]) {
-  const node = (NODES as any)[name] || name;
-  const oldById = new Map<string, any>(oldList.map((x) => [String(x.id), x]));
-  const newById = new Map<string, any>(newList.map((x) => [String(x.id), x]));
-  const tasks: Array<Promise<void>> = [];
-
-  for (const [id, item] of newById) {
-    const prev = oldById.get(id);
-    if (!prev || JSON.stringify(prev) !== JSON.stringify(item)) {
-      tasks.push(
-        setRow(node, id, clone(item))
-          .catch((e) => console.warn("store write:", node, id, (e as Error)?.message))
-          .then(() => undefined)
-      );
-    }
-  }
-  for (const id of oldById.keys()) {
-    if (!newById.has(id)) {
-      tasks.push(
-        removeRow(node, id)
-          .catch((e) => console.warn("store delete:", node, id, (e as Error)?.message))
-          .then(() => undefined)
-      );
-    }
-  }
-  if (tasks.length) await Promise.all(tasks);
-}
-
 async function writeDiffStrict(name: string, oldList: any[], newList: any[]) {
   const node = (NODES as any)[name] || name;
   const oldById = new Map<string, any>(oldList.map((x) => [String(x.id), x]));
@@ -335,24 +307,6 @@ function publishOptimistic(next: any, source: string): void {
     
   }
 }
-
-function save(state: any, source = "unknown"): any {
-  const { previous, next } = makeNextState(state, source);
-  
-  
-  publishOptimistic(next, source);
-  for (const name of COLLECTION_NAMES) {
-    void writeDiff(name, previous[name], next[name]);
-  }
-  return next;
-}
-
-function update(fn: (s: any) => any, source?: string): any {
-  const s = load();
-  const out = fn(s) || s;
-  return save(out, source);
-}
-
 
 async function commit(state: any, source = "unknown"): Promise<any> {
   const { previous, next } = makeNextState(state, source);
@@ -504,8 +458,6 @@ const fromDonerDonor = (d: any) => ({
 const store = {
   KEY,
   load,
-  save,
-  update,
   commit,
   updateAsync,
   subscribe,

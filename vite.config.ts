@@ -219,7 +219,7 @@ function cbdcDeleteApi(devEnv: Record<string, string>): Plugin {
                 else throw new ApiError(400, "অনুরোধকৃত কাজটি খুঁজে পাওয়া যায়নি।");
               } else if (gateway === "data") {
                 if (op === "write") result = await handleDataWrite({ ...payload, idToken }, makeDataIo(serverEnv));
-                else if (op === "apply") result = await handleDonorApply({ ...payload, idToken }, makeApplyIo(serverEnv, idToken));
+                else if (op === "apply") result = await handleDonorApply({ ...payload, idToken }, makeApplyIo(serverEnv));
                 else if (op === "public-submit") result = await handlePublicSubmit(payload, makePublicIo(serverEnv), idToken);
                 else throw new ApiError(400, "অনুরোধকৃত কাজটি খুঁজে পাওয়া যায়নি।");
               } else if (gateway === "media") {

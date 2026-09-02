@@ -121,33 +121,6 @@ function recordQuality(r: any): number {
   return q;
 }
 
-function asDonor(d: any): ApprovedDonation | null {
-  if (!d || !String(d.id || "").trim()) return null;
-  return {
-    id: String(d.id),
-    donorId: String(d.donorId || ""),
-    ownerUid: String(d.ownerUid || ""),
-    name: String(d.name || ""),
-    group: String(d.group || d.bloodGroup || ""),
-    area: String(d.area || ""),
-    photo: String(d.photo || ""),
-    phone: String(d.phone || ""),
-    place: String(d.place || ""),
-    date: String(d.date || ""),
-    bags: Math.max(1, Math.floor(Number(d.bags) || 1)),
-    proof: String(d.proof || ""),
-    patient: String(d.patient || ""),
-    note: String(d.note || ""),
-    livesSaved: 1,
-    approvedAt: String(d.approvedAt || d.at || ""),
-    approvedBy: String(d.approvedBy || "অ্যাডমিন"),
-    updatedAt: String(d.updatedAt || ""),
-    source: String(d.source || "queue"),
-    submittedAt: String(d.submittedAt || ""),
-  };
-}
-
-
 export async function makeApprovedDonationRecord(
   q: any,
   d: any | null,
@@ -521,14 +494,4 @@ export async function reconcileApprovedDonations(
 }
 
 
-export default {
-  donationVerKey,
-  safeDonationId,
-  donorStatsFromRecords,
-  donationEventKey,
-  makeApprovedDonationRecord,
-  writeApprovedDonation,
-  deleteApprovedDonation,
-  backfillApprovedDonations,
-  reconcileApprovedDonations,
-};
+

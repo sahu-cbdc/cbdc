@@ -1,7 +1,7 @@
 
 
-import { ApiError, isAuthUid, type DeleteIo } from "./deleteApi.ts";
-import { emailIndexPath } from "./identityKey.ts";
+import { ApiError, isAuthUid } from "./deleteApi.ts";
+import { emailIndexKey, emailIndexPath } from "./identityKey.ts";
 
 export type DedupeIo = {
   verifyToken(idToken: string): Promise<{ uid: string } | null>;
@@ -70,14 +70,6 @@ function uidKeyed(id: string): boolean {
   return isAuthUid(id);
 }
 
-
-function emailIndexKey(email: unknown): string {
-  return String(email ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/[#.$/\[\]\\]/g, "_")
-    .slice(0, 190);
-}
 
 export async function handleAdminDedupe(
   input: { apply?: boolean; idToken?: string } | null | undefined,

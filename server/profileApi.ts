@@ -10,7 +10,7 @@
  * through the same write guard used by /api/data op=write.
  */
 import { ApiError } from "./deleteApi.ts";
-import { emailIndexKey, emailIndexPath } from "./identityKey.ts";
+import { emailIndexKey, emailIndexPath, loginIndexKey, loginIndexPath } from "./identityKey.ts";
 import { authorizeDataWrite, callerRoleFromAdminRow, type Caller } from "./writeGuard.ts";
 
 export type ProfileIo = {
@@ -19,14 +19,6 @@ export type ProfileIo = {
   get(path: string): Promise<any>;
   patch(paths: Record<string, any>): Promise<void>;
 };
-
-function loginIndexKey(value: unknown): string {
-  return String(value ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/[#.$/\[\]\\]/g, "_")
-    .slice(0, 190);
-}
 
 async function resolveCaller(io: ProfileIo, idToken: string): Promise<{ caller: Caller; uid: string; email: string }> {
   const token = String(idToken || "").trim();
@@ -188,7 +180,7 @@ async function claimOneLoginKey(
   const key = loginIndexKey(rawValue);
   const mail = String(email || "").trim().toLowerCase();
   if (!key || !mail || !mail.includes("@")) return "unavailable";
-  const path = `loginIndex/${kind}/${key}`;
+  const path = loginIndexPath(kind, key);
   try {
     const cur = await io.get(path).catch(() => null);
     if (typeof cur === "string" && cur && cur !== mail) return "conflict";
@@ -211,7 +203,7 @@ async function releaseOneLoginKey(
   const key = loginIndexKey(rawValue);
   const mail = String(email || "").trim().toLowerCase();
   if (!key || !mail) return;
-  const path = `loginIndex/${kind}/${key}`;
+  const path = loginIndexPath(kind, key);
   try {
     const cur = await io.get(path).catch(() => null);
     if (cur === mail) await io.patch({ [path]: null });
