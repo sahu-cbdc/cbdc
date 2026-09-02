@@ -3163,6 +3163,9 @@ function StaticShell() {
                 <li>
                   {"চাঁদগাঁও থানা"}
                 </li>
+                <li>
+                  {"বান্দরবান সদর থানা"}
+                </li>
               </ul>
             </div>
             <div className="footer-col">
