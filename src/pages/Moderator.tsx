@@ -9,11 +9,12 @@ import { initFirebase as initSharedFirebase, NODES } from "../lib/firebase";
 import { navigateToPage, screenPath, panelSubPath, appBase } from "../lib/router";
 import { resolveUserRole, panelForRole, setOrChangePassword } from "../lib/authx";
 import { getRow, setRow, updateRow, listOnce, watchList, watchRow, findBy, nowIso, nextDonorId, updatePaths, serverTime, releaseDonorSerial } from "../lib/rtdb";
+import { watchListCached } from "../lib/liveList";
 import { ageText, ageFromDob, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, attachLiveClear, FORM_ERROR_CSS } from "../lib/forms";
 import { logoUrl, applyLogo } from "../config/logo";
 import { uploadImage as imgbbUploadImage, getImgbbStatus } from "../lib/imgbb";
-import { authSignOut } from "../lib/authActions";
+import { authSignOut, currentAuthUid } from "../lib/authActions";
 import { saveSiteConfigToSource } from "../lib/siteConfig";
 import {
   donationVerKey,
@@ -1432,7 +1433,7 @@ function initPage() {
   let moderatorAdminRows:any[]=[];
   function watchTeam(){
     stopTeamWatch();
-    stopTeamWatch=watchList(NODES.admins,(rows)=>{
+    stopTeamWatch=watchListCached(NODES.admins,currentAuthUid(),(rows)=>{
       moderatorAdminRows=rows;
       const t=rows.filter(r=>String(r.status||"")!=="disabled").map(r=>{
         const raw=String(r.role||"").toLowerCase();
@@ -1456,7 +1457,7 @@ function initPage() {
   let stopAuditWatch=()=>{};
   function watchAudit(){
     stopAuditWatch();
-    stopAuditWatch=watchList(NODES.audit,(rows)=>{
+    stopAuditWatch=watchListCached(NODES.audit,currentAuthUid(),(rows)=>{
       const list=rows.map(r=>{
         const raw=String(r.role||"").toLowerCase();
         return {at:r.at||"",who:r.who||"",role:raw==="admin"?"admin":"mod",
@@ -1472,7 +1473,7 @@ function initPage() {
   let stopMessagesWatch=()=>{};
   function watchMessages(){
     stopMessagesWatch();
-    stopMessagesWatch=watchList(NODES.messages,(rows)=>{
+    stopMessagesWatch=watchListCached(NODES.messages,currentAuthUid(),(rows)=>{
       const list=rows.map(r=>({id:r.id,name:r.name||"",phone:r.phone||r.mobile||"",
         text:r.text||r.message||"",read:r.read===true,at:r.at||r.createdAt||""}))
         .filter(x=>x.name||x.text).sort((a,b)=>String(b.at).localeCompare(String(a.at)));

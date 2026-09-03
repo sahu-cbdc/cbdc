@@ -4,22 +4,22 @@ import { getAuthUser, subscribeAuthUser } from "./authState";
 import { NODES, getAuthInstance } from "./firebase";
 import { watchList, setRow, removeRow } from "./rtdb";
 import { resolveAge } from "./age";
+import {
+  cacheGet,
+  cacheSet,
+  clearPrivateCache,
+  clearForeignCache,
+} from "./idbCache";
 
 const KEY = "cbdc.shared.v1"; 
 const CHANNEL = "cbdc-sync";
-const CACHE_KEY = "cbdc.shared.rtdb.public-cache.v2";
-const CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 24; 
 
+/** Legacy localStorage cache key — removed on boot, IndexedDB replaces it. */
+const LEGACY_CACHE_KEY = "cbdc.shared.rtdb.public-cache.v2";
 
-
-const CACHE_ENABLED = (() => {
-  try {
-    const meta = (import.meta as any).env || {};
-    return meta.DEV === true || meta.MODE === "development";
-  } catch {
-    return false;
-  }
-})();
+/** IndexedDB namespaces. Public data and per-user private data are separate. */
+const IDB_PUBLIC_NS = "shared.public";
+const IDB_PRIVATE_NS = "shared.private";
 
 
 const COLLECTION_NAMES = ["donors", "requests", "queue", "gallery", "notices", "accounts", "donations"] as const;
@@ -62,46 +62,99 @@ function clean(s: any): any {
   return s;
 }
 
-function restorePublicCache(): any {
-  const s = fresh();
-  if (!CACHE_ENABLED) return s;
+/** Drop the old localStorage blob — IndexedDB is the cache now. */
+function dropLegacyLocalStorageCache(): void {
   try {
-    
-    
-    
-    const path = window.location.pathname || "/";
-    if (/\/(admin|moderator|doner)(?:\.|\/|$)/i.test(path)) return s;
-    const raw = localStorage.getItem(CACHE_KEY);
-    if (!raw) return s;
-    const parsed = JSON.parse(raw);
-    const savedAt = Date.parse(parsed?.savedAt || parsed?.updatedAt || "");
-    if (!Number.isFinite(savedAt) || Date.now() - savedAt > CACHE_MAX_AGE_MS) return s;
-    for (const k of PUBLIC_COLLECTIONS) {
-      if (Array.isArray(parsed[k])) s[k] = parsed[k];
-    }
-    s.updatedAt = parsed.updatedAt || s.updatedAt;
-    s.source = "rtdb-cache";
+    localStorage.removeItem(LEGACY_CACHE_KEY);
   } catch {
-    
+    /* ignore */
   }
-  return clean(s);
 }
 
-function persistPublicCache() {
-  if (!CACHE_ENABLED) return;
-  try {
-    const payload: Record<string, any> = {
-      version: 1,
-      updatedAt: cache.updatedAt || new Date().toISOString(),
-      savedAt: new Date().toISOString(),
-    };
-    for (const k of PUBLIC_COLLECTIONS) payload[k] = cache[k] || [];
-    const stamp = payload.updatedAt;
-    localStorage.setItem(CACHE_KEY, JSON.stringify(payload, (_k, v) =>
-      v && typeof v === "object" && (v as any).__sv__ === "timestamp" ? stamp : v));
-  } catch {
-    
+/** Server sentinels must not be written to the cache as objects. */
+function cacheSafe(value: any, stamp: string): any {
+  if (value && typeof value === "object") {
+    if ((value as any).__sv__ === "timestamp") return stamp;
+    if (Array.isArray(value)) return value.map((v) => cacheSafe(v, stamp));
+    const out: any = {};
+    for (const k of Object.keys(value)) out[k] = cacheSafe(value[k], stamp);
+    return out;
   }
+  return value;
+}
+
+/**
+ * Persist the current snapshot to IndexedDB.
+ *  • public collections  → owner "public"  (safe for anyone)
+ *  • private collections → owner <uid>     (never readable by another user)
+ * Writes are fire-and-forget so no UI path ever waits on the cache.
+ */
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+function persistCache(): void {
+  if (persistTimer) return;
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    const stamp = cache.updatedAt || new Date().toISOString();
+    const pub: Record<string, any> = { updatedAt: stamp };
+    for (const k of PUBLIC_COLLECTIONS) pub[k] = cacheSafe(cache[k] || [], stamp);
+    void cacheSet(IDB_PUBLIC_NS, null, pub);
+    if (currentAuthUid) {
+      const priv: Record<string, any> = { updatedAt: stamp };
+      for (const k of COLLECTION_NAMES) {
+        if (PUBLIC_COLLECTIONS.has(k)) continue;
+        priv[k] = cacheSafe(cache[k] || [], stamp);
+      }
+      void cacheSet(IDB_PRIVATE_NS, currentAuthUid, priv);
+    }
+  }, 120);
+}
+
+/**
+ * Hydrate the in-memory snapshot from IndexedDB BEFORE Firebase answers, so a
+ * refresh paints immediately. Cached data is never treated as authoritative:
+ * the realtime listeners overwrite it as soon as the server replies.
+ */
+async function hydrateFromCache(): Promise<boolean> {
+  let changed = false;
+  try {
+    const pub = await cacheGet<Record<string, any>>(IDB_PUBLIC_NS, null);
+    if (pub) {
+      for (const k of PUBLIC_COLLECTIONS) {
+        if (Array.isArray(pub[k]) && pub[k].length && !cache[k]?.length) {
+          cache[k] = clone(pub[k]);
+          changed = true;
+          if (!loadedNodes.has(k)) {
+            loadedNodes.add(k);
+            notifyNodeLoaded(k);
+          }
+        }
+      }
+    }
+    // Private data is only ever hydrated for the *currently signed-in* uid.
+    if (currentAuthUid) {
+      const priv = await cacheGet<Record<string, any>>(IDB_PRIVATE_NS, currentAuthUid);
+      if (priv) {
+        for (const k of COLLECTION_NAMES) {
+          if (PUBLIC_COLLECTIONS.has(k)) continue;
+          if (Array.isArray(priv[k]) && priv[k].length && !cache[k]?.length) {
+            cache[k] = clone(priv[k]);
+            changed = true;
+            if (!loadedNodes.has(k)) {
+              loadedNodes.add(k);
+              notifyNodeLoaded(k);
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("store cache hydrate:", (e as Error)?.message);
+  }
+  if (changed) {
+    cache.source = "idb-cache";
+    notify({ source: "cache:hydrate", fromCache: true });
+  }
+  return changed;
 }
 
 
@@ -121,7 +174,7 @@ function normalizeDoc(data: any): any {
 
 
 
-let cache: any = restorePublicCache();
+let cache: any = fresh();
 
 
 const subscribers = new Set<(state: any, meta?: any) => void>();
@@ -203,37 +256,64 @@ function clearPrivateCacheOnLogout(): boolean {
 }
 
 
-function startRealtimeSync() {
-  if (rtdbStarted) return;
-  rtdbStarted = true;
+/**
+ * Attach realtime listeners INCREMENTALLY.
+ *
+ * Public collections are attached once at boot and are never torn down on an
+ * auth change — only the private ones come and go. Combined with the shared
+ * listener registry in rtdb.ts this guarantees exactly one Firebase listener
+ * per node for the whole app, with no re-download on login/logout.
+ */
+const attached = new Map<CollectionName, () => void>();
 
+function attachCollection(name: CollectionName): void {
+  if (attached.has(name)) return;
+  try {
+    const un = watchList((NODES as any)[name] || name, (rows) => {
+      const items = (filters[name] || ((x: any[]) => x))(rows.map((r) => normalizeDoc(r)));
+
+      if (!loadedNodes.has(name)) {
+        loadedNodes.add(name);
+        notifyNodeLoaded(name);
+      }
+
+      // Firebase is authoritative: whatever it says replaces cache + UI state.
+      if (JSON.stringify(items) === JSON.stringify(cache[name])) return;
+      cache[name] = clone(items);
+      cache.version = 1;
+      cache.source = "rtdb";
+      cache.updatedAt = new Date().toISOString();
+      persistCache();
+      notify({ source: "rtdb", node: name });
+    });
+    attached.set(name, un);
+  } catch (e) {
+    console.warn("store listener setup failed:", name, (e as Error)?.message);
+  }
+}
+
+function detachCollection(name: CollectionName): void {
+  const un = attached.get(name);
+  if (!un) return;
+  attached.delete(name);
+  loadedNodes.delete(name);
+  try {
+    un();
+  } catch {
+    /* ignore */
+  }
+}
+
+function startRealtimeSync() {
+  rtdbStarted = true;
   for (const name of COLLECTION_NAMES) {
-    if (!canAttachCollection(name)) continue;
-    try {
-      const un = watchList((NODES as any)[name] || name, (rows) => {
-        const items = (filters[name] || ((x: any[]) => x))(rows.map((r) => normalizeDoc(r)));
-        
-        if (!loadedNodes.has(name)) {
-          loadedNodes.add(name);
-          notifyNodeLoaded(name);
-        }
-        
-        if (JSON.stringify(items) === JSON.stringify(cache[name])) return;
-        cache[name] = clone(items);
-        cache.version = 1;
-        cache.updatedAt = new Date().toISOString();
-        if (PUBLIC_COLLECTIONS.has(name)) persistPublicCache();
-        notify({ source: "rtdb", node: name });
-      });
-      rtdbUnsubs.push(un);
-    } catch (e) {
-      console.warn("store listener setup failed:", name, (e as Error)?.message);
-    }
+    if (canAttachCollection(name)) attachCollection(name);
+    else detachCollection(name);
   }
 }
 
 function restartRealtimeSync(meta?: any) {
-  stopRealtimeSync();
+  // NOT a teardown: attach what is now allowed, detach what no longer is.
   startRealtimeSync();
   if (meta) notify(meta);
 }
@@ -250,9 +330,21 @@ function watchAuthForPrivateNodes() {
       if (!user && authCurrent && authCurrent.uid && currentAuthUid === authCurrent.uid) return;
       const nextUid = (user && user.uid) ? user.uid : (authCurrent ? authCurrent.uid : null);
       if (nextUid === currentAuthUid && rtdbStarted) return;
+      const prevUid = currentAuthUid;
       currentAuthUid = nextUid;
-      const cleared = !nextUid && clearPrivateCacheOnLogout();
+      let cleared = false;
+      if (!nextUid) {
+        // Logout — wipe private state from memory AND from IndexedDB.
+        cleared = clearPrivateCacheOnLogout();
+        void clearPrivateCache();
+      } else if (prevUid && prevUid !== nextUid) {
+        // A different user signed in — never let them see the previous
+        // account's private cache.
+        cleared = clearPrivateCacheOnLogout();
+        void clearForeignCache(nextUid);
+      }
       restartRealtimeSync({ source: nextUid ? "auth:login" : "auth:logout", privateCleared: cleared });
+      if (nextUid && nextUid !== prevUid) void hydrateFromCache();
     });
   } catch (e) {
     console.warn("store auth watcher:", (e as Error)?.message);
@@ -261,14 +353,20 @@ function watchAuthForPrivateNodes() {
 
 
 export function stopRealtimeSync(): void {
+  for (const name of Array.from(attached.keys())) detachCollection(name);
   while (rtdbUnsubs.length) {
     try {
       (rtdbUnsubs.pop() as () => void)();
     } catch {
-      
+      /* ignore */
     }
   }
   rtdbStarted = false;
+}
+
+/** Number of realtime collections currently subscribed (test/debug). */
+export function attachedCollectionCount(): number {
+  return attached.size;
 }
 
 
@@ -299,7 +397,7 @@ function makeNextState(state: any, source = "unknown"): { previous: any; next: a
 
 function publishOptimistic(next: any, source: string): void {
   cache = clean(clone(next));
-  persistPublicCache();
+  persistCache();
   notify({ source });
   try {
     bc && bc.postMessage({ revision: next.revision, source });
@@ -455,14 +553,62 @@ const fromDonerDonor = (d: any) => ({
   ownerUid: d.ownerUid || d.uid || "",
 });
 
+/* ───────────────────────── Optimistic write helper ─────────────────────────
+ * Apply a change to the shared snapshot immediately (so the button feels
+ * instant), then run the real Firebase write. If the write fails the snapshot
+ * is rolled back to exactly what it was and the error is re-thrown so the
+ * caller can toast it. Firebase remains the source of truth: its next realtime
+ * event overwrites whatever we optimistically painted.
+ */
+async function optimistic<T>(
+  mutateFn: (s: any) => any,
+  commitFn: () => Promise<T>,
+  source = "optimistic"
+): Promise<T> {
+  const before = clean(clone(cache));
+  const draft = load();
+  const next = clean(mutateFn(draft) || draft);
+  next.revision = (Number(before.revision) || 0) + 1;
+  next.updatedAt = new Date().toISOString();
+  next.source = source;
+  cache = clean(clone(next));
+  persistCache();
+  notify({ source, optimistic: true });
+  try {
+    const out = await commitFn();
+    // Success — keep the optimistic view; the realtime listener will replace
+    // it with the authoritative server value momentarily.
+    persistCache();
+    return out;
+  } catch (e) {
+    // Rollback. The UI returns to the last known-good state.
+    cache = clean(clone(before));
+    persistCache();
+    notify({ source: source + ":rollback", rolledBack: true });
+    throw e;
+  }
+}
+
+/** Resolves once the IndexedDB hydration attempt has completed. */
+let hydrateDone: Promise<boolean> = Promise.resolve(false);
+const whenHydrated = () => hydrateDone;
+
+/** True when we already hold data for `name` (cache or live) — no skeleton. */
+function hasData(name: string): boolean {
+  return Array.isArray(cache[name]) && cache[name].length > 0;
+}
+
 const store = {
   KEY,
   load,
   commit,
   updateAsync,
+  optimistic,
   subscribe,
   onNodeLoaded,
   isNodeLoaded,
+  hasData,
+  whenHydrated,
   clone,
   toAdminDonor,
   fromAdminDonor,
@@ -476,7 +622,28 @@ globalThis.CBDCShared = store;
 
 
 
+dropLegacyLocalStorageCache();
 watchAuthForPrivateNodes();
+
+// 1) Paint from the IndexedDB cache as early as possible (non-blocking).
+// 2) Attach the Firebase listeners in parallel — they are authoritative and
+//    will overwrite the cached values the moment the server answers.
+hydrateDone = hydrateFromCache().catch(() => false);
 startRealtimeSync();
+
+// Network flaps: on reconnect just make sure every allowed collection still
+// has its (shared, de-duplicated) listener. Cached data stays on screen while
+// offline — the UI never blanks out.
+try {
+  window.addEventListener("online", () => {
+    startRealtimeSync();
+    notify({ source: "network:online" });
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") startRealtimeSync();
+  });
+} catch {
+  /* non-browser environment */
+}
 
 export default store;

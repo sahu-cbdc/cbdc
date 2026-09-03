@@ -21,6 +21,7 @@ import {
   setOrChangePassword,
 } from "../lib/authx";
 import { getRow, setRow, updateRow, watchRow, watchList, addRow, findBy, listOnce, nowIso, updatePaths, removeRow, incrementField, ensureFieldAtLeast, serverTime, nextDonorId, releaseDonorSerial, isPermissionDenied } from "../lib/rtdb";
+import { watchListCached } from "../lib/liveList";
 import { ageFromDob as calcAgeFromDob, ageText, dobBounds, isValidDob } from "../lib/age";
 import { validateForm, attachLiveClear, FORM_ERROR_CSS } from "../lib/forms";
 import { requestDirectApply } from "../lib/applyRequest";
@@ -4697,7 +4698,7 @@ function initPage() {
     if(!uid)return;
     stopMyApplicationRequests();
     MY_APPLICATION_REQUESTS_READY=false;
-    stopMyApplicationRequests=watchList(NODES.requests,rows=>{
+    stopMyApplicationRequests=watchListCached(NODES.requests,firebaseCurrentUid(),rows=>{
       if(String(uid)!==String(firebaseCurrentUid()))return;
       MY_APPLICATION_REQUEST_ROWS=rows.filter(row=>{
         const owner=String(row&& (row.ownerUid||row.uid||row.userId||row.requesterUid)||"").trim();

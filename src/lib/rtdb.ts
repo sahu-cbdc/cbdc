@@ -120,61 +120,169 @@ export async function getRow(node: string, id: string): Promise<Row | null> {
   }
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+ * Shared listener registry
+ *
+ * Several panels (and the shared store) subscribe to the very same RTDB
+ * query. Without de-duplication every subscriber opened its own onValue()
+ * — duplicate sockets, duplicate downloads, duplicate re-renders.
+ *
+ * Every watch* helper below now goes through this registry: identical query
+ * signatures share ONE Firebase listener, the last value is replayed
+ * synchronously-ish to late subscribers, and the underlying listener is
+ * detached only when the last subscriber unsubscribes.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+type Entry = {
+  detach: () => void;
+  subs: Set<{ next: (v: any) => void; error?: (e: Error) => void }>;
+  last: any;
+  hasValue: boolean;
+};
+
+const registry = new Map<string, Entry>();
+
+function sharedWatch(
+  key: string,
+  build: () => Query | null,
+  next: (value: any) => void,
+  error?: (err: Error) => void
+): () => void {
+  let entry = registry.get(key);
+  const sub = { next, error };
+  if (!entry) {
+    const target = build();
+    if (!target) {
+      const err = new Error("Firebase Realtime Database প্রস্তুত নয় (init হয়নি)।");
+      if (error) {
+        try {
+          error(err);
+        } catch {
+          /* ignore */
+        }
+      }
+      return () => undefined;
+    }
+    const created: Entry = { detach: () => undefined, subs: new Set(), last: null, hasValue: false };
+    entry = created;
+    registry.set(key, created);
+    try {
+      created.detach = onValue(
+        target,
+        (snap) => {
+          created.last = snap.val();
+          created.hasValue = true;
+          for (const s of Array.from(created.subs)) {
+            try {
+              s.next(created.last);
+            } catch (e) {
+              console.warn("rtdb watch callback:", key, (e as Error)?.message);
+            }
+          }
+        },
+        (err) => {
+          for (const s of Array.from(created.subs)) {
+            if (s.error) {
+              try {
+                s.error(err as Error);
+              } catch (e) {
+                console.warn("rtdb watch onErr:", key, (e as Error)?.message);
+              }
+            } else console.warn("rtdb watch:", key, err && err.message);
+          }
+        }
+      );
+    } catch (e) {
+      registry.delete(key);
+      console.warn("rtdb watch setup:", key, (e as Error)?.message);
+      if (error) {
+        try {
+          error(e as Error);
+        } catch {
+          /* ignore */
+        }
+      }
+      return () => undefined;
+    }
+  }
+  const active = entry;
+  active.subs.add(sub);
+  // Replay the value we already hold so a late subscriber paints immediately
+  // instead of waiting for the next server event.
+  if (active.hasValue) {
+    queueMicrotask(() => {
+      if (!active.subs.has(sub)) return;
+      try {
+        sub.next(active.last);
+      } catch (e) {
+        console.warn("rtdb watch replay:", key, (e as Error)?.message);
+      }
+    });
+  }
+  let closed = false;
+  return () => {
+    if (closed) return;
+    closed = true;
+    active.subs.delete(sub);
+    if (!active.subs.size) {
+      registry.delete(key);
+      try {
+        active.detach();
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+}
+
+/** How many distinct Firebase listeners are currently attached (test/debug). */
+export function activeListenerCount(): number {
+  return registry.size;
+}
+
+/** Signatures of the currently attached listeners (test/debug). */
+export function activeListenerKeys(): string[] {
+  return Array.from(registry.keys());
+}
+
 export function watchList(
   node: string,
   cb: (rows: Row[]) => void,
   opts: { orderBy?: string; equals?: string | number | boolean; limit?: number } = {}
 ): () => void {
-  const d = db();
-  if (!d) return () => undefined;
-  let q: Query = ref(d, node);
-  try {
-    if (opts.orderBy) {
-      const parts: any[] = [orderByChild(opts.orderBy)];
-      if (opts.equals !== undefined) parts.push(equalTo(opts.equals as any));
-      if (opts.limit) parts.push(limitToFirst(opts.limit));
-      q = query(ref(d, node), ...parts);
-    } else if (opts.limit) {
-      q = query(ref(d, node), limitToFirst(opts.limit));
-    }
-  } catch (e) {
-    console.warn("rtdb query build:", node, (e as Error)?.message);
-    q = ref(d, node);
-  }
-  try {
-    return onValue(
-      q,
-      (snap) => {
-        try {
-          cb(snapToList(snap.val()));
-        } catch (e) {
-          console.warn("rtdb watch callback:", node, (e as Error)?.message);
+  const key = `list:${node}|${opts.orderBy || ""}|${String(opts.equals ?? "")}|${opts.limit || 0}`;
+  return sharedWatch(
+    key,
+    () => {
+      const d = db();
+      if (!d) return null;
+      try {
+        if (opts.orderBy) {
+          const parts: any[] = [orderByChild(opts.orderBy)];
+          if (opts.equals !== undefined) parts.push(equalTo(opts.equals as any));
+          if (opts.limit) parts.push(limitToFirst(opts.limit));
+          return query(ref(d, node), ...parts);
         }
-      },
-      (err) => console.warn("rtdb watch:", node, err && err.message)
-    );
-  } catch (e) {
-    console.warn("rtdb watch setup:", node, (e as Error)?.message);
-    return () => undefined;
-  }
+        if (opts.limit) return query(ref(d, node), limitToFirst(opts.limit));
+      } catch (e) {
+        console.warn("rtdb query build:", node, (e as Error)?.message);
+      }
+      return ref(d, node);
+    },
+    (value) => cb(snapToList(value))
+  );
 }
 
 export function watchRow(node: string, id: string, cb: (row: Row | null) => void): () => void {
-  const d = db();
-  if (!d || !id) return () => undefined;
-  try {
-    return onValue(
-      child(ref(d, node), String(id)),
-      (snap) => {
-        const v = snap.val();
-        cb(v && typeof v === "object" ? ({ ...v, id: v.id || id } as Row) : null);
-      },
-      (err) => console.warn("rtdb watchRow:", node, id, err && err.message)
-    );
-  } catch (e) {
-    console.warn("rtdb watchRow setup:", node, (e as Error)?.message);
-    return () => undefined;
-  }
+  if (!id) return () => undefined;
+  return sharedWatch(
+    `row:${node}/${id}`,
+    () => {
+      const d = db();
+      return d ? (child(ref(d, node), String(id)) as unknown as Query) : null;
+    },
+    (v) => cb(v && typeof v === "object" ? ({ ...v, id: v.id || id } as Row) : null)
+  );
 }
 
 const PUSH_CHARS = "-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz";
@@ -260,40 +368,115 @@ export function watchPath(
   cb: (value: any) => void,
   onErr?: (err: Error) => void
 ): () => void {
-  const d = db();
-  if (!d) {
-    const err = new Error("Firebase Realtime Database প্রস্তুত নয় (init হয়নি)।");
-    console.error("watchPath: db not ready for", path);
-    if (typeof onErr === "function") {
-      try { onErr(err); } catch (e) { console.error("watchPath onErr:", e); }
-    }
-    return () => undefined;
-  }
   const p = String(path || "").replace(/^\/+/, "");
-  const target = p ? ref(d, p) : ref(d);
+  return sharedWatch(
+    `path:${p}`,
+    () => {
+      const d = db();
+      if (!d) return null;
+      return (p ? ref(d, p) : ref(d)) as unknown as Query;
+    },
+    cb,
+    onErr
+  );
+}
+
+/**
+ * Shallow listing of a path — keys plus a cheap descriptor of each child,
+ * WITHOUT downloading whole sub-trees.
+ *
+ * RTDB has no server-side "shallow" mode over the web SDK, so for the tree
+ * browser we read the node once and describe its immediate children; the
+ * caller only ever asks for nodes the user actually expanded, which is the
+ * point: the root of the database is never downloaded whole.
+ */
+export type ChildDescriptor = {
+  key: string;
+  type: "object" | "array" | "string" | "number" | "boolean" | "null";
+  count: number;
+  value: any;
+  truncated: boolean;
+};
+
+function describe(key: string, v: any, includeValue: boolean): ChildDescriptor {
+  const isObj = v !== null && typeof v === "object";
+  const type: ChildDescriptor["type"] = v === null
+    ? "null"
+    : Array.isArray(v)
+      ? "array"
+      : isObj
+        ? "object"
+        : (typeof v as any);
+  const count = isObj ? Object.keys(v).length : 0;
+  return {
+    key,
+    type,
+    count,
+    value: isObj ? (includeValue ? v : undefined) : v,
+    truncated: isObj && !includeValue,
+  };
+}
+
+/**
+ * Read the immediate children of `path` (paginated). Children that are
+ * themselves containers are returned as descriptors only — their contents are
+ * fetched lazily when the user expands them.
+ */
+export async function listChildren(
+  path: string,
+  opts: { limit?: number; startAfter?: string } = {}
+): Promise<{ children: ChildDescriptor[]; hasMore: boolean; total: number }> {
+  const d = db();
+  if (!d) return { children: [], hasMore: false, total: 0 };
+  const p = String(path || "").replace(/^\/+/, "");
+  const snap = await get(p ? ref(d, p) : ref(d));
+  const v = snap.val();
+  if (!v || typeof v !== "object") return { children: [], hasMore: false, total: 0 };
+  let keys = Object.keys(v).sort((a, b) => {
+    const an = /^\d+$/.test(a);
+    const bn = /^\d+$/.test(b);
+    if (an && bn) return Number(a) - Number(b);
+    if (an) return 1;
+    if (bn) return -1;
+    return a.localeCompare(b, "en", { numeric: true });
+  });
+  const total = keys.length;
+  if (opts.startAfter) {
+    const i = keys.indexOf(opts.startAfter);
+    if (i >= 0) keys = keys.slice(i + 1);
+  }
+  const limit = Math.max(1, opts.limit || 100);
+  const page = keys.slice(0, limit);
+  return {
+    children: page.map((k) => describe(k, v[k], false)),
+    hasMore: keys.length > limit,
+    total,
+  };
+}
+
+/** Top-level node names only — used for the first paint of the DB browser. */
+export async function listRootKeys(): Promise<string[]> {
+  const res = await listChildren("", { limit: 500 });
+  return res.children.map((c) => c.key);
+}
+
+/** Bounded server-side query used by the DB browser's search box. */
+export async function queryChildrenByField(
+  node: string,
+  field: string,
+  value: string | number | boolean,
+  limit = 50
+): Promise<Row[]> {
+  const d = db();
+  if (!d) return [];
   try {
-    return onValue(
-      target,
-      (snap) => {
-        try {
-          cb(snap.val());
-        } catch (e) {
-          console.error("watchPath cb (" + p + "):", (e as Error)?.message);
-        }
-      },
-      (err) => {
-        if (typeof onErr === "function") {
-          try { onErr(err as Error); } catch (e) { console.error("watchPath onErr:", (err as Error)?.message, e); }
-        } else console.error("watchPath (" + p + "):", err && err.message);
-      }
+    const snap = await get(
+      query(ref(d, node), orderByChild(field), equalTo(value as any), limitToFirst(limit))
     );
+    return snapToList(snap.val());
   } catch (e) {
-    const err = new Error("watchPath setup failed: " + ((e as Error)?.message || e));
-    console.error(err.message);
-    if (typeof onErr === "function") {
-      try { onErr(err); } catch { }
-    }
-    return () => undefined;
+    console.warn("rtdb queryChildrenByField:", node, field, (e as Error)?.message);
+    return [];
   }
 }
 
@@ -349,3 +532,12 @@ export function stripUndefined<T extends Record<string, any>>(obj: T): T {
 }
 
 
+
+/** One-shot read of an arbitrary path (used by the lazy DB browser editors). */
+export async function getPathOnce(path: string): Promise<any> {
+  const d = db();
+  if (!d) return null;
+  const p = String(path || "").replace(/^\/+/, "");
+  const snap = await get(p ? ref(d, p) : ref(d));
+  return snap.val();
+}

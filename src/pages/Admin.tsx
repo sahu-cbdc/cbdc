@@ -29,6 +29,9 @@ import {
 } from "../lib/donationLog";
 import { serverDeleteEntity, deletionMessage, bulkDeletionMessage, describeDeletionFailure, isAuthUid, runDedupeScan, checkDeleteServerConfig } from "../lib/accountDelete";
 import { noticeIsActive, noticeTarget } from "../lib/notice";
+import { watchListCached } from "../lib/liveList";
+import { listChildren, getPathOnce } from "../lib/rtdb";
+import { withButtonLock, runExclusive } from "../lib/actionLock";
 
 
 const pageCss = FORM_ERROR_CSS + `*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -1026,14 +1029,37 @@ function initPage() {
   
   let SETTINGS_PULLING=false;
   let persistChain=Promise.resolve();
-  function persist(){
+  
+  
+  
+  
+  
+  
+  
+  function repaintNow(){
+    try{
+      if(document.querySelector(".sheet"))return;
+      go(CUR,SUB,false,ARG);
+    }catch(e){}
+  }
+  function persist(opts){
+    
+    
+    
+    if(!opts||opts.optimistic!==false){
+      try{paintTop();paintNav();}catch(e){}
+      repaintNow();
+    }
     const run=async()=>{
       try{
         const result=await Promise.all([publishSharedState(),auditChain]);
         lastPersistedDB=CBDCShared.clone(DB);
         return result;
       }catch(error){
+        
         restoreLastPersistedDB();
+        try{paintTop();paintNav();}catch(e){}
+        repaintNow();
         throw error;
       }
     };
@@ -1098,7 +1124,17 @@ function initPage() {
     DATA_READY[name]=true;
     refreshOnDataReady();
   }
-  const dataReady=(...names)=>names.every(n=>DATA_READY[n]===true);
+  
+  
+  
+  const LOCAL_ROWS={donors:()=>DB.donors,requests:()=>DB.live,queue:()=>DB.queue,
+    gallery:()=>DB.gallery,notices:()=>DB.notices,accounts:()=>DB.accounts,
+    donations:()=>DB.donations,users:()=>accountUsers,admins:()=>accountAdmins,
+    audit:()=>DB.audit,messages:()=>DB.messages,reports:()=>DB.reports};
+  function haveLocalData(n){
+    try{const g=LOCAL_ROWS[n];const v=g&&g();return Array.isArray(v)&&v.length>0}catch(e){return false}
+  }
+  const dataReady=(...names)=>names.every(n=>DATA_READY[n]===true||haveLocalData(n));
   
   const statsReady=()=>dataReady("donors","requests","queue");
   
@@ -1553,7 +1589,7 @@ function initPage() {
   let stopDonorIdWatch=()=>{}, donorIdRows=[], donorIdRowsReady=false;
   function watchDonorIds(){
     stopDonorIdWatch();
-    stopDonorIdWatch=watchList(NODES.donors,rows=>{
+    stopDonorIdWatch=watchListCached(NODES.donors,currentAuthUid(),rows=>{
       donorIdRows=rows;
       donorIdRowsReady=true;
       
@@ -1565,13 +1601,13 @@ function initPage() {
   }
   function watchAccounts(){
     stopAccountWatch();
-    const u=watchList(NODES.users,rows=>{markDataReady("users");
+    const u=watchListCached(NODES.users,currentAuthUid(),rows=>{markDataReady("users");
       accountUsers=rows.map(x=>({...x,uid:x.uid||x.id}));refreshAccounts()});
     stopAccountWatch=()=>u();
   }
   function watchTeam(){
     stopTeamWatch();
-    stopTeamWatch=watchList(NODES.admins,(rows)=>{
+    stopTeamWatch=watchListCached(NODES.admins,currentAuthUid(),(rows)=>{
       markDataReady("admins");
       accountAdmins=rows.map(x=>({...x,uid:x.uid||x.id}));
       refreshAccounts();
@@ -1586,7 +1622,7 @@ function initPage() {
   let stopAuditWatch=()=>{};
   function watchAudit(){
     stopAuditWatch();
-    stopAuditWatch=watchList(NODES.audit,(rows)=>{
+    stopAuditWatch=watchListCached(NODES.audit,currentAuthUid(),(rows)=>{
       markDataReady("audit");
       const list=rows.map(r=>{
         const raw=String(r.role||"").toLowerCase();
@@ -1603,7 +1639,7 @@ function initPage() {
   let stopMessagesWatch=()=>{};
   function watchMessages(){
     stopMessagesWatch();
-    stopMessagesWatch=watchList(NODES.messages,(rows)=>{
+    stopMessagesWatch=watchListCached(NODES.messages,currentAuthUid(),(rows)=>{
       markDataReady("messages");
       const list=rows.map(r=>({id:r.id,name:r.name||"",phone:r.phone||r.mobile||"",
         text:r.text||r.message||"",read:r.read===true,at:r.at||r.createdAt||""}))
@@ -1619,7 +1655,7 @@ function initPage() {
   let stopReportsWatch=()=>{};
   function watchReports(){
     stopReportsWatch();
-    stopReportsWatch=watchList(NODES.reports,(rows)=>{
+    stopReportsWatch=watchListCached(NODES.reports,currentAuthUid(),(rows)=>{
       markDataReady("reports");
       const list=rows.map(r=>({id:r.id,ownerUid:r.ownerUid||r.uid||"",name:r.name||"",
         username:r.username||"",email:r.email||"",type:r.type||"রিপোর্ট",
@@ -4704,6 +4740,8 @@ function initPage() {
 
   
   function dbType(v){
+    
+    if(v&&typeof v==="object"&&v.__lazy__===true)return v.__type__||"object";
     if(v===null)return "null";
     if(Array.isArray(v))return "array";
     const t=typeof v;
@@ -4716,6 +4754,7 @@ function initPage() {
   
   function dbCount(v){
     if(!v||typeof v!=="object")return 0;
+    if(v.__lazy__===true)return Number(v.__count__)||0;
     try{return Object.keys(v).length;}catch(e){return 0;}
   }
   
@@ -4778,50 +4817,136 @@ function initPage() {
     else cur[last]=newVal;
   }
   
+  
+  
+  
+  
+  
+  
+  
+  
+  const DB_PAGE=100;
+  const dbLoaded=new Set();       
+  const dbLoading=new Set();      
+  const dbWatch=new Map();        
+  const dbMore=new Map();         
+
+  
+  function dbIsLazy(v){return !!(v&&typeof v==="object"&&v.__lazy__===true)}
+  
+  function dbLazyStub(desc){
+    return {__lazy__:true,__type__:desc.type,__count__:desc.count};
+  }
+  
+  function dbNodeFromDescriptors(list){
+    const out={};
+    for(const c of list){
+      out[c.key]=(c.type==="object"||c.type==="array")?dbLazyStub(c):c.value;
+    }
+    return out;
+  }
+
+  
+  
+  async function dbLoadPath(path,opts={}){
+    const key=path||"";
+    if(dbLoading.has(key))return;
+    dbLoading.add(key);
+    try{
+      const startAfter=opts.more?dbMore.get(key):undefined;
+      const res=await listChildren(key,{limit:DB_PAGE,startAfter});
+      const node=dbNodeFromDescriptors(res.children);
+      if(opts.more){
+        const cur=dbValueAt(key);
+        if(cur&&typeof cur==="object")Object.assign(cur,node);
+        else dbApplyLocal(key,node);
+      }else{
+        dbApplyLocal(key,node);
+      }
+      if(res.hasMore&&res.children.length)dbMore.set(key,res.children[res.children.length-1].key);
+      else dbMore.delete(key);
+      dbLoaded.add(key);
+      dbAttachWatch(key);
+      dbState="ready";dbErr="";
+    }catch(e){
+      if(!dbLoaded.size){dbState="error";dbErr=(e&&e.message)||String(e);}
+      else toast("এই node লোড করা যায়নি: "+((e&&e.message)||e),"er");
+    }finally{
+      dbLoading.delete(key);
+      dbRender();
+    }
+  }
+
+  
+  
+  
+  function dbAttachWatch(path){
+    const key=path||"";
+    if(dbWatch.has(key))return;
+    if(dbWatch.size>40)return;   
+    const un=watchPath(key,(v)=>{
+      if(!dbLoaded.has(key))return;
+      
+      
+      if(v&&typeof v==="object"){
+        const merged={};
+        for(const k of Object.keys(v)){
+          const cv=v[k];
+          if(cv&&typeof cv==="object"){
+            const childPath=key?key+"/"+k:k;
+            const existing=dbValueAt(childPath);
+            
+            merged[k]=(dbLoaded.has(childPath)&&existing&&typeof existing==="object"&&!dbIsLazy(existing))
+              ?existing
+              :dbLazyStub({type:Array.isArray(cv)?"array":"object",count:Object.keys(cv).length});
+          }else merged[k]=cv;
+        }
+        dbApplyLocal(key,merged);
+      }else if(v===null){
+        dbApplyLocal(key,key?_DEL:{});
+        dbLoaded.delete(key);
+      }
+      dbRender();
+    },(err)=>{
+      if(!dbLoaded.size){dbState="error";dbErr=(err&&err.message)||String(err);dbRender();}
+    });
+    dbWatch.set(key,un);
+  }
+
   function dbEnsureListener(){
-    if(dbUnsub)return;
+    if(dbLoaded.has(""))return;
     if(dbWatchdog){clearTimeout(dbWatchdog);dbWatchdog=null;}
     
     if(!hasAuthCurrentUser()){
       dbState="auth";dbErr="";dbRender();
-      
-      dbWatchdog=setTimeout(()=>{dbWatchdog=null;if(!dbUnsub)dbEnsureListener();},200);
+      dbWatchdog=setTimeout(()=>{dbWatchdog=null;if(!dbLoaded.has(""))dbEnsureListener();},200);
       return;
     }
+    if(dbMirror===null)dbMirror={};
     dbState="loading";dbErr="";dbRender();
-    let settled=false;
     
-    dbWatchdog=setTimeout(()=>{
-      if(settled)return;
-      dbWatchdog=null;
-      if(dbUnsub){try{dbUnsub();}catch(e){}dbUnsub=null;}
-      dbState="error";
-      dbErr="Realtime Database থেকে কোনো সাড়া আসেনি (timeout)। নেটওয়ার্ক/Firebase সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।";
-      dbRender();
-    },10000);
-    dbUnsub=watchPath("/",(v)=>{
-      if(settled)return;settled=true;
-      if(dbWatchdog){clearTimeout(dbWatchdog);dbWatchdog=null;}
-      dbMirror=(v&&typeof v==="object")?v:{};
-      dbState="ready";
-      dbRender();
-    },(err)=>{
-      if(settled)return;settled=true;
-      if(dbWatchdog){clearTimeout(dbWatchdog);dbWatchdog=null;}
-      dbState="error";dbErr=(err&&err.message)||String(err);dbRender();
-    });
+    void dbLoadPath("");
   }
-  
+
   function dbStop(){
     if(dbWatchdog){clearTimeout(dbWatchdog);dbWatchdog=null;}
     if(dbUnsub){try{dbUnsub();}catch(e){}dbUnsub=null;}
+    
+    for(const un of dbWatch.values()){try{un();}catch(e){}}
+    dbWatch.clear();
+    dbLoading.clear();
     dbState="idle";
   }
   
   function dbToggle(path){
     const val=dbValueAt(path);
     if(val&&typeof val==="object"){
-      if(dbOpen.has(path))dbOpen.delete(path);else dbOpen.add(path);
+      if(dbOpen.has(path))dbOpen.delete(path);
+      else{
+        dbOpen.add(path);
+        
+        if(!dbLoaded.has(path))void dbLoadPath(path);
+      }
       dbFocus=path;dbRender();scrollToNode(path);
     }else{
       dbFocus=path;dbEditSheet(path);
@@ -4837,6 +4962,7 @@ function initPage() {
       else if(a==="rename")dbRenameSheet(p);
       else if(a==="del")dbDelete(p);
       else if(a==="retry")dbRefresh();
+      else if(a==="more")void dbLoadPath(p,{more:true});
       else if(a==="addroot")dbAddSheet("");
       return;
     }
@@ -4846,7 +4972,10 @@ function initPage() {
   
   function dbRefresh(){
     dbStop();dbMirror=null;dbState="idle";
+    dbLoaded.clear();dbMore.clear();dbSearchLoaded.clear();
     dbEnsureListener();
+    
+    for(const p of Array.from(dbOpen))void dbLoadPath(p);
     toast("ডেটাবেস রিফ্রেশ হচ্ছে…","");
   }
   function dbRender(){
@@ -4869,7 +4998,7 @@ function initPage() {
     if(dbState==="auth")
       return `<div class="empty"><div class="ic" style="color:var(--grn)">${SI.shield(26)}</div><b>Admin authentication যাচাই হচ্ছে...</b><p>অ্যাডমিন সেশন প্রস্তুত হওয়া পর্যন্ত অপেক্ষা করা হচ্ছে, তারপর ডেটাবেস লোড হবে।</p></div>`;
     
-    if(dbState==="loading"&&!(dbMirror&&Object.keys(dbMirror).length))
+    if(dbState==="loading"&&!dbLoaded.has("")&&!(dbMirror&&Object.keys(dbMirror).length))
       return `<div class="empty"><div class="ic">${SI.refresh(26)}</div><b>লোড হচ্ছে…</b><p>সম্পূর্ণ Realtime Database realtime-এ লোড হচ্ছে। কিছুক্ষণেও সাড়া না এলে স্বয়ংক্রিয়ভাবে ত্রুটি দেখানো হবে।</p></div>`;
     if(dbState==="error"){
       const permDenied=/permission|denied|অনুমতি|access|rules/i.test(dbErr);
@@ -4880,7 +5009,7 @@ function initPage() {
       return `<div class="empty"><div class="ic" style="color:var(--red)">${SI.warn(26)}</div><b>${esc(title)}</b><p style="word-break:break-word">${msg}</p><p style="font-size:.72rem;color:var(--red-d);word-break:break-word;margin-bottom:10px">${esc(dbErr)}</p><button class="btn sm" data-act="retry">${SI.refresh(15)} আবার চেষ্টা করুন</button></div>`;
     }
     const roots=dbMirror?dbSortKeys(dbMirror):[];
-    if(!roots.length&&dbState==="ready")
+    if(!roots.length&&dbState==="ready"&&dbLoaded.has(""))
       return `<div class="empty"><div class="ic">${SI.db(26)}</div><b>Database empty</b><p>Realtime Database-এ এখনো কোনো root node নেই (root = null বা {})।</p><button class="btn sm" data-act="addroot">${SI.plus(15)} root node যোগ করুন</button></div>`;
     return roots.map(r=>dbRowHtml(r,0,dbMirror[r])).join("");
   }
@@ -4916,11 +5045,20 @@ function initPage() {
       +`<span style="flex:none;display:flex;gap:1px">${acts}</span>`
       +`</div>`;
     if(isC&&open){
+      const mp=10+(depth+1)*16;
+      
+      if(!dbLoaded.has(path)){
+        html+=`<div style="padding:7px ${mp}px;color:var(--mut);font-size:.72rem;border-bottom:1px solid var(--line)">লোড হচ্ছে…</div>`;
+        html+=addChildRow(path,depth+1);
+        return html;
+      }
       const keys=dbSortKeys(val);
       const shown=keys.slice(0,DB_MAX_CHILDREN);
       html+=shown.map(k=>dbRowHtml(path+"/"+k,depth+1,val[k])).join("");
-      if(keys.length>DB_MAX_CHILDREN){
-        const mp=10+(depth+1)*16;
+      
+      if(dbMore.has(path)){
+        html+=`<div style="padding:8px ${mp}px;border-bottom:1px solid var(--line);cursor:pointer" data-act="more" data-p="${esc(path)}"><span style="color:var(--grn);font-size:.77rem;font-weight:700">আরও লোড করুন (মোট ${bn(dbCount(val))}টির বেশি)</span></div>`;
+      }else if(keys.length>DB_MAX_CHILDREN){
         html+=`<div style="padding:7px ${mp}px;color:var(--mut);font-size:.72rem;border-bottom:1px solid var(--line)">… আরও ${bn(keys.length-DB_MAX_CHILDREN)}টি আছে (প্রথম ${bn(DB_MAX_CHILDREN)}টি দেখানো হয়েছে — সরাসরি path দিয়ে খুঁজতে উপরে সার্চ করুন)</div>`;
       }
       html+=addChildRow(path,depth+1);
@@ -4928,12 +5066,13 @@ function initPage() {
     return html;
   }
   
+  const dbSearchLoaded=new Set();
   function dbSearchHtml(){
     const q=dbQuery.trim().toLowerCase();
     const out=[];const seen=new Set();
     if(dbMirror&&typeof dbMirror==="object")dbCollect("",dbMirror,q,out,seen,500);
     if(!out.length){
-      return `<div class="empty"><div class="ic">${SI.search(26)}</div><b>কিছু পাওয়া যায়নি</b><p>"${esc(dbQuery)}" — key, value, UID, email, নাম বা path-এ কোনো মিল নেই।</p></div>`;
+      return `<div class="empty"><div class="ic">${SI.search(26)}</div><b>কিছু পাওয়া যায়নি</b><p>"${esc(dbQuery)}" — এখন পর্যন্ত লোড হওয়া node-গুলোর key, value, UID, email, নাম বা path-এ কোনো মিল নেই। যে node-এ খুঁজছেন সেটি expand করলে সেখানকার data-ও সার্চে আসবে।</p></div>`;
     }
     out.sort((a,b)=>a.path.length-b.path.length||a.path.localeCompare(b.path));
     const shown=out.slice(0,300);
@@ -4957,7 +5096,8 @@ function initPage() {
         const kl=String(k).toLowerCase();
         const match=kl.includes(q)||cp.toLowerCase().includes(q)||(cv!==null&&typeof cv!=="object"&&String(cv).toLowerCase().includes(q));
         if(match&&!seen.has(cp)){seen.add(cp);out.push({path:cp,key:k,val:cv});}
-        if(cv&&typeof cv==="object")dbCollect(cp,cv,q,out,seen,limit);
+        
+        if(cv&&typeof cv==="object"&&cv.__lazy__!==true)dbCollect(cp,cv,q,out,seen,limit);
       }
     }
   }
@@ -5032,7 +5172,12 @@ function initPage() {
   }
   
   async function dbEditSheet(path){
-    const cur=dbValueAt(path);
+    let cur=dbValueAt(path);
+    
+    if(dbIsLazy(cur)){
+      try{cur=await getPathOnce(path);}
+      catch(e){toast("এই node পড়া যায়নি: "+((e&&e.message)||e),"er");return;}
+    }
     const s=sheet("মান সম্পাদনা — /"+path,`
       <p class="hint2" style="margin-bottom:9px">পথ: <b style="font-family:monospace;word-break:break-all">/${esc(path)}</b></p>
       ${dbEditorHtml(cur,"ed")}
@@ -5052,7 +5197,10 @@ function initPage() {
   }
   
   async function dbAddSheet(parentPath){
-    const parent=dbValueAt(parentPath);
+    let parent=dbValueAt(parentPath);
+    if(dbIsLazy(parent)){
+      try{parent=await getPathOnce(parentPath);}catch(e){parent={};}
+    }
     const isArr=Array.isArray(parent);
     const s=sheet("নতুন চাইল্ড — /"+parentPath,`
       <p class="hint2" style="margin-bottom:9px">parent: <b style="font-family:monospace;word-break:break-all">/${esc(parentPath||"(root)")}</b> (${isArr?"array":"object"})</p>

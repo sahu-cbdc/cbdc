@@ -124,13 +124,61 @@ export type DataWriteResult = {
  * Guarded multi-path write. Every path is authorized server-side
  * (role + ownership + protected-field checks) before anything is applied.
  */
+/**
+ * In-flight write de-duplication.
+ *
+ * A user double-tapping "সংরক্ষণ" used to fire two identical writes. Identical
+ * payloads that overlap in time now share ONE request/promise. Only *identical*
+ * payloads collapse, so a genuine second edit is never swallowed, and the entry
+ * is released as soon as the request settles — a retry after failure still
+ * reaches the server.
+ *
+ * Increment/max sentinels are intentionally NOT de-duplicated: two "+1" clicks
+ * legitimately mean +2.
+ */
+const inflightWrites = new Map<string, Promise<DataWriteResult>>();
+
+function hasCounterSentinel(v: any): boolean {
+  if (!v || typeof v !== "object") return false;
+  if ("__inc__" in v || "__max__" in v) return true;
+  return Object.keys(v).some((k) => hasCounterSentinel(v[k]));
+}
+
 export async function apiWritePaths(paths: Record<string, any>): Promise<DataWriteResult> {
-  const out = await apiPost<DataWriteResult>(API_GATEWAYS.data, { op: "write", writes: paths });
-  return {
-    ok: true,
-    applied: Number(out?.applied) || 0,
-    values: (out?.values && typeof out.values === "object" ? out.values : {}) as Record<string, number>,
-  };
+  const dedupable = !hasCounterSentinel(paths);
+  let key = "";
+  if (dedupable) {
+    try {
+      key = JSON.stringify(paths);
+    } catch {
+      key = "";
+    }
+    if (key) {
+      const pending = inflightWrites.get(key);
+      if (pending) return pending;
+    }
+  }
+  const run = (async (): Promise<DataWriteResult> => {
+    const out = await apiPost<DataWriteResult>(API_GATEWAYS.data, { op: "write", writes: paths });
+    return {
+      ok: true,
+      applied: Number(out?.applied) || 0,
+      values: (out?.values && typeof out.values === "object" ? out.values : {}) as Record<string, number>,
+    };
+  })();
+  if (key) {
+    const tracked = run.finally(() => {
+      if (inflightWrites.get(key) === tracked) inflightWrites.delete(key);
+    });
+    inflightWrites.set(key, tracked);
+    return tracked;
+  }
+  return run;
+}
+
+/** Test helper — clear the write de-dupe table. */
+export function __resetWriteDedupe(): void {
+  inflightWrites.clear();
 }
 
 export async function apiIncrementField(

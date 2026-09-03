@@ -9,7 +9,10 @@
         "bloodGroup",
         "area",
         "ownerUid",
-        "phone"
+        "phone",
+        "donorId",
+        "last",
+        "lastDonationDate"
       ]
     },
     "_meta": {
@@ -30,7 +33,9 @@
         "status",
         "email",
         "uid",
-        "phone"
+        "phone",
+        "username",
+        "ownerUid"
       ],
       "$id": {
         ".read": "auth != null && (root.child('admins').child(auth.uid).exists() || data.child('uid').val() === auth.uid || data.child('ownerUid').val() === auth.uid)"
@@ -43,7 +48,8 @@
         "username",
         "phone",
         "role",
-        "donorId"
+        "donorId",
+        "uid"
       ],
       "$uid": {
         ".read": "auth != null && ($uid === auth.uid || root.child('admins').child(auth.uid).exists())",
